@@ -1,0 +1,15 @@
+{
+  "name": "protege",
+  "version": "0.0.1",
+  "private": true,
+  "packageManager": "pnpm@9.0.0",
+  "scripts": {
+    "dev:backend": "pnpm --filter @protege/backend dev",
+    "dev:extension": "pnpm --filter @protege/extension dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}

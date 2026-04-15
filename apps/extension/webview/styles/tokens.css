@@ -1,0 +1,123 @@
+@import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&family=Playfair+Display:ital,wght@1,400;1,500;1,600&family=Geist+Mono:wght@400;500&display=swap");
+
+:root {
+  --ink: #07060d;
+  --ink-2: #0d0b18;
+  --ink-3: #14111f;
+  --glow: #ffffff;
+  --glow-soft: #e8ecff;
+  --text: #f5f6fa;
+  --text-dim: rgba(245, 246, 250, 0.62);
+  --text-faint: rgba(245, 246, 250, 0.32);
+  --text-ghost: rgba(245, 246, 250, 0.16);
+
+  --electric: #4a9eff;
+  --electric-soft: #7cb3ff;
+  --electric-deep: #1a5ed8;
+  --electric-ghost: rgba(74, 158, 255, 0.08);
+
+  --rose-soft: #ffc7e0;
+  --sky-soft: #c6d8ff;
+
+  --glass-0: rgba(255, 255, 255, 0.03);
+  --glass-1: rgba(255, 255, 255, 0.055);
+  --glass-2: rgba(255, 255, 255, 0.09);
+  --glass-3: rgba(255, 255, 255, 0.14);
+  --glass-border: rgba(255, 255, 255, 0.14);
+  --glass-border-strong: rgba(255, 255, 255, 0.26);
+  /* Reusable glass blur filter — real backdrop-filter for the premium feel */
+  --glass-blur: blur(14px) saturate(1.15);
+
+  --font-sans: "Montserrat", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Playfair Display", Georgia, serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 16px;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Kill the default user-agent focus ring globally. We handle focus
+   affordances explicitly via :focus-within on parent containers
+   (.composer, .tab, .settings-section, etc.) — so the default
+   browser outline is always visual noise. */
+*:focus,
+*:focus-visible {
+  outline: none;
+}
+button,
+textarea,
+input,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+/* Only html gets the solid ink as a base — body owns the grid layer,
+   #root is transparent so body's background shows through. */
+html { background: var(--ink); }
+#root { background: transparent; }
+
+body {
+  background:
+    /* MINOR grid — clearly visible, 40px — matches landing page */
+    linear-gradient(rgba(255, 255, 255, 0.11) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.11) 1px, transparent 1px),
+    /* MAJOR grid — strong anchor lines, 120px */
+    linear-gradient(rgba(255, 255, 255, 0.22) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.22) 1px, transparent 1px),
+    /* Cinematic blue wash top-center — same as website hero */
+    radial-gradient(ellipse 100% 60% at 50% -10%, rgba(74, 158, 255, 0.22), transparent 60%),
+    radial-gradient(ellipse 70% 50% at 110% 110%, rgba(74, 158, 255, 0.1), transparent 60%),
+    radial-gradient(ellipse 50% 40% at -10% 90%, rgba(74, 158, 255, 0.08), transparent 60%),
+    /* Edge vignette — pulls the eye to center like a theater */
+    radial-gradient(ellipse 130% 85% at 50% 50%, transparent 35%, rgba(0, 0, 0, 0.72) 100%),
+    var(--ink);
+  background-size:
+    40px 40px,
+    40px 40px,
+    120px 120px,
+    120px 120px,
+    auto,
+    auto,
+    auto,
+    auto,
+    auto;
+  background-position: 0 0, 0 0, 0 0, 0 0, center, center, center, center, center;
+}
+
+/* Subtle film-grain noise layer over the whole app — kills the "flat digital"
+   feel and gives the dark background texture without adding file weight. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.4;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.7'/></svg>");
+  background-size: 160px 160px;
+}
+#root {
+  position: relative;
+  z-index: 1;
+}
+

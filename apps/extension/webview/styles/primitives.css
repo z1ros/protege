@@ -1,0 +1,239 @@
+/* ==========================================================
+   CinematicPlate — the ONE pattern for photos in Protege
+   ========================================================== */
+
+.plate {
+  position: relative;
+  width: 100%;
+  border: 1px solid var(--glass-border-strong);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--ink-2);
+  box-shadow:
+    0 8px 40px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  isolation: isolate;
+  animation: plate-in 520ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes plate-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.plate-photo {
+  position: absolute;
+  inset: 0;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  filter: saturate(1.05) contrast(1.02);
+  transform: scale(1.02);
+  transition: transform 800ms ease;
+}
+.plate:hover .plate-photo {
+  transform: scale(1.045);
+}
+
+/* Bottom-to-top fade mask — photos never shout. Text on top sits flat. */
+.plate-fade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    rgba(7, 6, 13, 0) 0%,
+    rgba(7, 6, 13, 0.25) 45%,
+    rgba(7, 6, 13, 0.85) 88%,
+    rgba(7, 6, 13, 0.96) 100%
+  );
+  pointer-events: none;
+}
+
+/* Subtle SVG grain — gives photos film-like life instead of flat JPG feel. */
+.plate-grain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.18;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='0.75'/></svg>");
+  background-size: 120px 120px;
+}
+
+.plate-caption {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--glow);
+  background: rgba(7, 6, 13, 0.55);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  padding: 5px 10px;
+  backdrop-filter: blur(6px);
+  z-index: 2;
+}
+
+.plate-headline {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 14px;
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 22px;
+  line-height: 1.1;
+  color: var(--glow);
+  letter-spacing: -0.02em;
+  z-index: 2;
+}
+.plate-headline .accent { color: var(--electric-soft); font-style: italic; }
+
+.plate-body {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 18px;
+  text-align: center;
+}
+
+.serif {
+  font-family: var(--font-serif);
+  font-style: italic;
+  letter-spacing: -0.015em;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  max-width: 100%;
+  overflow: hidden;
+  scrollbar-width: none;
+}
+.app::-webkit-scrollbar { display: none; width: 0; height: 0; }
+html, body { scrollbar-width: none; }
+html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; width: 0; height: 0; }
+*::-webkit-scrollbar { width: 0; height: 0; }
+* { scrollbar-width: none; }
+
+/* ==========================================================
+   IQ gain toast (top-center, auto-dismiss)
+   ========================================================== */
+
+.iq-toast {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: linear-gradient(135deg, rgba(74, 158, 255, 0.22), rgba(26, 94, 216, 0.12));
+  border: 1px solid rgba(74, 158, 255, 0.45);
+  border-radius: 999px;
+  box-shadow: 0 4px 24px rgba(74, 158, 255, 0.35);
+  animation: toast-in 260ms cubic-bezier(0.16, 1, 0.3, 1),
+             toast-out 400ms cubic-bezier(0.4, 0, 1, 1) 3100ms forwards;
+  pointer-events: none;
+  font-size: 11px;
+}
+.iq-toast-delta {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--glow);
+}
+.iq-toast-concept { color: var(--glow); font-weight: 500; }
+.iq-toast-file { color: var(--text-faint); font-family: var(--font-mono); }
+@keyframes toast-in {
+  from { opacity: 0; transform: translate(-50%, -8px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+@keyframes toast-out {
+  to { opacity: 0; transform: translate(-50%, -6px); }
+}
+
+.iq-toast.toast-milestone {
+  background: linear-gradient(135deg, rgba(255, 199, 224, 0.26), rgba(184, 99, 255, 0.12));
+  border-color: rgba(255, 199, 224, 0.55);
+  box-shadow: 0 4px 24px rgba(184, 99, 255, 0.4);
+}
+.iq-toast.toast-fix {
+  background: linear-gradient(135deg, rgba(120, 255, 180, 0.2), rgba(60, 200, 140, 0.1));
+  border-color: rgba(120, 255, 180, 0.45);
+  box-shadow: 0 4px 24px rgba(120, 255, 180, 0.35);
+}
+
+
+/* ==========================================================
+   Real glass: backdrop-filter on every surface that uses glass-1/2/3.
+   Webkit needs the prefixed version. We use a common class .glass
+   AND target every existing glass-styled container so the upgrade is
+   retroactive — no JSX changes needed.
+   ========================================================== */
+
+.plate,
+.composer,
+.tabs,
+.iq-chip,
+.streak-chip,
+.context-pill,
+.header-icon-btn:hover,
+.section-card,
+.cluster-card,
+.concept-row,
+.hero-stat,
+.journey-row,
+.win-row,
+.gain-row,
+.milestone-row,
+.recs,
+.msg-assistant .content,
+.prompt-btn,
+.plan-card,
+.nudge,
+.voice-pill,
+.voice-mic-hint,
+.mode-switcher,
+.overlay-close,
+.voice-back-btn {
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+}
+
+/* Slightly brighter inner highlight on top of every major glass surface
+   — this is the "light catching the edge" trick the website uses. */
+.plate::after,
+.composer::after,
+.section-card::after,
+.cluster-card::after,
+.hero-stat::after,
+.plan-card::after {
+  pointer-events: none;
+}
+.composer,
+.section-card,
+.cluster-card,
+.msg-assistant .content,
+.concept-row,
+.journey-row,
+.win-row,
+.gain-row,
+.milestone-row,
+.hero-stat,
+.plan-card,
+.recs,
+.nudge,
+.prompt-btn {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 1px 2px rgba(0, 0, 0, 0.4);
+}

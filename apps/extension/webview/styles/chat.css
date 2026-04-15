@@ -1,0 +1,586 @@
+/* ==========================================================
+   Messages
+   ========================================================== */
+
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 22px 22px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  scroll-behavior: smooth;
+}
+.messages::-webkit-scrollbar { width: 8px; }
+.messages::-webkit-scrollbar-track { background: transparent; }
+.messages::-webkit-scrollbar-thumb {
+  background: var(--glass-2);
+  border-radius: 10px;
+}
+.messages::-webkit-scrollbar-thumb:hover { background: var(--glass-3); }
+
+.msg {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 94%;
+  animation: msg-in 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.msg-user { align-self: flex-end; align-items: flex-end; }
+.msg-assistant { align-self: flex-start; }
+
+@keyframes msg-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.msg .role {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--text-faint);
+  padding: 0 4px;
+  font-weight: 500;
+}
+.msg-user .role { color: var(--electric-soft); }
+
+.msg .content {
+  white-space: pre-wrap;
+  line-height: 1.6;
+  padding: 13px 16px;
+  border-radius: 14px;
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: 0.005em;
+}
+.msg-user .content {
+  background: linear-gradient(135deg, rgba(74, 158, 255, 0.22), rgba(26, 94, 216, 0.08));
+  border: 1px solid rgba(74, 158, 255, 0.32);
+  color: var(--glow);
+  border-bottom-right-radius: 4px;
+}
+.msg-assistant .content {
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  color: var(--text);
+  border-bottom-left-radius: 4px;
+}
+.msg .content code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: rgba(0, 0, 0, 0.35);
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--glass-border);
+}
+
+/* Follow-up chips — real mentor flow: "want me to explain why?" */
+.followups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 0 2px;
+  animation: msg-in 300ms cubic-bezier(0.16, 1, 0.3, 1) 100ms both;
+}
+.followup-chip {
+  padding: 7px 13px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.005em;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease, color 160ms ease;
+  max-width: 100%;
+  text-align: left;
+  line-height: 1.3;
+}
+.followup-chip::before {
+  content: "↳ ";
+  color: var(--electric);
+  font-weight: 600;
+}
+.followup-chip:hover:not(:disabled) {
+  background: rgba(74, 158, 255, 0.1);
+  border-color: rgba(74, 158, 255, 0.4);
+  color: var(--glow);
+  transform: translateX(2px);
+}
+.followup-chip:active:not(:disabled) {
+  transform: translateX(2px) scale(0.98);
+}
+.followup-chip:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Tool activity (Protege reading files, etc.) */
+.tool-activity {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.tool-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  color: var(--text-dim);
+  animation: msg-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.tool-row .tool-icon {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+.tool-row.tool-running {
+  border-color: rgba(74, 158, 255, 0.35);
+}
+.tool-row.tool-running .tool-icon {
+  background: rgba(74, 158, 255, 0.2);
+  color: var(--electric);
+  animation: pulse 1.4s infinite ease-in-out;
+}
+.tool-row.tool-done {
+  border-color: rgba(74, 158, 255, 0.2);
+}
+.tool-row.tool-done .tool-icon {
+  background: rgba(74, 158, 255, 0.22);
+  color: var(--electric);
+}
+.tool-row.tool-error .tool-icon {
+  background: rgba(255, 143, 168, 0.2);
+  color: #ff8fa8;
+}
+.tool-row.tool-kind-write.tool-done {
+  border-color: rgba(74, 158, 255, 0.4);
+  background: rgba(74, 158, 255, 0.08);
+}
+.tool-row.tool-kind-write.tool-done .tool-icon {
+  background: rgba(74, 158, 255, 0.28);
+  color: var(--electric-soft);
+}
+.tool-row.tool-kind-write .tool-name {
+  color: var(--glow);
+  font-weight: 500;
+}
+.tool-row.tool-kind-teach.tool-done {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.04);
+}
+.tool-row.tool-kind-teach.tool-done .tool-icon {
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--glow);
+}
+.tool-row.tool-kind-teach .tool-name {
+  color: var(--glow);
+  font-weight: 500;
+}
+.tool-row.tool-kind-nav.tool-done {
+  border-color: rgba(74, 158, 255, 0.22);
+}
+.tool-row.tool-kind-nav.tool-done .tool-icon {
+  background: rgba(74, 158, 255, 0.15);
+  color: var(--electric-soft);
+}
+.tool-row .tool-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Typing indicator */
+.typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.typing-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--electric);
+  animation: pulse 1.4s infinite ease-in-out;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.18s; }
+.typing-dot:nth-child(3) { animation-delay: 0.36s; }
+
+@keyframes pulse {
+  0%, 80%, 100% { opacity: 0.25; transform: scale(0.85); }
+  40% { opacity: 1; transform: scale(1.1); box-shadow: 0 0 8px var(--electric); }
+}
+
+.error {
+  color: #ff8fa8;
+  background: rgba(255, 143, 168, 0.08);
+  border: 1px solid rgba(255, 143, 168, 0.22);
+  border-radius: var(--radius);
+  padding: 11px 14px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* ==========================================================
+   Empty state + quick prompts
+   ========================================================== */
+
+.empty {
+  margin: auto;
+  padding: 24px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+  max-width: 360px;
+  text-align: center;
+}
+.empty-headline {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 28px;
+  line-height: 1.15;
+  color: var(--glow);
+  letter-spacing: -0.02em;
+}
+.empty-headline .accent { color: var(--electric); }
+.empty-sub {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.6;
+}
+.prompts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.prompt-btn {
+  text-align: left;
+  padding: 11px 14px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transition: background 150ms ease, border-color 150ms ease, transform 150ms ease;
+}
+.prompt-btn:hover {
+  background: var(--glass-2);
+  border-color: var(--glass-border-strong);
+  transform: translateX(2px);
+}
+.prompt-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--electric-ghost);
+  border: 1px solid rgba(74, 158, 255, 0.22);
+  color: var(--electric);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* ==========================================================
+   Composer (text mode)
+   ========================================================== */
+
+/* Cursor-style composer: a bordered box that grows with its content.
+   Flex column — textarea on top, action row (hint + send) at the bottom.
+   The textarea auto-resizes via a useEffect in App.tsx that watches the
+   value and sets height = min(max, scrollHeight). */
+.composer {
+  flex: 0 0 auto;
+  margin: 10px 14px 14px;
+  padding: 10px 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+.composer:focus-within {
+  border-color: rgba(74, 158, 255, 0.45);
+  background: var(--glass-2);
+  box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.1);
+}
+.composer-input {
+  width: 100%;
+  resize: none;
+  min-height: 22px;
+  max-height: 220px;
+  overflow-y: auto;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 2px 0;
+  background: transparent;
+  color: var(--text);
+  border: none;
+  outline: none !important;
+  box-shadow: none !important;
+  scrollbar-width: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.composer-input:focus,
+.composer-input:focus-visible,
+.composer-input:active {
+  outline: none !important;
+  box-shadow: none !important;
+  border: none !important;
+}
+.composer-input::-webkit-scrollbar { display: none; }
+.composer-input::placeholder { color: var(--text-faint); }
+
+.composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 4px;
+}
+.composer-actions-left {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.composer-hint {
+  color: var(--text-faint);
+  letter-spacing: 0.14em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Mic toggle inside the composer — flips the whole chat surface into voice mode */
+.composer-mode-btn {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 150ms ease, background 150ms ease, border-color 150ms ease;
+}
+.composer-mode-btn svg { width: 13px; height: 13px; }
+.composer-mode-btn:hover {
+  color: var(--electric-soft);
+  background: rgba(74, 158, 255, 0.1);
+  border-color: rgba(74, 158, 255, 0.35);
+}
+
+.send-btn {
+  height: 26px;
+  width: 26px;
+  flex: 0 0 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--electric);
+  color: var(--ink);
+  border: none;
+  border-radius: 6px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 150ms ease, transform 100ms ease, box-shadow 150ms ease;
+  box-shadow: 0 2px 10px rgba(74, 158, 255, 0.28);
+}
+.send-btn svg { width: 12px; height: 12px; }
+.send-btn:hover:not(:disabled) {
+  background: var(--electric-soft);
+  box-shadow: 0 4px 14px rgba(74, 158, 255, 0.4);
+}
+.send-btn:active:not(:disabled) { transform: translateY(1px); }
+.send-btn:disabled {
+  background: var(--glass-2);
+  color: var(--text-faint);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+/* ==========================================================
+   Proactive watcher nudges — "Protege, unprompted:"
+   ========================================================== */
+
+.nudge {
+  align-self: flex-start;
+  max-width: 94%;
+  padding: 12px 14px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(74, 158, 255, 0.25);
+  border-left: 3px solid var(--electric);
+  background: linear-gradient(
+    135deg,
+    rgba(74, 158, 255, 0.08),
+    rgba(74, 158, 255, 0.02)
+  );
+  box-shadow: 0 4px 24px rgba(74, 158, 255, 0.08);
+  animation: nudge-in 420ms cubic-bezier(0.16, 1, 0.3, 1);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.nudge.nudge-high {
+  border-color: rgba(255, 143, 168, 0.35);
+  border-left-color: #ff8fa8;
+  background: linear-gradient(135deg, rgba(255, 143, 168, 0.06), rgba(255, 143, 168, 0.02));
+}
+.nudge.nudge-low {
+  border-color: rgba(255, 255, 255, 0.12);
+  border-left-color: var(--text-dim);
+}
+@keyframes nudge-in {
+  from { opacity: 0; transform: translateX(-6px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.nudge-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--electric-soft);
+  font-weight: 500;
+}
+.nudge.nudge-high .nudge-label { color: #ff8fa8; }
+.nudge-text { font-size: 13px; line-height: 1.5; color: var(--text); }
+.nudge-actions { display: flex; gap: 6px; margin-top: 2px; }
+.nudge-btn {
+  padding: 6px 12px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 150ms, border-color 150ms, color 150ms, transform 120ms;
+}
+.nudge-btn:hover { background: var(--glass-2); color: var(--glow); transform: translateY(-1px); }
+.nudge-btn.nudge-engage {
+  background: rgba(74, 158, 255, 0.15);
+  border-color: rgba(74, 158, 255, 0.4);
+  color: var(--electric-soft);
+}
+.nudge-btn.nudge-engage:hover { background: rgba(74, 158, 255, 0.25); color: var(--glow); }
+
+
+/* ==========================================================
+   Chat modality switcher — sits under the Chat/Concepts tabs
+   when Chat is active. Flips the chat surface between full
+   text mode and full voice mode. Big, centered, glass pill.
+   ========================================================== */
+
+.mode-switcher {
+  align-self: center;
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+.mode-opt {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+.mode-opt svg { width: 13px; height: 13px; }
+.mode-opt:hover { color: var(--text); }
+.mode-opt.active {
+  background: linear-gradient(135deg, rgba(74, 158, 255, 0.35), rgba(26, 94, 216, 0.15));
+  color: var(--glow);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 0 0 1px rgba(74, 158, 255, 0.45),
+    0 4px 18px rgba(74, 158, 255, 0.3);
+}
+.mode-opt.active svg {
+  filter: drop-shadow(0 0 6px rgba(74, 158, 255, 0.6));
+}
+
+/* Mini text/voice switcher in the composer bar */
+.mode-mini {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+}
+.mode-mini-opt {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: transparent;
+  color: var(--text-dim);
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+.mode-mini-opt svg { width: 13px; height: 13px; }
+.mode-mini-opt:hover {
+  color: var(--text);
+}
+.mode-mini-opt.active {
+  background: var(--glass-3);
+  color: var(--glow);
+  box-shadow: 0 1px 0 0 var(--glass-border-strong) inset;
+}
+
+/* Voice-mode footer wrapping the mini switcher */
+.voice-mode-footer {
+  display: flex;
+  justify-content: center;
+  padding: 10px 0 14px;
+}

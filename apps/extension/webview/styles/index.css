@@ -1,0 +1,28 @@
+/**
+ * Protege webview styles — split into feature files for maintainability.
+ *
+ * Load order matters:
+ *   1. tokens       — :root variables, resets, html/body grid background
+ *   2. base         — typography helpers (.microcaps, .serif-num, .serif)
+ *   3. primitives   — shared patterns (.plate, .iq-toast)
+ *   4. header       — .header, .brand-*, .tabs, .tab, .iq-chip, .streak-chip
+ *   5. chat         — .messages, .msg, .empty, .composer, .nudge
+ *   6. concepts     — .concepts, .iq-hero-*, .cluster-*, .concept-*, .milestones, .recs, .gains
+ *   7. voice        — .voice, .voice-orb, .ring, .voice-bars, .voice-pill
+ *   8. overlays     — .overlay, .page, Profile / Settings / Subscription
+ *   9. responsive   — clamp hero sizes + narrow/wide @media blocks
+ *
+ * Add new components by dropping new rules into the matching feature file.
+ * If a component doesn't fit any file, prefer extending primitives over
+ * creating a new file.
+ */
+
+@import "./tokens.css";
+@import "./base.css";
+@import "./primitives.css";
+@import "./header.css";
+@import "./chat.css";
+@import "./concepts.css";
+@import "./voice.css";
+@import "./overlays.css";
+@import "./responsive.css";

@@ -1,0 +1,25 @@
+/* ==========================================================
+   Cinematic typography helpers
+   ========================================================== */
+
+/* Mono uppercase micro-caps — "SOURCE · UPDATED · 2023". The website's
+   signature meta-label typography. */
+.microcaps {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--text-dim);
+}
+
+/* Playfair italic display numbers — for hero IQ, streak counts, bonus IQ.
+   Pairs with .microcaps labels beneath. */
+.serif-num {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-weight: 500;
+  letter-spacing: -0.025em;
+  color: var(--glow);
+  line-height: 1;
+}
+

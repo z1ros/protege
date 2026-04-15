@@ -1,0 +1,10 @@
+node_modules
+dist
+out
+*.vsix
+.env
+.env.local
+.protege-store.json
+.DS_Store
+.turbo
+coverage

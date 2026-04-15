@@ -1,0 +1,382 @@
+import { Hono } from "hono";
+import Anthropic from "@anthropic-ai/sdk";
+import type {
+  ChatRunRequest,
+  ChatRunResponse,
+  OAITurn,
+  ToolCall,
+} from "@protege/types";
+import {
+  anthropic,
+  MODEL,
+  MENTOR_SYSTEM_PROMPT,
+  TOOL_DEFINITIONS,
+} from "../anthropic.js";
+import { buildSystemPrompt } from "../prompts/persona.js";
+import { sanitizeForVoice } from "../voicePostProcess.js";
+import {
+  addMemory,
+  removeMemory,
+  getMemorySnapshot,
+  openSession,
+  touchSessionFile,
+  type MemoryType,
+} from "../store.js";
+
+export const chatRoute = new Hono();
+
+/**
+ * Tool-enabled chat using Claude Sonnet 4.5 with prompt caching.
+ *
+ * The wire format stays OAITurn[] (OpenAI-shaped) so the extension's
+ * chatRunner.ts doesn't need to change. Internally we translate to
+ * Anthropic's messages / content-block format per call.
+ *
+ * Prompt caching: the system prompt + tool definitions are marked with
+ * cache_control: "ephemeral", so on repeat calls Anthropic reuses them
+ * at ~10% of input token cost. Huge win for a mentor that makes many
+ * multi-turn tool rounds per user question.
+ */
+chatRoute.post("/", async (c) => {
+  const body = (await c.req.json()) as ChatRunRequest;
+  const userId = body.userId ?? c.req.header("x-user-id") ?? "local-dev";
+  const mode = body.mode ?? "text";
+  const basePersona = buildSystemPrompt(mode);
+
+  let messages: OAITurn[] = body.messages ?? [];
+
+  // First turn: build the full context block = memory + session + workspace
+  if (messages.length === 0 && body.newUserMessage) {
+    const [memories, sessionInfo] = await Promise.all([
+      getMemorySnapshot(userId, 12),
+      openSession(userId),
+    ]);
+
+    // === Memory block ===
+    let memoryBlock = "";
+    if (memories.length > 0) {
+      const lines = memories.map(
+        (m) => `- [${m.type}] (${m.id}) ${m.content}`
+      );
+      memoryBlock = `\n\n## What you know about this user\n${lines.join("\n")}\n\n(Reference these naturally when relevant. Use \`forget(id)\` if any entry turns out to be wrong.)`;
+    }
+
+    // === Session / continuity block ===
+    let sessionBlock = "";
+    if (sessionInfo.isFirstToday && sessionInfo.lastSession) {
+      const last = sessionInfo.lastSession;
+      const parts: string[] = [`Last session: ${last.date}`];
+      if (last.endSummary) parts.push(`Summary: ${last.endSummary}`);
+      if (last.filesTouched.length > 0)
+        parts.push(`Files touched: ${last.filesTouched.slice(-6).join(", ")}`);
+      sessionBlock = `\n\n## Session continuity\nThis is the user's FIRST message today. ${parts.join(" · ")}\n\nOpen with a brief, specific acknowledgement of where they left off (one sentence), then address their current message. Don't be sappy. Example: "Morning — yesterday we got the voice mode working. Okay, what's up?"`;
+    } else if (!sessionInfo.isFirstToday) {
+      sessionBlock = `\n\n## Session\nContinuing today's session. Don't re-greet.`;
+    }
+
+    // === Workspace block ===
+    const wsBlock = body.workspace
+      ? `\n\n## Current workspace\nRoot: ${body.workspace.root ?? "(unknown)"}\n${
+          body.workspace.activeFile
+            ? `Active file: ${body.workspace.activeFile.path} (${body.workspace.activeFile.language})\n\`\`\`${body.workspace.activeFile.language}\n${body.workspace.activeFile.content.slice(0, 4000)}\n\`\`\`\n${
+                body.workspace.activeFile.selection
+                  ? `\nUser selection:\n\`\`\`\n${body.workspace.activeFile.selection}\n\`\`\``
+                  : ""
+              }`
+            : "No active file."
+        }\n${
+          body.workspace.fileTree && body.workspace.fileTree.length > 0
+            ? `\nFile tree (first ${body.workspace.fileTree.length} files):\n${body.workspace.fileTree.join("\n")}`
+            : ""
+        }`
+      : "";
+
+    // Track the active file in the session (for next-day continuity)
+    if (body.workspace?.activeFile?.path) {
+      touchSessionFile(userId, body.workspace.activeFile.path).catch(() => {});
+    }
+
+    messages = [
+      {
+        role: "system",
+        content: basePersona + memoryBlock + sessionBlock + wsBlock,
+      },
+      { role: "user", content: body.newUserMessage },
+    ];
+  } else if (body.toolResults && body.toolResults.length > 0) {
+    for (const tr of body.toolResults) {
+      messages.push({
+        role: "tool",
+        tool_call_id: tr.id,
+        name: tr.name,
+        content: tr.error ? `ERROR: ${tr.error}` : tr.content,
+      });
+    }
+  } else if (body.newUserMessage) {
+    messages.push({ role: "user", content: body.newUserMessage });
+  }
+
+  // Translate OAITurn[] → Anthropic format
+  const { systemText, anthropicMessages } = toAnthropic(messages);
+
+  console.log(
+    `[protege] /chat provider=anthropic model=${MODEL} turns=${messages.length} lastRole=${messages.at(-1)?.role}`
+  );
+
+  const res = await anthropic.messages.create({
+    model: MODEL,
+    max_tokens: 4096,
+    // Prompt caching on the (stable) system prompt — saves ~90% on repeat tokens.
+    system: [
+      {
+        type: "text",
+        text: systemText,
+        cache_control: { type: "ephemeral" },
+      },
+    ],
+    tools: TOOL_DEFINITIONS,
+    messages: anthropicMessages,
+  });
+
+  console.log(
+    `[protege] /chat stop=${res.stop_reason} usage=`,
+    res.usage
+  );
+
+  // Parse assistant response into OAITurn-shaped history entry + extract tool calls
+  const textParts: string[] = [];
+  const toolUses: Array<{ id: string; name: string; input: unknown }> = [];
+
+  for (const block of res.content) {
+    if (block.type === "text") {
+      textParts.push(block.text);
+    } else if (block.type === "tool_use") {
+      toolUses.push({ id: block.id, name: block.name, input: block.input });
+    }
+  }
+
+  const assistantText = textParts.join("\n").trim();
+
+  // Append assistant turn to the running conversation
+  messages.push({
+    role: "assistant",
+    content: assistantText || null,
+    tool_calls: toolUses.length
+      ? toolUses.map((tu) => ({
+          id: tu.id,
+          type: "function" as const,
+          function: {
+            name: tu.name,
+            arguments: JSON.stringify(tu.input ?? {}),
+          },
+        }))
+      : undefined,
+  });
+
+  // Server-side tools (no bounce to extension): remember / forget.
+  // If Claude only called these, execute locally and recurse with tool results.
+  const extensionCalls = toolUses.filter(
+    (tu) => tu.name !== "remember" && tu.name !== "forget"
+  );
+  const serverCalls = toolUses.filter(
+    (tu) => tu.name === "remember" || tu.name === "forget"
+  );
+
+  if (serverCalls.length > 0) {
+    // Execute each server tool inline and push tool_result turns
+    for (const tu of serverCalls) {
+      const args = (tu.input ?? {}) as Record<string, unknown>;
+      let resultText = "";
+      try {
+        if (tu.name === "remember") {
+          const row = await addMemory(
+            userId,
+            String(args.type ?? "context") as MemoryType,
+            String(args.content ?? "")
+          );
+          resultText = `Remembered (id=${row.id}, type=${row.type})`;
+        } else if (tu.name === "forget") {
+          const ok = await removeMemory(userId, String(args.id ?? ""));
+          resultText = ok ? "Forgotten" : "Nothing to forget (id not found)";
+        }
+      } catch (err) {
+        resultText = `ERROR: ${err instanceof Error ? err.message : String(err)}`;
+      }
+      messages.push({
+        role: "tool",
+        tool_call_id: tu.id,
+        name: tu.name,
+        content: resultText,
+      });
+    }
+
+    // If there are ALSO extension tool calls, return them now so the
+    // extension can run them. Otherwise the server has fully handled this
+    // round — but we still need to return something. Claude's next response
+    // will come on the next POST from the extension which already has the
+    // updated messages, so return those with no toolCalls.
+    if (extensionCalls.length > 0) {
+      const toolCalls: ToolCall[] = extensionCalls.map((tu) => ({
+        id: tu.id,
+        name: tu.name,
+        arguments:
+          typeof tu.input === "object" && tu.input !== null
+            ? (tu.input as Record<string, unknown>)
+            : {},
+      }));
+      return c.json<ChatRunResponse>({ toolCalls, messages });
+    }
+
+    // Pure server-tool round — synthesize a continuation by calling Claude
+    // again with the tool results appended. This keeps the UX instant
+    // (no extra client roundtrip) when Claude is just updating memory.
+    const { systemText: st2, anthropicMessages: am2 } = toAnthropic(messages);
+    const res2 = await anthropic.messages.create({
+      model: MODEL,
+      max_tokens: 4096,
+      system: [{ type: "text", text: st2, cache_control: { type: "ephemeral" } }],
+      tools: TOOL_DEFINITIONS,
+      messages: am2,
+    });
+    const text2 = res2.content
+      .filter((b) => b.type === "text")
+      .map((b) => (b as { type: "text"; text: string }).text)
+      .join("\n")
+      .trim();
+    const toolUses2 = res2.content.filter((b) => b.type === "tool_use") as Array<{
+      type: "tool_use";
+      id: string;
+      name: string;
+      input: unknown;
+    }>;
+
+    messages.push({
+      role: "assistant",
+      content: text2 || null,
+      tool_calls: toolUses2.length
+        ? toolUses2.map((tu) => ({
+            id: tu.id,
+            type: "function" as const,
+            function: { name: tu.name, arguments: JSON.stringify(tu.input ?? {}) },
+          }))
+        : undefined,
+    });
+
+    if (toolUses2.length > 0) {
+      const toolCalls: ToolCall[] = toolUses2
+        .filter((tu) => tu.name !== "remember" && tu.name !== "forget")
+        .map((tu) => ({
+          id: tu.id,
+          name: tu.name,
+          arguments:
+            typeof tu.input === "object" && tu.input !== null
+              ? (tu.input as Record<string, unknown>)
+              : {},
+        }));
+      if (toolCalls.length > 0) {
+        return c.json<ChatRunResponse>({ toolCalls, messages });
+      }
+    }
+
+    return c.json<ChatRunResponse>({
+      reply: mode === "voice" ? sanitizeForVoice(text2) : text2,
+      messages,
+    });
+  }
+
+  // If Claude wants tool calls → return them to the extension for execution
+  if (toolUses.length > 0) {
+    const toolCalls: ToolCall[] = toolUses.map((tu) => ({
+      id: tu.id,
+      name: tu.name,
+      arguments:
+        typeof tu.input === "object" && tu.input !== null
+          ? (tu.input as Record<string, unknown>)
+          : {},
+    }));
+    return c.json<ChatRunResponse>({ toolCalls, messages });
+  }
+
+  // Terminal: final text reply
+  return c.json<ChatRunResponse>({
+    reply: mode === "voice" ? sanitizeForVoice(assistantText) : assistantText,
+    messages,
+  });
+});
+
+/**
+ * Translate OpenAI-shaped turns → Anthropic format.
+ * Tool results must be embedded as `tool_result` content blocks on
+ * a user message in Anthropic's model (not a separate role).
+ */
+function toAnthropic(turns: OAITurn[]): {
+  systemText: string;
+  anthropicMessages: Anthropic.Messages.MessageParam[];
+} {
+  let systemText = MENTOR_SYSTEM_PROMPT;
+  const out: Anthropic.Messages.MessageParam[] = [];
+
+  for (const t of turns) {
+    if (t.role === "system") {
+      // Use the last system message as the system prompt
+      if (t.content) systemText = t.content;
+      continue;
+    }
+
+    if (t.role === "user") {
+      if (typeof t.content === "string") {
+        out.push({ role: "user", content: t.content });
+      }
+      continue;
+    }
+
+    if (t.role === "assistant") {
+      const blocks: Anthropic.Messages.ContentBlockParam[] = [];
+      if (t.content) {
+        blocks.push({ type: "text", text: t.content });
+      }
+      if (t.tool_calls && t.tool_calls.length > 0) {
+        for (const tc of t.tool_calls) {
+          let input: unknown = {};
+          try {
+            input = JSON.parse(tc.function.arguments);
+          } catch {}
+          blocks.push({
+            type: "tool_use",
+            id: tc.id,
+            name: tc.function.name,
+            input: input as Record<string, unknown>,
+          });
+        }
+      }
+      if (blocks.length > 0) {
+        out.push({ role: "assistant", content: blocks });
+      }
+      continue;
+    }
+
+    if (t.role === "tool") {
+      // Anthropic: tool_result goes inside a user message's content array.
+      // If the previous out-message is a user with content blocks, push into it.
+      // Otherwise start a new user message.
+      const block: Anthropic.Messages.ToolResultBlockParam = {
+        type: "tool_result",
+        tool_use_id: t.tool_call_id ?? "",
+        content: t.content ?? "",
+      };
+      const last = out[out.length - 1];
+      if (
+        last &&
+        last.role === "user" &&
+        Array.isArray(last.content)
+      ) {
+        last.content.push(block);
+      } else {
+        out.push({ role: "user", content: [block] });
+      }
+      continue;
+    }
+  }
+
+  return { systemText, anthropicMessages: out };
+}

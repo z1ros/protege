@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "types": ["node", "vscode"]
+  },
+  "include": ["src", "webview"]
+}

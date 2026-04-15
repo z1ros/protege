@@ -1,0 +1,307 @@
+/* ==========================================================
+   Header
+   ========================================================== */
+
+.header {
+  padding: 22px clamp(14px, 4vw, 24px) 14px;
+  border-bottom: 1px solid var(--glass-border);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  /* Always visible, even when overlays (profile / subscription / settings)
+     are open. Higher z-index than .overlay (60) so it paints on top. */
+  position: sticky;
+  top: 0;
+  z-index: 70;
+  background: rgba(7, 6, 13, 0.88);
+  backdrop-filter: blur(14px) saturate(1.1);
+  -webkit-backdrop-filter: blur(14px) saturate(1.1);
+}
+
+.brand-row {
+  display: flex;
+  align-items: center;
+  gap: clamp(8px, 2vw, 12px);
+  flex-wrap: wrap;
+  row-gap: 10px;
+}
+
+.brand-mark {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* "The Apex" is a 3D mark with its own internal shading, so the outer glow
+     is kept soft and electric — a faint crown halo above the apex plus a
+     deep-blue cinematic drop beneath, like a monolith catching stage light. */
+  filter:
+    drop-shadow(0 -1px 3px rgba(255, 255, 255, 0.35))
+    drop-shadow(0 2px 6px rgba(74, 158, 255, 0.32))
+    drop-shadow(0 8px 22px rgba(30, 99, 200, 0.32));
+  transition: filter 260ms ease, transform 260ms ease;
+}
+.brand-mark img,
+.brand-mark svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+}
+.brand-mark:hover {
+  transform: translateY(-1px) scale(1.05);
+  filter:
+    drop-shadow(0 -1px 4px rgba(255, 255, 255, 0.55))
+    drop-shadow(0 3px 8px rgba(74, 158, 255, 0.5))
+    drop-shadow(0 10px 28px rgba(30, 99, 200, 0.45));
+}
+
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1;
+  min-width: 0;
+  flex-shrink: 1;
+}
+.brand-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--glow);
+  letter-spacing: 0.01em;
+}
+.brand-tag {
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.brand-spacer { flex: 1; }
+
+.context-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  max-width: min(100%, 180px);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.context-pill .dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--electric);
+  box-shadow: 0 0 6px var(--electric);
+  flex-shrink: 0;
+}
+.context-pill.empty .dot { background: var(--text-ghost); box-shadow: none; }
+
+.tagline {
+  font-size: 15px;
+  line-height: 1.4;
+  color: var(--glow-soft);
+  padding: 0 2px;
+}
+.tagline em {
+  font-family: var(--font-serif);
+  font-style: italic;
+  color: var(--electric-soft);
+  font-weight: 500;
+}
+
+/* ==========================================================
+   Tabs
+   ========================================================== */
+
+/* Switcher-style tabs: refined filled pills, like the website chip nav.
+   Two tabs now (Chat / Concepts). Voice lives inside Chat as a modality. */
+.tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  align-self: flex-start;
+}
+.tab {
+  position: relative;
+  padding: 7px 14px;
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid transparent;
+  border-radius: 7px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  transition: color 160ms ease, background 160ms ease, border-color 160ms ease;
+}
+.tab:hover { color: var(--text); }
+.tab.active {
+  background: var(--glass-3);
+  color: var(--glow);
+  border-color: var(--glass-border-strong);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+.tab.active::after {
+  content: "";
+  position: absolute;
+  left: 12%;
+  right: 12%;
+  bottom: -5px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--electric), transparent);
+  box-shadow: 0 0 8px rgba(74, 158, 255, 0.55);
+}
+.tab-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--electric);
+  box-shadow: 0 0 6px var(--electric);
+}
+
+/* Header icon cluster — gear/user/coin buttons that open overlays */
+.header-actions {
+  display: flex;
+  gap: 2px;
+  margin-left: 6px;
+}
+.header-icon-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 150ms ease, background 150ms ease, border-color 150ms ease;
+}
+.header-icon-btn svg {
+  width: 15px;
+  height: 15px;
+}
+.header-icon-btn:hover {
+  color: var(--glow);
+  background: var(--glass-1);
+  border-color: var(--glass-border);
+}
+
+/* ==========================================================
+   IQ chip in header
+   ========================================================== */
+
+/* Code IQ pill — progress indicator that fills as IQ grows.
+   --iq-progress (0-100%) is set inline from the App state. */
+.iq-chip {
+  --iq-progress: 0%;
+  position: relative;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 14px 8px;
+  background: rgba(74, 158, 255, 0.06);
+  border: 1px solid rgba(74, 158, 255, 0.28);
+  border-radius: 999px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 2px 14px rgba(74, 158, 255, 0.1);
+  overflow: hidden;
+  isolation: isolate;
+}
+/* Electric progress fill behind the text */
+.iq-chip::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: var(--iq-progress);
+  background: linear-gradient(
+    90deg,
+    rgba(74, 158, 255, 0.35),
+    rgba(74, 158, 255, 0.12)
+  );
+  z-index: -1;
+  transition: width 700ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+/* Subtle inner highlight along the top edge */
+.iq-chip::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 10%;
+  right: 10%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.18), transparent);
+  pointer-events: none;
+}
+.iq-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--electric-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-weight: 500;
+  line-height: 1;
+  align-self: center;
+}
+.iq-value {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-weight: 500;
+  font-size: 17px;
+  color: var(--glow);
+  line-height: 1;
+  letter-spacing: -0.02em;
+  min-width: 14px;
+  text-align: right;
+}
+.iq-max {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  letter-spacing: 0.04em;
+  line-height: 1;
+  align-self: center;
+}
+
+.streak-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  margin-right: 6px;
+}
+.streak-flame {
+  font-size: 11px;
+  filter: grayscale(0.2) brightness(1.1);
+}
+.streak-value {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--glow);
+  letter-spacing: 0.04em;
+}
+
