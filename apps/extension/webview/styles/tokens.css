@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&family=Playfair+Display:ital,wght@1,400;1,500;1,600&family=Geist+Mono:wght@400;500&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&family=Playfair+Display:ital,wght@1,400;1,500;1,600&family=Space+Grotesk:wght@500;600;700&family=Geist+Mono:wght@400;500&display=swap");
 
 :root {
   --ink: #07060d;
@@ -12,12 +12,33 @@
   --text-ghost: rgba(245, 246, 250, 0.16);
 
   --electric: #4a9eff;
-  --electric-soft: #7cb3ff;
+  --electric-soft: #c8d4ea;  /* pale blue-white — reads as near-white, blue only for data viz */
   --electric-deep: #1a5ed8;
   --electric-ghost: rgba(74, 158, 255, 0.08);
 
+  /* ---- RGB triplets for alpha-driven usage ----------------------------
+     Use these with `rgba(var(--X-rgb), alpha)` any time you need a semi-
+     transparent color that should flip with the theme. The `[data-theme]`
+     overrides below swap these, so every call site auto-themes without
+     needing its own override. Always prefer these over raw rgba(...) for
+     surface/text/accent colors. Shadows (rgba(0,0,0,X)) are intentionally
+     left as-is because black shadows work on both themes. */
+  --text-rgb: 245, 246, 250;      /* primary glow / light text */
+  --ink-rgb: 7, 6, 13;            /* primary background */
+  --electric-rgb: 74, 158, 255;   /* brand accent */
+  --sky-rgb: 158, 204, 255;       /* pale blue accent */
+  --good-rgb: 160, 255, 200;      /* success / positive deltas */
+  --rose-rgb: 255, 143, 168;      /* error / warning rose */
+  --rose-soft-rgb: 255, 199, 224; /* soft pink for milestones */
+  --purple-rgb: 184, 99, 255;     /* purple accent */
+  --good-hi-rgb: 120, 255, 180;   /* bright success highlight */
+  --good-deep-rgb: 60, 200, 140;  /* deep success fill */
+  --electric-deep-rgb: 26, 94, 216; /* deep brand accent */
+
   --rose-soft: #ffc7e0;
   --sky-soft: #c6d8ff;
+  --rose: #ff8fa8;
+  --rose-hi: #ffb4c6;
 
   --glass-0: rgba(255, 255, 255, 0.03);
   --glass-1: rgba(255, 255, 255, 0.055);
@@ -30,6 +51,7 @@
 
   --font-sans: "Montserrat", ui-sans-serif, system-ui, sans-serif;
   --font-serif: "Playfair Display", Georgia, serif;
+  --font-display: "Space Grotesk", "Montserrat", ui-sans-serif, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
   --radius-sm: 8px;
@@ -37,6 +59,182 @@
   --radius-lg: 16px;
 
   color-scheme: dark;
+}
+
+/* ==========================================================
+   Light theme — applied via [data-theme="light"] on <html>.
+   App.tsx writes the attribute based on the user's toggle
+   (dark / light / auto → dark|light via prefers-color-scheme).
+
+   All rgba() calls now use CSS variable RGB triplets (--text-rgb,
+   --ink-rgb, --electric-rgb, etc.) so both dark and light themes
+   resolve correctly. Only the :root variable definitions and one
+   inline SVG data URI remain hardcoded (browser can't resolve vars
+   inside data: URLs).
+   ========================================================== */
+[data-theme="light"] {
+  --ink:   #f5f6fa;
+  --ink-2: #eceef6;
+  --ink-3: #e2e5ef;
+  --glow:        #0b0c14;
+  --glow-soft:   #1a1d2b;
+  --text:        #1a1d2b;
+  --text-dim:    rgba(26, 29, 43, 0.66);
+  --text-faint:  rgba(26, 29, 43, 0.42);
+  --text-ghost:  rgba(26, 29, 43, 0.18);
+
+  --electric:      #2e7ad6;
+  --electric-soft: #4a9eff;
+  --electric-deep: #134a9c;
+  --electric-ghost: rgba(46, 122, 214, 0.08);
+
+  --glass-0: rgba(7, 8, 16, 0.025);
+  --glass-1: rgba(7, 8, 16, 0.045);
+  --glass-2: rgba(7, 8, 16, 0.07);
+  --glass-3: rgba(7, 8, 16, 0.11);
+  --glass-border:        rgba(7, 8, 16, 0.12);
+  --glass-border-strong: rgba(7, 8, 16, 0.22);
+
+  /* RGB triplets flipped for light theme — alpha call sites inherit these */
+  --text-rgb: 26, 29, 43;         /* dark glyphs on light bg */
+  --ink-rgb: 245, 246, 250;       /* off-white surface */
+  --electric-rgb: 46, 122, 214;   /* darker accent for contrast */
+  --sky-rgb: 78, 142, 220;
+  --good-rgb: 46, 160, 100;
+  --rose-rgb: 220, 60, 100;
+  --rose-soft-rgb: 210, 85, 140;
+  --purple-rgb: 130, 60, 200;
+  --good-hi-rgb: 38, 140, 85;
+  --good-deep-rgb: 20, 110, 65;
+  --electric-deep-rgb: 15, 70, 170;
+  --rose: #c93958;
+  --rose-hi: #d85a74;
+
+  color-scheme: light;
+}
+
+/* ---------- Light-mode surface overrides ----------------------------------
+   The cinematic dark body (blue washes, vignette, blurred header) looks
+   terrible on a light base. Override the big surfaces to be clean and
+   neutral so the content cards carry the visual weight instead. */
+
+[data-theme="light"] body {
+  background:
+    /* Subtle grid — barely visible, keeps the "technical" texture */
+    linear-gradient(rgba(var(--text-rgb), 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(var(--text-rgb), 0.04) 1px, transparent 1px),
+    /* Barely-there blue wash — just a hint of brand color, not cinematic */
+    radial-gradient(ellipse 100% 60% at 50% 0%, rgba(var(--electric-rgb), 0.06), transparent 60%),
+    /* NO vignette in light mode — it muddied the whole thing */
+    var(--ink);
+  background-size:
+    40px 40px,
+    40px 40px,
+    auto,
+    auto;
+}
+
+[data-theme="light"] .header {
+  background: rgba(var(--ink-rgb), 0.92);
+  border-bottom-color: rgba(var(--text-rgb), 0.1);
+}
+
+[data-theme="light"] .overlay {
+  background: rgba(var(--ink-rgb), 0.88);
+}
+
+/* Dashboard cinematic bg images: screen blend disappears on light bg.
+   Multiply keeps them visible as faint tinted shadows. */
+[data-theme="light"] .has-cinema-bg::before {
+  mix-blend-mode: multiply;
+  opacity: 0.06;
+}
+
+/* Composer input area — clean white card instead of glass */
+[data-theme="light"] .composer {
+  background: rgba(var(--ink-rgb), 0.6);
+  border-color: rgba(var(--text-rgb), 0.12);
+}
+
+/* Message bubbles — user gets a subtle blue tint, assistant gets white card */
+[data-theme="light"] .msg-user .content {
+  background: rgba(var(--electric-rgb), 0.08);
+  color: var(--text);
+}
+[data-theme="light"] .msg-assistant .content {
+  background: var(--ink);
+  border: 1px solid rgba(var(--text-rgb), 0.08);
+}
+
+/* Tabs and pills — crisper borders on light */
+[data-theme="light"] .tabs,
+[data-theme="light"] .dash-pills {
+  background: rgba(var(--text-rgb), 0.04);
+  border-color: rgba(var(--text-rgb), 0.1);
+}
+
+/* Header icons — slightly more visible on light */
+[data-theme="light"] .header-icon-btn {
+  color: rgba(var(--text-rgb), 0.5);
+}
+[data-theme="light"] .header-icon-btn:hover {
+  color: var(--text);
+  background: rgba(var(--text-rgb), 0.06);
+}
+
+/* Brand mark glow — swap to darker shadow for light bg */
+[data-theme="light"] .brand-mark {
+  filter:
+    drop-shadow(0 0 2px rgba(var(--text-rgb), 0.2))
+    drop-shadow(0 2px 8px rgba(var(--electric-rgb), 0.18));
+}
+
+/* Cinematic plates inside overlays — slight desaturation so they
+   don't overpower the clean light surfaces */
+[data-theme="light"] .plate {
+  filter: saturate(0.85) contrast(0.95);
+}
+
+/* Smooth theme cross-fade. Keep the scope narrow to avoid animating
+   every CSS property on every element — that tanks scroll perf. We
+   only transition the three properties that actually change when
+   tokens swap: background-color, color, border-color. */
+html,
+body,
+#root {
+  transition:
+    background-color 420ms cubic-bezier(0.16, 1, 0.3, 1),
+    color 420ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.header,
+.dash-card,
+.dash-pill,
+.overlay,
+.overlay-close,
+.section-card,
+.plan-card,
+.tab,
+.tabs,
+.iq-chip,
+.streak-chip,
+.context-pill,
+.header-icon-btn,
+.composer,
+.msg,
+.brand-mark {
+  transition:
+    background-color 420ms cubic-bezier(0.16, 1, 0.3, 1),
+    color 420ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 420ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Respect the "Reduce motion" toggle — set via data-reduce-motion on html */
+[data-reduce-motion="1"] *,
+[data-reduce-motion="1"] *::before,
+[data-reduce-motion="1"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
 }
 
 * {
@@ -77,16 +275,16 @@ html { background: var(--ink); }
 
 body {
   background:
-    /* MINOR grid — clearly visible, 40px — matches landing page */
-    linear-gradient(rgba(255, 255, 255, 0.11) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.11) 1px, transparent 1px),
-    /* MAJOR grid — strong anchor lines, 120px */
-    linear-gradient(rgba(255, 255, 255, 0.22) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.22) 1px, transparent 1px),
+    /* MINOR grid — whisper quiet, 40px. */
+    linear-gradient(rgba(var(--text-rgb), 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(var(--text-rgb), 0.035) 1px, transparent 1px),
+    /* MAJOR grid — same opacity as minor, just wider spacing. */
+    linear-gradient(rgba(var(--text-rgb), 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(var(--text-rgb), 0.035) 1px, transparent 1px),
     /* Cinematic blue wash top-center — same as website hero */
-    radial-gradient(ellipse 100% 60% at 50% -10%, rgba(74, 158, 255, 0.22), transparent 60%),
-    radial-gradient(ellipse 70% 50% at 110% 110%, rgba(74, 158, 255, 0.1), transparent 60%),
-    radial-gradient(ellipse 50% 40% at -10% 90%, rgba(74, 158, 255, 0.08), transparent 60%),
+    radial-gradient(ellipse 100% 60% at 50% -10%, rgba(var(--electric-rgb), 0.22), transparent 60%),
+    radial-gradient(ellipse 70% 50% at 110% 110%, rgba(var(--electric-rgb), 0.1), transparent 60%),
+    radial-gradient(ellipse 50% 40% at -10% 90%, rgba(var(--electric-rgb), 0.08), transparent 60%),
     /* Edge vignette — pulls the eye to center like a theater */
     radial-gradient(ellipse 130% 85% at 50% 50%, transparent 35%, rgba(0, 0, 0, 0.72) 100%),
     var(--ink);

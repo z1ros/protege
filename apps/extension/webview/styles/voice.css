@@ -42,14 +42,27 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
   gap: 28px;
   padding: 32px 24px;
   animation: msg-in 320ms cubic-bezier(0.16, 1, 0.3, 1);
-  overflow: hidden;
+  overflow-y: auto;
+  /* min-height: 0 is the magic flex incantation — without it the child
+     won't shrink below its content size and overflow-y gets ignored. */
+  min-height: 0;
   scrollbar-width: none;
 }
 .voice::-webkit-scrollbar { display: none; width: 0; height: 0; }
+
+/* Auto-margin trick: pseudo-elements absorb free space, so content stays
+   centered when the panel is tall enough, and collapses to 0 when it isn't
+   (letting the content scroll naturally from the top). */
+.voice::before,
+.voice::after {
+  content: "";
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.voice > * { flex-shrink: 0; }
 
 .voice-headline {
   font-family: var(--font-serif);
@@ -77,31 +90,82 @@
   height: 150px;
   border-radius: 50%;
   background:
-    radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.35), transparent 50%),
+    radial-gradient(circle at 30% 25%, rgba(var(--text-rgb), 0.35), transparent 50%),
     radial-gradient(circle at 50% 50%, var(--electric-soft), var(--electric) 45%, var(--electric-deep) 100%);
   border: none;
   cursor: pointer;
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.12) inset,
-    0 20px 60px rgba(74, 158, 255, 0.35),
-    0 0 0 1px rgba(74, 158, 255, 0.3);
+    0 0 0 1px rgba(var(--text-rgb), 0.12) inset,
+    0 20px 60px rgba(var(--electric-rgb), 0.35),
+    0 0 0 1px rgba(var(--electric-rgb), 0.3);
   transition: transform 200ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 200ms ease;
   z-index: 2;
 }
 .voice-orb:hover { transform: scale(1.04); }
 .voice-orb:active { transform: scale(0.97); }
 
+.voice-orb.warming,
+.voice-orb[disabled] {
+  opacity: 0.35;
+  filter: saturate(0.4);
+  cursor: not-allowed;
+  animation: warming-pulse 2s infinite ease-in-out;
+}
+.voice-orb.warming:hover,
+.voice-orb[disabled]:hover { transform: none; }
+
+@keyframes warming-pulse {
+  0%, 100% { opacity: 0.3; }
+  50%      { opacity: 0.5; }
+}
+
+.voice-warmup-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 22px;
+  max-width: 320px;
+  border: 1px solid rgba(var(--electric-rgb), 0.25);
+  border-radius: 14px;
+  background: rgba(var(--electric-rgb), 0.06);
+  text-align: center;
+}
+.voice-warmup-spinner {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid rgba(var(--electric-rgb), 0.2);
+  border-top-color: rgb(var(--electric-rgb));
+  animation: spin 0.9s linear infinite;
+}
+.voice-warmup-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+.voice-warmup-sub {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 .voice-orb.listening {
   animation: breathe 2.4s infinite ease-in-out;
 }
 .voice-orb.speaking {
   background:
-    radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.35), transparent 50%),
+    radial-gradient(circle at 30% 25%, rgba(var(--text-rgb), 0.35), transparent 50%),
     radial-gradient(circle at 50% 50%, var(--electric-soft), var(--electric) 45%, var(--electric-deep) 100%);
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.14) inset,
-    0 20px 60px rgba(74, 158, 255, 0.45),
-    0 0 0 1px rgba(74, 158, 255, 0.35);
+    0 0 0 1px rgba(var(--text-rgb), 0.14) inset,
+    0 20px 60px rgba(var(--electric-rgb), 0.45),
+    0 0 0 1px rgba(var(--electric-rgb), 0.35);
   animation: breathe 1.6s infinite ease-in-out;
 }
 
@@ -227,6 +291,9 @@
   border-radius: 999px;
 }
 .voice-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   padding: 6px 14px;
   background: transparent;
   color: var(--text-dim);
@@ -270,9 +337,9 @@
 }
 .voice-type-input::placeholder { color: var(--text-faint); }
 .voice-type-input:focus {
-  border-color: rgba(74, 158, 255, 0.55);
+  border-color: rgba(var(--electric-rgb), 0.55);
   background: var(--glass-2);
-  box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.12);
+  box-shadow: 0 0 0 3px rgba(var(--electric-rgb), 0.12);
 }
 .voice-type-fallback .send-btn {
   height: 40px;
@@ -321,8 +388,8 @@
   align-items: center;
   gap: 8px;
   padding: 6px 14px;
-  background: rgba(74, 158, 255, 0.08);
-  border: 1px solid rgba(74, 158, 255, 0.28);
+  background: rgba(var(--electric-rgb), 0.08);
+  border: 1px solid rgba(var(--electric-rgb), 0.28);
   border-radius: 999px;
   font-size: 11px;
   color: var(--electric-soft);
@@ -338,11 +405,26 @@
   animation: pulse 1.4s infinite ease-in-out;
 }
 
+.voice-barge-hint {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  letter-spacing: 0.01em;
+  opacity: 0.75;
+}
+.voice-barge-hint strong {
+  color: var(--electric-soft);
+  font-weight: 600;
+}
+
 .voice-orb-wrap.conversation .voice-orb {
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.18) inset,
-    0 0 0 2px rgba(74, 158, 255, 0.35),
-    0 20px 60px rgba(74, 158, 255, 0.45);
+    0 0 0 1px rgba(var(--text-rgb), 0.18) inset,
+    0 0 0 2px rgba(var(--electric-rgb), 0.35),
+    0 20px 60px rgba(var(--electric-rgb), 0.45);
 }
 
 
@@ -393,10 +475,91 @@
 }
 .mic-action-btn.primary {
   background: linear-gradient(135deg, var(--electric), var(--electric-deep));
-  border-color: rgba(74, 158, 255, 0.55);
+  border-color: rgba(var(--electric-rgb), 0.55);
   color: var(--glow);
-  box-shadow: 0 4px 18px rgba(74, 158, 255, 0.35);
+  box-shadow: 0 4px 18px rgba(var(--electric-rgb), 0.35);
 }
 .mic-action-btn.primary:hover {
-  box-shadow: 0 6px 26px rgba(74, 158, 255, 0.5);
+  box-shadow: 0 6px 26px rgba(var(--electric-rgb), 0.5);
+}
+
+.voice-mic-hint-stuck {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed rgba(var(--text-rgb), 0.08);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  max-width: 340px;
+}
+.voice-mic-hint-stuck-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: center;
+  line-height: 1.5;
+}
+.mic-action-btn.danger {
+  background: rgba(var(--rose-rgb), 0.12);
+  border-color: rgba(var(--rose-rgb), 0.35);
+  color: var(--rose);
+}
+.mic-action-btn.danger:hover {
+  background: rgba(var(--rose-rgb), 0.2);
+  border-color: rgba(var(--rose-rgb), 0.5);
+  color: var(--rose-hi);
+}
+.voice-mic-hint-stuck-why {
+  font-size: 10px;
+  color: var(--text-faint);
+  text-align: center;
+  line-height: 1.55;
+  max-width: 300px;
+  font-style: italic;
+}
+
+/* Wake word toggle button */
+.wake-word-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: color 150ms, background 150ms, border-color 150ms, box-shadow 150ms;
+  margin-top: 4px;
+}
+
+.wake-word-toggle svg {
+  width: 14px;
+  height: 14px;
+}
+
+.wake-word-toggle:hover {
+  color: var(--glow);
+  background: var(--glass-2);
+  border-color: var(--glass-border-strong);
+}
+
+.wake-word-toggle.active {
+  color: var(--electric);
+  background: rgba(var(--electric-rgb), 0.12);
+  border-color: rgba(var(--electric-rgb), 0.35);
+  box-shadow: 0 0 12px rgba(var(--electric-rgb), 0.15);
+}
+
+.wake-word-toggle.active svg {
+  animation: wake-breathe 2s ease-in-out infinite;
+}
+
+@keyframes wake-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }

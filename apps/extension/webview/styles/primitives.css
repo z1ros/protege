@@ -11,7 +11,7 @@
   background: var(--ink-2);
   box-shadow:
     0 8px 40px rgba(0, 0, 0, 0.55),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    inset 0 1px 0 rgba(var(--text-rgb), 0.06);
   isolation: isolate;
   animation: plate-in 520ms cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -40,10 +40,10 @@
   inset: 0;
   background: linear-gradient(
     180deg,
-    rgba(7, 6, 13, 0) 0%,
-    rgba(7, 6, 13, 0.25) 45%,
-    rgba(7, 6, 13, 0.85) 88%,
-    rgba(7, 6, 13, 0.96) 100%
+    rgba(var(--ink-rgb), 0) 0%,
+    rgba(var(--ink-rgb), 0.25) 45%,
+    rgba(var(--ink-rgb), 0.85) 88%,
+    rgba(var(--ink-rgb), 0.96) 100%
   );
   pointer-events: none;
 }
@@ -68,7 +68,7 @@
   text-transform: uppercase;
   letter-spacing: 0.18em;
   color: var(--glow);
-  background: rgba(7, 6, 13, 0.55);
+  background: rgba(var(--ink-rgb), 0.55);
   border: 1px solid var(--glass-border);
   border-radius: 999px;
   padding: 5px 10px;
@@ -137,10 +137,10 @@ html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; width: 0; heig
   align-items: center;
   gap: 8px;
   padding: 8px 14px;
-  background: linear-gradient(135deg, rgba(74, 158, 255, 0.22), rgba(26, 94, 216, 0.12));
-  border: 1px solid rgba(74, 158, 255, 0.45);
+  background: linear-gradient(135deg, rgba(var(--electric-rgb), 0.22), rgba(var(--electric-deep-rgb), 0.12));
+  border: 1px solid rgba(var(--electric-rgb), 0.45);
   border-radius: 999px;
-  box-shadow: 0 4px 24px rgba(74, 158, 255, 0.35);
+  box-shadow: 0 4px 24px rgba(var(--electric-rgb), 0.35);
   animation: toast-in 260ms cubic-bezier(0.16, 1, 0.3, 1),
              toast-out 400ms cubic-bezier(0.4, 0, 1, 1) 3100ms forwards;
   pointer-events: none;
@@ -162,14 +162,14 @@ html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; width: 0; heig
 }
 
 .iq-toast.toast-milestone {
-  background: linear-gradient(135deg, rgba(255, 199, 224, 0.26), rgba(184, 99, 255, 0.12));
-  border-color: rgba(255, 199, 224, 0.55);
-  box-shadow: 0 4px 24px rgba(184, 99, 255, 0.4);
+  background: linear-gradient(135deg, rgba(var(--rose-soft-rgb), 0.26), rgba(var(--purple-rgb), 0.12));
+  border-color: rgba(var(--rose-soft-rgb), 0.55);
+  box-shadow: 0 4px 24px rgba(var(--purple-rgb), 0.4);
 }
 .iq-toast.toast-fix {
-  background: linear-gradient(135deg, rgba(120, 255, 180, 0.2), rgba(60, 200, 140, 0.1));
-  border-color: rgba(120, 255, 180, 0.45);
-  box-shadow: 0 4px 24px rgba(120, 255, 180, 0.35);
+  background: linear-gradient(135deg, rgba(var(--good-hi-rgb), 0.2), rgba(var(--good-deep-rgb), 0.1));
+  border-color: rgba(var(--good-hi-rgb), 0.45);
+  box-shadow: 0 4px 24px rgba(var(--good-hi-rgb), 0.35);
 }
 
 
@@ -234,6 +234,6 @@ html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; width: 0; heig
 .nudge,
 .prompt-btn {
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    inset 0 1px 0 rgba(var(--text-rgb), 0.07),
     0 1px 2px rgba(0, 0, 0, 0.4);
 }

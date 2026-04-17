@@ -23,3 +23,14 @@
   line-height: 1;
 }
 
+/* Space Grotesk display numbers — clean geometric alternative to serif-num.
+   Use for dashboard gauges, percentages, and technical readouts where italic
+   serif feels too editorial. */
+.display-num {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  color: var(--glow);
+  line-height: 1;
+}
+

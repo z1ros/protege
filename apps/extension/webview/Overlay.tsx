@@ -29,21 +29,6 @@ export function Overlay({ open, onClose, children, animKey }: OverlayProps) {
 
   return (
     <div className="overlay" key={animKey}>
-      <button
-        className="overlay-close"
-        onClick={onClose}
-        aria-label="Close"
-      >
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-        >
-          <path d="M6 6L18 18M18 6L6 18" />
-        </svg>
-      </button>
       <div className="overlay-scroll">{children}</div>
     </div>
   );

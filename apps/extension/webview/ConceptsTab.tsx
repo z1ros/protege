@@ -4,12 +4,14 @@ import type {
   ConceptRow,
   DailyIqPoint,
   GainEvent,
+  IqPillars,
   MilestoneSummary,
   Recommendation,
   StreakInfo,
 } from "@protege/types";
 import { CinematicPlate } from "./CinematicPlate.js";
 import { IconStar, IconCheck, IconPlus } from "./icons.js";
+import { ConceptsDashboard } from "./ConceptsDashboard.js";
 
 interface Props {
   codeIq: number;
@@ -24,6 +26,7 @@ interface Props {
   dailyIq: DailyIqPoint[];
   milestones: MilestoneSummary[];
   recommendations: Recommendation[];
+  pillars: IqPillars | null;
 }
 
 const LEVEL_LABEL: Record<string, string> = {
@@ -48,6 +51,7 @@ export function ConceptsTab({
   dailyIq,
   milestones,
   recommendations,
+  pillars,
 }: Props) {
   const [view, setView] = useState<View>("overview");
   const [clusterFilter, setClusterFilter] = useState<string | null>(null);
@@ -61,47 +65,6 @@ export function ConceptsTab({
 
   return (
     <div className="concepts">
-      <CinematicPlate
-        image="cathedral"
-        caption="CODE IQ · LIVE"
-        ratio="4:3"
-        intensity={0.48}
-      >
-        <div className="iq-hero-over">
-          <div className="microcaps">Your Code IQ</div>
-          <div className="serif-num iq-hero-num">{codeIq}</div>
-          <div className="iq-hero-sub">
-            {totalConcepts} / {ruleCount} concepts · max {maxIq}
-            {bonusIq > 0 && <> · <span className="bonus-note">+{bonusIq} bonus</span></>}
-          </div>
-          <div className="iq-bar">
-            <div className="iq-bar-fill" style={{ width: `${pctOfCeiling}%` }} />
-          </div>
-          {dailyIq.length > 1 && <Sparkline points={dailyIq} />}
-        </div>
-      </CinematicPlate>
-
-      <div className="hero-stats">
-        <HeroStat
-          label="Streak"
-          value={`${streak.current}`}
-          unit="d"
-          sub={`best ${streak.longest}d`}
-        />
-        <HeroStat
-          label="Clusters"
-          value={`${clusters.filter((c) => c.concepts > 0).length}`}
-          unit={`/${clusters.length}`}
-          sub="touched"
-        />
-        <HeroStat
-          label="Milestones"
-          value={`${unlockedCount}`}
-          unit={`/${milestones.length}`}
-          sub="unlocked"
-        />
-      </div>
-
       <div className="concepts-views">
         <button
           className={`cv-tab ${view === "overview" ? "active" : ""}`}
@@ -130,18 +93,18 @@ export function ConceptsTab({
       </div>
 
       {view === "overview" && (
-        <>
-          {recommendations.length > 0 && (
-            <RecommendationsBlock recs={recommendations} />
-          )}
-          <ClustersView
-            clusters={clusters}
-            onPick={(cl) => {
-              setClusterFilter(cl);
-              setView("concepts");
-            }}
-          />
-        </>
+        <ConceptsDashboard
+          codeIq={codeIq}
+          maxIq={maxIq}
+          totalConcepts={totalConcepts}
+          ruleCount={ruleCount}
+          concepts={concepts}
+          dailyIq={dailyIq}
+          recentGains={recentGains}
+          streak={streak}
+          clusters={clusters}
+          pillars={pillars}
+        />
       )}
 
       {view === "concepts" && (

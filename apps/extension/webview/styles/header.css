@@ -3,17 +3,17 @@
    ========================================================== */
 
 .header {
-  padding: 22px clamp(14px, 4vw, 24px) 14px;
+  padding: 14px clamp(12px, 3.5vw, 20px) 10px;
   border-bottom: 1px solid var(--glass-border);
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
   /* Always visible, even when overlays (profile / subscription / settings)
      are open. Higher z-index than .overlay (60) so it paints on top. */
   position: sticky;
   top: 0;
   z-index: 70;
-  background: rgba(7, 6, 13, 0.88);
+  background: rgba(var(--ink-rgb), 0.88);
   backdrop-filter: blur(14px) saturate(1.1);
   -webkit-backdrop-filter: blur(14px) saturate(1.1);
 }
@@ -26,20 +26,43 @@
   row-gap: 10px;
 }
 
+/* Brand home button — wraps the logo + title. Clicking it closes any open
+   overlay and takes the user back to the chat view. Button reset so it
+   looks visually identical to plain content but acts as a link/affordance. */
+.brand-home {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  border-radius: 10px;
+  transition: opacity 180ms ease;
+}
+.brand-home:hover { opacity: 0.88; }
+.brand-home:focus,
+.brand-home:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
 .brand-mark {
-  width: 36px;
-  height: 36px;
+  width: 22px;
+  height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
-  /* "The Apex" is a 3D mark with its own internal shading, so the outer glow
-     is kept soft and electric — a faint crown halo above the apex plus a
-     deep-blue cinematic drop beneath, like a monolith catching stage light. */
+  /* "Orbit" is a minimal two-shape mark — one gentle white glow is enough.
+     Keep it subtle so the symbol reads, not the halo. */
   filter:
-    drop-shadow(0 -1px 3px rgba(255, 255, 255, 0.35))
-    drop-shadow(0 2px 6px rgba(74, 158, 255, 0.32))
-    drop-shadow(0 8px 22px rgba(30, 99, 200, 0.32));
-  transition: filter 260ms ease, transform 260ms ease;
+    drop-shadow(0 0 2px rgba(var(--text-rgb), 0.5))
+    drop-shadow(0 2px 8px rgba(var(--text-rgb), 0.15));
+  transition: filter 240ms ease, transform 240ms ease;
 }
 .brand-mark img,
 .brand-mark svg {
@@ -49,11 +72,10 @@
   object-fit: contain;
 }
 .brand-mark:hover {
-  transform: translateY(-1px) scale(1.05);
+  transform: rotate(-12deg);
   filter:
-    drop-shadow(0 -1px 4px rgba(255, 255, 255, 0.55))
-    drop-shadow(0 3px 8px rgba(74, 158, 255, 0.5))
-    drop-shadow(0 10px 28px rgba(30, 99, 200, 0.45));
+    drop-shadow(0 0 3px rgba(var(--text-rgb), 0.7))
+    drop-shadow(0 3px 12px rgba(var(--text-rgb), 0.25));
 }
 
 .brand-text {
@@ -65,16 +87,11 @@
   flex-shrink: 1;
 }
 .brand-name {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--glow);
   letter-spacing: 0.01em;
-}
-.brand-tag {
-  font-size: 10px;
-  color: var(--text-dim);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  line-height: 1;
 }
 
 .brand-spacer { flex: 1; }
@@ -100,8 +117,8 @@
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--electric);
-  box-shadow: 0 0 6px var(--electric);
+  background: var(--glow);
+  box-shadow: 0 0 4px rgba(var(--text-rgb), 0.4);
   flex-shrink: 0;
 }
 .context-pill.empty .dot { background: var(--text-ghost); box-shadow: none; }
@@ -127,22 +144,22 @@
    Two tabs now (Chat / Concepts). Voice lives inside Chat as a modality. */
 .tabs {
   display: inline-flex;
-  gap: 4px;
-  padding: 4px;
+  gap: 2px;
+  padding: 2px;
   background: var(--glass-1);
   border: 1px solid var(--glass-border);
-  border-radius: 10px;
+  border-radius: 8px;
   align-self: flex-start;
 }
 .tab {
   position: relative;
-  padding: 7px 14px;
+  padding: 5px 11px;
   background: transparent;
   color: var(--text-dim);
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: 6px;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 500;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -157,7 +174,7 @@
   background: var(--glass-3);
   color: var(--glow);
   border-color: var(--glass-border-strong);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1px 0 rgba(var(--text-rgb), 0.08);
 }
 .tab.active::after {
   content: "";
@@ -166,26 +183,26 @@
   right: 12%;
   bottom: -5px;
   height: 1px;
-  background: linear-gradient(90deg, transparent, var(--electric), transparent);
-  box-shadow: 0 0 8px rgba(74, 158, 255, 0.55);
+  background: linear-gradient(90deg, transparent, var(--glow), transparent);
+  box-shadow: 0 0 6px rgba(var(--text-rgb), 0.35);
 }
 .tab-dot {
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--electric);
-  box-shadow: 0 0 6px var(--electric);
+  background: var(--glow);
+  box-shadow: 0 0 4px rgba(var(--text-rgb), 0.4);
 }
 
 /* Header icon cluster — gear/user/coin buttons that open overlays */
 .header-actions {
   display: flex;
-  gap: 2px;
-  margin-left: 6px;
+  gap: 1px;
+  margin-left: 4px;
 }
 .header-icon-btn {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -197,13 +214,21 @@
   transition: color 150ms ease, background 150ms ease, border-color 150ms ease;
 }
 .header-icon-btn svg {
-  width: 15px;
-  height: 15px;
+  width: 13px;
+  height: 13px;
 }
 .header-icon-btn:hover {
   color: var(--glow);
   background: var(--glass-1);
   border-color: var(--glass-border);
+}
+/* Active state — shown when the corresponding overlay is open so the user
+   can see which panel they're in and that clicking again will close it. */
+.header-icon-btn.active {
+  color: var(--glow);
+  background: var(--glass-2);
+  border-color: var(--glass-border-strong);
+  box-shadow: inset 0 1px 0 rgba(var(--text-rgb), 0.08);
 }
 
 /* ==========================================================
@@ -219,12 +244,12 @@
   align-items: baseline;
   gap: 10px;
   padding: 7px 14px 8px;
-  background: rgba(74, 158, 255, 0.06);
-  border: 1px solid rgba(74, 158, 255, 0.28);
+  background: rgba(var(--electric-rgb), 0.06);
+  border: 1px solid rgba(var(--electric-rgb), 0.28);
   border-radius: 999px;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.06),
-    0 2px 14px rgba(74, 158, 255, 0.1);
+    inset 0 1px 0 rgba(var(--text-rgb), 0.06),
+    0 2px 14px rgba(var(--electric-rgb), 0.1);
   overflow: hidden;
   isolation: isolate;
 }
@@ -236,8 +261,8 @@
   width: var(--iq-progress);
   background: linear-gradient(
     90deg,
-    rgba(74, 158, 255, 0.35),
-    rgba(74, 158, 255, 0.12)
+    rgba(var(--electric-rgb), 0.35),
+    rgba(var(--electric-rgb), 0.12)
   );
   z-index: -1;
   transition: width 700ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -250,7 +275,7 @@
   left: 10%;
   right: 10%;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.18), transparent);
+  background: linear-gradient(90deg, transparent, rgba(var(--text-rgb), 0.18), transparent);
   pointer-events: none;
 }
 .iq-label {
@@ -283,25 +308,135 @@
   align-self: center;
 }
 
-.streak-chip {
+/* Combined streak + IQ status chip — single pill instead of two */
+.status-chip {
   display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 6px 10px;
+  align-items: baseline;
+  gap: 6px;
+  padding: 5px 10px;
   background: var(--glass-1);
   border: 1px solid var(--glass-border);
   border-radius: 999px;
-  margin-right: 6px;
+  transition: background 150ms ease, border-color 150ms ease;
 }
-.streak-flame {
-  font-size: 11px;
-  filter: grayscale(0.2) brightness(1.1);
+.status-chip:hover {
+  background: var(--glass-2);
+  border-color: var(--glass-border-strong);
 }
-.streak-value {
+.status-flame {
+  display: inline-flex;
+  align-self: center;
+  color: var(--text-dim);
+}
+.status-streak {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   color: var(--glow);
   letter-spacing: 0.04em;
+  line-height: 1;
+  align-self: center;
+}
+.status-sep {
+  color: var(--text-faint);
+  font-size: 9px;
+  line-height: 1;
+  align-self: center;
+  margin: 0 1px;
+}
+.status-iq {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--glow);
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+.status-iq-label {
+  font-size: 7px;
+  color: var(--text-dim);
+  letter-spacing: 0.14em;
+  line-height: 1;
 }
 
+/* Back-compat — old chips still referenced elsewhere */
+.streak-chip, .iq-mini { display: none; }
+
+/* Scan button — active state (live mode on) */
+.header-icon-btn.scan-btn.active {
+  color: var(--electric);
+  background: rgba(var(--electric-rgb), 0.15);
+  border-color: rgba(var(--electric-rgb), 0.4);
+  box-shadow: 0 0 8px rgba(var(--electric-rgb), 0.2);
+}
+
+/* Scan button — pulses blue while a scan is in flight */
+.header-icon-btn.scan-btn.scanning {
+  color: var(--electric);
+  background: rgba(var(--electric-rgb), 0.12);
+  border-color: rgba(var(--electric-rgb), 0.4);
+  animation: scan-pulse 1.2s infinite ease-in-out;
+}
+@keyframes scan-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(var(--electric-rgb), 0.45); }
+  50%      { box-shadow: 0 0 0 4px rgba(var(--electric-rgb), 0); }
+}
+.header-icon-btn.scan-btn.scanning svg {
+  animation: scan-spin 1.8s linear infinite;
+}
+@keyframes scan-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* GitHub sign-in button — shown when user is not authenticated */
+.header-sign-in {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 150ms, border-color 150ms, color 150ms;
+}
+.header-sign-in svg { width: 13px; height: 13px; }
+.header-sign-in:hover {
+  background: var(--glass-2);
+  border-color: var(--glass-border-strong);
+  color: var(--glow);
+}
+
+/* Avatar button — shown when user is authenticated */
+.header-avatar-btn {
+  padding: 0 !important;
+  border-radius: 50% !important;
+  overflow: hidden;
+}
+.header-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: block;
+}
+.header-avatar-letter {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, var(--electric), var(--electric-deep));
+  color: var(--glow);
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+}

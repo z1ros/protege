@@ -8,6 +8,7 @@ import { meRoute } from "./routes/me.js";
 import { testRoute } from "./routes/test.js";
 import { ttsRoute, sttRoute } from "./routes/tts.js";
 import { memoryRoute } from "./routes/memory.js";
+import { voiceRoute } from "./routes/voice.js";
 
 const app = new Hono();
 
@@ -22,6 +23,12 @@ app.onError((err, c) => {
 
 app.get("/", (c) => c.json({ name: "protege-backend", status: "ok" }));
 
+app.post("/log", async (c) => {
+  const { tag, msg } = (await c.req.json()) as { tag?: string; msg?: string };
+  console.log(`[${tag ?? "ext"}] ${msg ?? ""}`);
+  return c.json({ ok: true });
+});
+
 app.route("/test", testRoute);
 app.route("/chat", chatRoute);
 app.route("/analyze", analyzeRoute);
@@ -30,6 +37,7 @@ app.route("/me", meRoute);
 app.route("/tts", ttsRoute);
 app.route("/stt", sttRoute);
 app.route("/memory", memoryRoute);
+app.route("/voice", voiceRoute);
 
 const port = Number(process.env.PORT ?? 8787);
 serve({ fetch: app.fetch, port });

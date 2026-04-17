@@ -6,24 +6,30 @@ import type {
   DailyIqPoint,
   Finding,
   GainEvent,
+  IqBreakdown,
+  IqPillars,
+  LevelInfo,
   MilestoneSummary,
   Recommendation,
   StreakInfo,
+  SynergyResult,
   UnpromptedNudge,
+  VelocityInfo,
 } from "@protege/types";
 import { vscode, onHostMessage } from "./vscode.js";
 import { VoiceMode } from "./VoiceMode.js";
 import { ConceptsTab } from "./ConceptsTab.js";
+import { LiveTab } from "./LiveTab.js";
+import { ChatSearchBar } from "./ChatSearchBar.js";
 import { CinematicPlate } from "./CinematicPlate.js";
+import { AssistantMarkdown } from "./AssistantMarkdown.js";
 import { Overlay } from "./Overlay.js";
+import { StreakJournal } from "./StreakJournal.js";
 // Overlay pages are heavy (cinematic hero + dashboard widgets) and only
 // render when the user explicitly opens them via the header icons. Splitting
 // them into their own chunks keeps the initial bundle lean.
 const ProfilePage = lazy(() =>
   import("./ProfilePage.js").then((m) => ({ default: m.ProfilePage }))
-);
-const SettingsPage = lazy(() =>
-  import("./SettingsPage.js").then((m) => ({ default: m.SettingsPage }))
 );
 const SubscriptionPage = lazy(() =>
   import("./SubscriptionPage.js").then((m) => ({ default: m.SubscriptionPage }))
@@ -42,7 +48,7 @@ import {
 } from "./icons.js";
 import protegeLogoUrl from "./protege-logo.svg";
 
-type Mode = "chat" | "concepts";
+type Mode = "chat" | "concepts" | "live";
 type ChatInputMode = "text" | "voice";
 
 const QUICK_PROMPTS: Array<{ icon: React.ReactNode; label: string }> = [
@@ -80,9 +86,37 @@ export function App() {
   const [dailyIq, setDailyIq] = useState<DailyIqPoint[]>([]);
   const [milestones, setMilestones] = useState<MilestoneSummary[]>([]);
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
+  const [pillars, setPillars] = useState<IqPillars | null>(null);
+  const [level, setLevel] = useState<LevelInfo | null>(null);
+  const [synergies, setSynergies] = useState<SynergyResult | null>(null);
+  const [velocityInfo, setVelocityInfo] = useState<VelocityInfo | null>(null);
+  const [breakdown, setBreakdown] = useState<IqBreakdown | null>(null);
   const [toast, setToast] = useState<GainEvent | null>(null);
-  const [overlay, setOverlay] = useState<"profile" | "settings" | "subscription" | null>(null);
+  const [overlay, setOverlay] = useState<"profile" | "subscription" | null>(null);
+  const [authUser, setAuthUser] = useState<{
+    githubId: string;
+    login: string;
+    email: string | null;
+    avatarUrl: string | null;
+  } | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [liveMode, setLiveMode] = useState(false);
+  const [streakOpen, setStreakOpen] = useState(false);
   const [nudges, setNudges] = useState<UnpromptedNudge[]>([]);
+  const [modelStatus, setModelStatus] = useState<{
+    ready: boolean;
+    loading: boolean;
+    error: string | null;
+    downloadProgress: number;
+  }>({ ready: false, loading: false, error: null, downloadProgress: 0 });
+  // Theme state — "dark" (default) | "light" | "auto" (respects OS)
+  // Persisted to localStorage so it survives reloads. The actual DOM
+  // attribute update happens in a useEffect below; everything else in
+  // the app reads theme via CSS variables (see styles/tokens.css).
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    const stored = typeof localStorage !== "undefined" ? localStorage.getItem("protege:theme") : null;
+    return stored === "light" ? "light" : "dark";
+  });
 
   const endRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLElement>(null);
@@ -91,7 +125,10 @@ export function App() {
 
   useEffect(() => {
     const off = onHostMessage((msg) => {
-      if (msg.type === "chat/append") {
+      if (msg.type === "chat/history") {
+        // Restore persisted history on mount — conversations survive reloads
+        setMessages(msg.messages);
+      } else if (msg.type === "chat/append") {
         setMessages((m) => [...m, msg.message]);
         setToolActivity([]);
       } else if (msg.type === "chat/loading") {
@@ -124,6 +161,11 @@ export function App() {
         setDailyIq(msg.dailyIq);
         setMilestones(msg.milestones);
         setRecommendations(msg.recommendations);
+        setPillars(msg.pillars);
+        setLevel(msg.level);
+        setSynergies(msg.synergies);
+        setVelocityInfo(msg.velocity);
+        setBreakdown(msg.breakdown);
       } else if (msg.type === "iq/gain") {
         setCodeIq(msg.codeIq);
         const top = [...msg.gains].sort((a, b) => b.deltaIq - a.deltaIq)[0];
@@ -136,6 +178,42 @@ export function App() {
         setFileName(msg.file ? msg.file.path : null);
       } else if (msg.type === "teach/finding") {
         teachFinding(msg.finding);
+      } else if (msg.type === "chat/autoSend") {
+        // Triggered from a highlight hover's "Teach me more" link.
+        // Ensure we're in the chat tab, then send the prompt as if
+        // the user typed it.
+        setMode("chat");
+        setChatInputMode("text");
+        sendMessage(msg.message);
+      } else if (msg.type === "liveReview/state") {
+        setLiveMode(msg.active);
+      } else if (msg.type === "ai/modelStatus") {
+        setModelStatus({
+          ready: msg.ready,
+          loading: msg.loading,
+          error: msg.error,
+          downloadProgress: msg.downloadProgress,
+        });
+      } else if (msg.type === "scan/started") {
+        setScanning(true);
+      } else if (msg.type === "scan/done") {
+        setScanning(false);
+        if (msg.summary) {
+          setMode("chat");
+          setChatInputMode("text");
+          const now = new Date().toISOString();
+          setMessages((m) => [
+            ...m,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: msg.summary,
+              createdAt: now,
+            },
+          ]);
+        }
+      } else if (msg.type === "auth/user") {
+        setAuthUser(msg.user);
       } else if (msg.type === "watcher/nudge") {
         setNudges((n) => [...n.slice(-4), msg.nudge]);
       } else if (msg.type === "watcher/dismiss") {
@@ -166,6 +244,11 @@ export function App() {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("protege:theme", theme);
+  }, [theme]);
 
   // Auto-grow textarea — like Cursor/Claude. Resets to 0 first so shrinking works.
   useEffect(() => {
@@ -238,54 +321,91 @@ export function App() {
       )}
       <header ref={headerRef} className="header">
         <div className="brand-row">
-          <div className="brand-mark">
-            <img src={protegeLogoUrl} alt="Protege" />
-          </div>
-          <div className="brand-text">
-            <div className="brand-name">Protege</div>
-            <div className="brand-tag">AI Mentor</div>
-          </div>
-          <div className="brand-spacer" />
-          {streak.current > 0 && (
-            <div
-              className="streak-chip"
-              title={`Longest: ${streak.longest} day${streak.longest === 1 ? "" : "s"}`}
-            >
-              <span className="streak-flame"><IconFlame size={12} /></span>
-              <span className="streak-value">{streak.current}d</span>
-            </div>
-          )}
-          <div
-            className="iq-chip"
-            title={`${totalConcepts} / ${ruleCount || "?"} concepts · max ${maxIq}${bonusIq > 0 ? ` · +${bonusIq} from milestones` : ""}`}
-            style={{
-              ["--iq-progress" as never]: `${Math.min(
-                100,
-                maxIq > 0 ? (codeIq / maxIq) * 100 : 0
-              )}%`,
+          <button
+            type="button"
+            className="brand-home"
+            onClick={() => {
+              setOverlay(null);
+              setMode("chat");
             }}
+            title="Home"
+            aria-label="Back to chat"
           >
-            <span className="iq-label">Code IQ</span>
-            <span className="iq-value">{codeIq}</span>
-            <span className="iq-max">/ {maxIq}</span>
+            <div className="brand-mark">
+              <img src={protegeLogoUrl} alt="Protege" />
+            </div>
+            <div className="brand-name">Protege</div>
+          </button>
+          <div className="brand-spacer" />
+          <div
+            className="status-chip"
+            title={`Code IQ ${codeIq} / ${maxIq}${streak.current > 0 ? ` · ${streak.current}d streak (longest ${streak.longest}d)` : ""}`}
+            onClick={() => streak.current > 0 && setStreakOpen((o) => !o)}
+            style={{ cursor: streak.current > 0 ? "pointer" : "default" }}
+          >
+            {streak.current > 0 && (
+              <>
+                <span className="status-flame"><IconFlame size={11} /></span>
+                <span className="status-streak">{streak.current}d</span>
+                <span className="status-sep" aria-hidden>·</span>
+              </>
+            )}
+            <span className="status-iq">{codeIq}</span>
+            <span className="status-iq-label microcaps">IQ</span>
           </div>
           <div className="header-actions">
             <button
-              className="header-icon-btn"
-              onClick={() => setOverlay("profile")}
-              title="Profile"
-              aria-label="Profile"
+              className={`header-icon-btn scan-btn ${liveMode ? "active" : ""} ${scanning ? "scanning" : ""}`}
+              onClick={() => {
+                if (!liveMode) {
+                  setLiveMode(true);
+                  // Tell extension host to start live review
+                  vscode.postMessage({ type: "liveReview/toggle", active: true });
+                } else {
+                  setLiveMode(false);
+                  vscode.postMessage({ type: "liveReview/toggle", active: false });
+                }
+              }}
+              title={liveMode ? "Live Review ON — reviewing as you type" : "Start Live Review"}
+              aria-label={liveMode ? "Stop live review" : "Start live review"}
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                <circle cx="12" cy="8" r="4" />
-                <path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6" strokeLinecap="round" />
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="7" />
+                <path d="M21 21l-4.3-4.3" />
+                <path d="M11 8v3l2 2" />
               </svg>
             </button>
+            {authUser ? (
+              <button
+                className={`header-icon-btn header-avatar-btn ${overlay === "profile" ? "active" : ""}`}
+                onClick={() => setOverlay(overlay === "profile" ? null : "profile")}
+                title={`${authUser.login} — ${overlay === "profile" ? "Close profile" : "Open profile"}`}
+                aria-label="Profile"
+              >
+                {authUser.avatarUrl ? (
+                  <img src={authUser.avatarUrl} alt={authUser.login} className="header-avatar" />
+                ) : (
+                  <span className="header-avatar-letter">{authUser.login[0].toUpperCase()}</span>
+                )}
+              </button>
+            ) : (
+              <button
+                className="header-sign-in"
+                onClick={() => vscode.postMessage({ type: "auth/login" })}
+                title="Sign in with GitHub"
+              >
+                <svg viewBox="0 0 24 24" fill="currentColor" width="13" height="13">
+                  <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+                </svg>
+                Sign in
+              </button>
+            )}
             <button
-              className="header-icon-btn"
-              onClick={() => setOverlay("subscription")}
-              title="Subscription"
+              className={`header-icon-btn ${overlay === "subscription" ? "active" : ""}`}
+              onClick={() => setOverlay(overlay === "subscription" ? null : "subscription")}
+              title={overlay === "subscription" ? "Close subscription" : "Subscription"}
               aria-label="Subscription"
+              aria-pressed={overlay === "subscription"}
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
                 <circle cx="12" cy="12" r="9" />
@@ -293,15 +413,21 @@ export function App() {
               </svg>
             </button>
             <button
-              className="header-icon-btn"
-              onClick={() => setOverlay("settings")}
-              title="Settings"
-              aria-label="Settings"
+              className="header-icon-btn theme-toggle-btn"
+              onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+              title={theme === "dark" ? "Switch to light" : "Switch to dark"}
+              aria-label="Toggle theme"
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                <circle cx="12" cy="12" r="3" />
-                <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" strokeLinecap="round" />
-              </svg>
+              {theme === "dark" ? (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <circle cx="12" cy="12" r="4" />
+                  <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" strokeLinecap="round" />
+                </svg>
+              )}
             </button>
           </div>
         </div>
@@ -315,18 +441,37 @@ export function App() {
 
         <div className="tabs">
           <button
-            className={`tab ${mode === "chat" ? "active" : ""}`}
-            onClick={() => setMode("chat")}
+            className={`tab ${mode === "chat" && !overlay && !streakOpen ? "active" : ""}`}
+            onClick={() => {
+              setMode("chat");
+              setOverlay(null);
+              setStreakOpen(false);
+            }}
           >
-            {mode === "chat" && <span className="tab-dot" />}
+            {mode === "chat" && !overlay && !streakOpen && <span className="tab-dot" />}
             Chat
           </button>
           <button
-            className={`tab ${mode === "concepts" ? "active" : ""}`}
-            onClick={() => setMode("concepts")}
+            className={`tab ${mode === "concepts" && !overlay && !streakOpen ? "active" : ""}`}
+            onClick={() => {
+              setMode("concepts");
+              setOverlay(null);
+              setStreakOpen(false);
+            }}
           >
-            {mode === "concepts" && <span className="tab-dot" />}
-            Concepts
+            {mode === "concepts" && !overlay && !streakOpen && <span className="tab-dot" />}
+            Code IQ
+          </button>
+          <button
+            className={`tab ${mode === "live" && !overlay && !streakOpen ? "active" : ""}`}
+            onClick={() => {
+              setMode("live");
+              setOverlay(null);
+              setStreakOpen(false);
+            }}
+          >
+            {mode === "live" && !overlay && !streakOpen && <span className="tab-dot" />}
+            Live
           </button>
         </div>
 
@@ -334,6 +479,22 @@ export function App() {
 
       {mode === "chat" && chatInputMode === "text" ? (
         <>
+          {/* ---- Chat search bar + history toggle ---- */}
+          {!isEmpty && (
+            <ChatSearchBar
+              messages={messages}
+              onJumpTo={(id: string) => {
+                const el = document.getElementById(`msg-${id}`);
+                if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+              }}
+              onClearHistory={() => {
+                if (confirm("Clear all chat history? This cannot be undone.")) {
+                  setMessages([]);
+                  vscode.postMessage({ type: "chat/clearHistory" });
+                }
+              }}
+            />
+          )}
           {isEmpty ? (
             <div className="messages">
               <div className="empty">
@@ -374,11 +535,17 @@ export function App() {
                     ? parseFollowups(m.content)
                     : { clean: m.content, followups: [] as string[] };
                 return (
-                  <div key={m.id} className={`msg msg-${m.role}`}>
+                  <div key={m.id} id={`msg-${m.id}`} className={`msg msg-${m.role}`}>
                     <div className="role">
                       {m.role === "user" ? "You" : "Protege"}
                     </div>
-                    <div className="content">{clean}</div>
+                    <div className="content">
+                      {m.role === "assistant" ? (
+                        <AssistantMarkdown content={clean} />
+                      ) : (
+                        clean
+                      )}
+                    </div>
                     {followups.length > 0 && !loading && (
                       <div className="followups">
                         {followups.map((f, i) => (
@@ -553,6 +720,13 @@ export function App() {
             </div>
           </footer>
         </>
+      ) : streakOpen ? (
+        <div className="streak-inline">
+          <StreakJournal
+            currentStreak={streak.current}
+            longestStreak={streak.longest}
+          />
+        </div>
       ) : mode === "concepts" ? (
         <ConceptsTab
           codeIq={codeIq}
@@ -567,6 +741,20 @@ export function App() {
           dailyIq={dailyIq}
           milestones={milestones}
           recommendations={recommendations}
+          pillars={pillars}
+        />
+      ) : mode === "live" ? (
+        <LiveTab
+          fileName={fileName}
+          liveReviewOn={liveMode}
+          onToggleLiveReview={() => {
+            setLiveMode((m) => {
+              const next = !m;
+              vscode.postMessage({ type: "liveReview/toggle", active: next });
+              return next;
+            });
+          }}
+          modelStatus={modelStatus}
         />
       ) : (
         <div className="voice-wrap">
@@ -611,51 +799,45 @@ export function App() {
         </div>
       )}
 
+      {/* Single persistent overlay — the backdrop stays mounted across panel
+          switches so only the inner content cross-fades. Keyed by the current
+          overlay value so page-in animation retriggers on panel change. */}
       <Overlay
-        open={overlay === "profile"}
+        open={overlay !== null}
         onClose={() => setOverlay(null)}
-        animKey="profile"
       >
-        <Suspense fallback={<div className="page-loading microcaps">Loading…</div>}>
-          <ProfilePage
-            userName="Yura"
-            memberSince="Apr 2026"
-            codeIq={codeIq}
-            maxIq={maxIq}
-            totalConcepts={totalConcepts}
-            ruleCount={ruleCount}
-            streak={streak}
-            milestones={milestones}
-            recentGains={recentGains}
-          />
-        </Suspense>
+        <div className="overlay-panel" key={overlay ?? "none"}>
+          <Suspense fallback={<div className="page-loading microcaps">Loading…</div>}>
+            {overlay === "profile" && (
+              <ProfilePage
+                userName={authUser?.login ?? "User"}
+                avatarUrl={authUser?.avatarUrl ?? null}
+                memberSince="Apr 2026"
+                codeIq={codeIq}
+                maxIq={maxIq}
+                totalConcepts={totalConcepts}
+                ruleCount={ruleCount}
+                streak={streak}
+                milestones={milestones}
+                recentGains={recentGains}
+              />
+            )}
+            {overlay === "subscription" && (
+              <SubscriptionPage
+                plan="trial"
+                trialDaysLeft={2}
+                chatMessagesUsed={32}
+                chatMessagesLimit={50}
+                toolCallsUsed={3}
+                toolCallsLimit={5}
+                voiceMinutesUsed={6}
+                voiceMinutesLimit={10}
+              />
+            )}
+          </Suspense>
+        </div>
       </Overlay>
 
-      <Overlay
-        open={overlay === "settings"}
-        onClose={() => setOverlay(null)}
-        animKey="settings"
-      >
-        <Suspense fallback={<div className="page-loading microcaps">Loading…</div>}>
-          <SettingsPage />
-        </Suspense>
-      </Overlay>
-
-      <Overlay
-        open={overlay === "subscription"}
-        onClose={() => setOverlay(null)}
-        animKey="subscription"
-      >
-        <Suspense fallback={<div className="page-loading microcaps">Loading…</div>}>
-          <SubscriptionPage
-            plan="free"
-            chatMessagesUsed={47}
-            chatMessagesLimit={200}
-            toolCallsUsed={128}
-            toolCallsLimit={500}
-          />
-        </Suspense>
-      </Overlay>
     </div>
   );
 }

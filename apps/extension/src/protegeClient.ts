@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import type { AnalyzeResponse, Finding, MeResponse } from "@protege/types";
+import { authHeaders } from "./auth.js";
 
 const BACKEND_URL =
   process.env.PROTEGE_BACKEND_URL ?? "http://localhost:8787";
@@ -8,7 +9,8 @@ const USER_ID_KEY = "protege.userId";
 
 /**
  * Returns a stable per-machine userId. Generated on first activation
- * and persisted in globalState. Replaced by real auth in a later mission.
+ * and persisted in globalState. Used as a fallback identifier when the
+ * user hasn't signed in with GitHub yet.
  */
 export function getUserId(context: vscode.ExtensionContext): string {
   let id = context.globalState.get<string>(USER_ID_KEY);
@@ -20,10 +22,7 @@ export function getUserId(context: vscode.ExtensionContext): string {
 }
 
 function headers(userId: string): Record<string, string> {
-  return {
-    "content-type": "application/json",
-    "x-user-id": userId,
-  };
+  return authHeaders(userId);
 }
 
 export async function analyzeFile(
@@ -46,6 +45,7 @@ export interface RecordConceptsInput {
   filePath: string;
   fileHash: string;
   concepts: string[];
+  contextScores?: Record<string, number>; // concept name → 1.0-3.0 context multiplier
   hasErrors: boolean;
   errorCount: number;
 }

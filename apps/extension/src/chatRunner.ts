@@ -101,3 +101,36 @@ export async function runChat(
     `Chat exceeded ${MAX_TOOL_ROUNDS} tool rounds without reaching a reply`
   );
 }
+
+/**
+ * Lightweight one-shot query to Claude — no tool loop, no workspace context.
+ * Used for quick inline operations (fix-it, explain, etc.) where we just need
+ * a short text reply and don't want tool execution overhead.
+ */
+export async function runSingleQuery(prompt: string): Promise<string> {
+  const body: ChatRunRequest = {
+    messages: [],
+    newUserMessage: prompt,
+    mode: "text",
+  };
+
+  const res = await fetch(`${BACKEND_URL}/chat`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  const raw = await res.text();
+  let data: ChatRunResponse & { error?: string } = { messages: [] };
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    throw new Error(
+      `Backend non-JSON (HTTP ${res.status}): ${raw.slice(0, 200)}`
+    );
+  }
+  if (!res.ok || data.error) {
+    throw new Error(data.error ?? `HTTP ${res.status}`);
+  }
+  return data.reply ?? "";
+}

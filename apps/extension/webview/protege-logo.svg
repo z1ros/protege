@@ -1,70 +1,20 @@
-<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" fill="none" role="img" aria-label="Protege">
+<svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" fill="none" role="img" aria-label="Protege">
   <!--
-    "The Apex" — the Protege brand mark.
+    "Orbit" — the Protege brand mark.
 
-    A two-faced 3D pyramid catching light: lit face on the left, shadow face
-    on the right. A thin bright crease-glint runs down the ridge. A crown orb
-    hovers just above the apex — the signature element that carries the
-    "rising to mastery" meaning without turning the mark into a letter.
-
-    Pure cinematic geometry. Square 40x40. Scales to any size.
+    Two shapes. A ring and a dot. The dot is held in the ring's gravity,
+    traveling the arc of learning. Pure monochrome white. Single symbol
+    that reads at any size from 14px to 200px.
   -->
 
-  <defs>
-    <!-- Lit face: top-left edge catches the key light.
-         White core fading to soft ice-blue at the base. -->
-    <linearGradient id="apexLit" x1="15%" y1="0%" x2="85%" y2="100%">
-      <stop offset="0%"  stop-color="#FFFFFF"/>
-      <stop offset="55%" stop-color="#E5EDFA"/>
-      <stop offset="100%" stop-color="#B4C3DC"/>
-    </linearGradient>
-
-    <!-- Shadow face: right side in shade.
-         Mid blue-gray fading to near-black at the base. -->
-    <linearGradient id="apexShade" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%"  stop-color="#6B7A94"/>
-      <stop offset="55%" stop-color="#3A465C"/>
-      <stop offset="100%" stop-color="#1C2331"/>
-    </linearGradient>
-
-    <!-- Crown orb: bright radial gradient, the focal point -->
-    <radialGradient id="apexCrown" cx="35%" cy="30%" r="75%">
-      <stop offset="0%"  stop-color="#FFFFFF"/>
-      <stop offset="45%" stop-color="#EEF4FF"/>
-      <stop offset="100%" stop-color="#A8BAD7"/>
-    </radialGradient>
-
-    <!-- Subtle ambient glow behind the apex -->
-    <radialGradient id="apexHalo" cx="50%" cy="50%" r="50%">
-      <stop offset="0%"  stop-color="#FFFFFF" stop-opacity="0.28"/>
-      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
-    </radialGradient>
-  </defs>
-
-  <!-- Ambient halo behind the crown — adds cinematic depth -->
-  <circle cx="20" cy="5.5" r="7" fill="url(#apexHalo)"/>
-
-  <!-- Lit face: apex → bottom-left → ridge-base -->
-  <path d="M 20 7 L 5 33 L 22 33 Z" fill="url(#apexLit)"/>
-
-  <!-- Shadow face: apex → ridge-base → bottom-right -->
-  <path d="M 20 7 L 22 33 L 35 33 Z" fill="url(#apexShade)"/>
-
-  <!-- Ridge glint: thin bright line along the crease where the two faces meet -->
-  <line
-    x1="20" y1="7" x2="22" y2="33"
-    stroke="#FFFFFF" stroke-width="0.7" stroke-linecap="round" opacity="0.55"
+  <!-- The orbit ring — mentorship, the path, the framework -->
+  <circle
+    cx="16" cy="16" r="10.5"
+    stroke="white"
+    stroke-width="1.9"
+    stroke-linecap="round"
   />
 
-  <!-- Base shadow line — grounds the form -->
-  <line
-    x1="5" y1="33" x2="35" y2="33"
-    stroke="#FFFFFF" stroke-width="0.5" stroke-linecap="round" opacity="0.14"
-  />
-
-  <!-- Crown orb: the signature element, floats just above the apex -->
-  <circle cx="20" cy="5" r="2.6" fill="url(#apexCrown)"/>
-
-  <!-- Tight specular highlight on the crown -->
-  <circle cx="19.1" cy="4.1" r="0.7" fill="#FFFFFF" opacity="0.95"/>
+  <!-- The protégé — a single filled dot on the ring's upper-right edge -->
+  <circle cx="23.42" cy="8.58" r="2.9" fill="white"/>
 </svg>

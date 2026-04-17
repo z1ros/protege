@@ -25,6 +25,11 @@ meRoute.get("/", async (c) => {
     dailyIq: snap.dailyIq,
     milestones: snap.milestones,
     recommendations: snap.recommendations,
+    pillars: snap.pillars,
+    level: snap.level,
+    synergies: snap.synergies,
+    velocity: snap.velocity,
+    breakdown: snap.breakdown,
   };
   return c.json(res);
 });

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { IconPersonFemale, IconPersonMale } from "./icons.js";
-import { vscode } from "./vscode.js";
+import { vscode, onHostMessage } from "./vscode.js";
 
 interface Props {
   onSend: (text: string) => void;
@@ -66,6 +66,8 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
   const [liveTranscript, setLiveTranscript] = useState("");
   const [statusDetail, setStatusDetail] = useState("");
   const [typedInput, setTypedInput] = useState("");
+  const [wakeWordActive, setWakeWordActive] = useState(false);
+  const [wakeWordStatus, setWakeWordStatus] = useState<string>("");
   const [levels, setLevels] = useState<number[]>(() =>
     new Array(BAR_COUNT).fill(4)
   );
@@ -76,6 +78,7 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
   const analyserRef = useRef<AnalyserNode | null>(null);
   const rafRef = useRef<number | null>(null);
   const recRef = useRef<SpeechRecognitionLike | null>(null);
+  const audioUnlockedRef = useRef(false);
 
   // VAD state
   const lastSpeechTsRef = useRef<number>(0);
@@ -87,7 +90,9 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
 
   // Audio playback
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const lastSpokenRef = useRef<string>("");
+  // Seed with the reply that exists at mount time so we don't re-speak
+  // whatever's already in chat state when the voice tab first opens.
+  const lastSpokenRef = useRef<string>(latestReply ?? "");
   const typeInputRef = useRef<HTMLInputElement | null>(null);
 
   // Keep a ref-copy of conversation state so async callbacks see fresh value
@@ -143,21 +148,11 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
   }, []);
 
   /* ============ Mic probe ============ */
+  // Mic capture now runs in the extension host via a native binary.
+  // The webview never calls getUserMedia — it just sends voice/start
+  // and voice/stop messages. So mic is always considered "ok".
   useEffect(() => {
-    (async () => {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        setMicState("blocked");
-        return;
-      }
-      try {
-        const probe = await navigator.mediaDevices.getUserMedia({ audio: true });
-        probe.getTracks().forEach((t) => t.stop());
-        setMicState("ok");
-      } catch {
-        setMicState("blocked");
-        setTimeout(() => typeInputRef.current?.focus(), 80);
-      }
-    })();
+    setMicState("ok");
   }, []);
 
   /* ============ TTS playback ============ */
@@ -165,13 +160,18 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
     if (!latestReply || latestReply === lastSpokenRef.current) return;
     lastSpokenRef.current = latestReply;
     speak(latestReply).catch((err) => {
+      // No robotic SpeechSynthesis fallback — if Kokoro failed or is
+      // warming up, stay silent. The UI already shows "Warming up…".
       console.warn("[protege] tts failed", err);
-      fallbackSpeak(latestReply);
+      setPhase(conversationRef.current ? "listening" : "idle");
     });
   }, [latestReply, voice]);
 
   const speak = async (text: string) => {
-    setPhase("speaking");
+    // Stay in "thinking" until the audio actually starts playing —
+    // otherwise the UI says "Speaking…" for the 1-3s Kokoro takes to
+    // generate, which reads as a stutter.
+    setPhase("thinking");
     setStatusDetail("");
     const res = await fetch(`${BACKEND_URL}/tts`, {
       method: "POST",
@@ -179,7 +179,6 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
       body: JSON.stringify({ text, voice }),
     });
     if (res.status === 503) {
-      // Kokoro still warming up — drop into warming phase, user can retry
       setTtsStatus("warming");
       setPhase("warming");
       setStatusDetail("Warming up voice engine…");
@@ -189,11 +188,30 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     stopAudio();
-    const audio = new Audio(url);
-    audioRef.current = audio;
+
+    // Reuse a single persistent Audio element — creating new Audio()
+    // each time fails autoplay policy because only the first one was
+    // "blessed" by the user gesture. Reusing the same element preserves
+    // the browser's autoplay grant across multiple play() calls.
+    let audio = audioRef.current;
+    if (!audio) {
+      audio = new Audio();
+      audioRef.current = audio;
+    }
+    const prevUrl = audio.src;
+    audio.src = url;
+    // Unlock primed the element at 0.01 — bump it back to full for real speech
+    audio.volume = 1.0;
+    audio.onplay = () => {
+      // Real speech starts now — flip UI from "thinking" to "speaking",
+      // and tell the host to suppress wake detection so the bot's voice
+      // bleeding through the mic can't re-trigger itself.
+      setPhase("speaking");
+      vscode.postMessage({ type: "voice/speaking", active: true });
+    };
     audio.onended = () => {
+      vscode.postMessage({ type: "voice/speaking", active: false });
       URL.revokeObjectURL(url);
-      audioRef.current = null;
       if (conversationRef.current) {
         setPhase("listening");
       } else {
@@ -201,10 +219,14 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
       }
     };
     audio.onerror = () => {
-      audioRef.current = null;
+      vscode.postMessage({ type: "voice/speaking", active: false });
       setPhase(conversationRef.current ? "listening" : "idle");
     };
     await audio.play();
+    // Clean up previous blob URL
+    if (prevUrl && prevUrl.startsWith("blob:")) {
+      URL.revokeObjectURL(prevUrl);
+    }
   };
 
   const fallbackSpeak = (text: string) => {
@@ -221,230 +243,97 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
     if (audioRef.current) {
       try {
         audioRef.current.pause();
-        audioRef.current.src = "";
+        // Don't clear src or null out — keep the element alive for reuse
       } catch {}
-      audioRef.current = null;
     }
     if ("speechSynthesis" in window) window.speechSynthesis.cancel();
   };
 
-  /* ============ Conversation mode: mic + VAD + recognition ============ */
+  /**
+   * Unlock audio playback on the first user gesture (orb tap).
+   * Browsers block audio.play() unless it's tied to a user interaction.
+   * We play a silent buffer to "prime" the AudioContext, after which
+   * all programmatic play() calls succeed.
+   */
+  const unlockAudio = () => {
+    if (audioUnlockedRef.current) return;
+    audioUnlockedRef.current = true;
+    try {
+      // Create a persistent AudioContext — keeps the audio pipeline warm
+      const ctx = new AudioContext();
+      audioCtxRef.current = ctx;
+      const buf = ctx.createBuffer(1, 1, 22050);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      src.start(0);
+      // Resume if suspended (Chrome policy)
+      if (ctx.state === "suspended") ctx.resume().catch(() => {});
+      // Create the persistent Audio element during user gesture — this
+      // "blesses" it so all future play() calls work without autoplay block.
+      const persistent = new Audio("data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=");
+      persistent.volume = 0.01;
+      // Assign immediately — must be done inside the user gesture so the
+      // element stays "blessed" even if the silent play() promise rejects.
+      audioRef.current = persistent;
+      persistent.play().catch(() => {});
+    } catch {}
+  };
+
+  /* ============ Host-side voice messages ============ */
+  useEffect(() => {
+    return onHostMessage((msg) => {
+      if (msg.type === "voice/recording") {
+        if (msg.active) {
+          // Barge-in: if the bot was mid-sentence, cut it off so the user
+          // isn't talking over themselves. Also tell the host to drop
+          // strict mode since we're no longer speaking.
+          stopAudio();
+          vscode.postMessage({ type: "voice/speaking", active: false });
+          setPhase("listening");
+          setConversation(true);
+          setStatusDetail("");
+        }
+      } else if (msg.type === "voice/transcript") {
+        setLiveTranscript(msg.text);
+        setPhase("thinking");
+      } else if (msg.type === "wake/state") {
+        setWakeWordActive(msg.active);
+        setWakeWordStatus(msg.status ?? "");
+        if (msg.status === "listening") {
+          setPhase("idle");
+          setConversation(false);
+        }
+      } else if (msg.type === "voice/error") {
+        setStatusDetail(msg.error);
+        setPhase("idle");
+        setConversation(false);
+      }
+    });
+  }, []);
+
+  /* ============ Conversation mode (host-side recording) ============ */
 
   const startConversation = async () => {
     if (conversation) return;
-    setLiveTranscript("");
-    utteranceFinalRef.current = "";
-    utteranceInterimRef.current = "";
-
-    let stream: MediaStream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (err) {
-      console.warn("[protege] mic blocked on startConversation", err);
-      setMicState("blocked");
-      return;
-    }
-    setMicState("ok");
-    streamRef.current = stream;
-
-    // AudioContext analyser
-    try {
-      const ctx = new AudioContext();
-      audioCtxRef.current = ctx;
-      const src = ctx.createMediaStreamSource(stream);
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.4;
-      src.connect(analyser);
-      analyserRef.current = analyser;
-    } catch (err) {
-      console.warn("[protege] AudioContext failed", err);
-    }
-
-    // Speech recognition (continuous)
-    if (SR) {
-      try {
-        const rec = new SR();
-        rec.continuous = true;
-        rec.interimResults = true;
-        rec.lang = "en-US";
-        rec.onresult = (e) => {
-          let finalText = "";
-          let interim = "";
-          for (let i = e.resultIndex; i < (e.results as ArrayLike<unknown>).length; i++) {
-            const r = (e.results as Record<number, { isFinal?: boolean; 0: { transcript: string } }>)[i];
-            const chunk = r[0].transcript;
-            if (r.isFinal) finalText += chunk;
-            else interim += chunk;
-          }
-          if (finalText) {
-            utteranceFinalRef.current += finalText;
-          }
-          utteranceInterimRef.current = interim;
-          setLiveTranscript(
-            (utteranceFinalRef.current + " " + utteranceInterimRef.current).trim()
-          );
-        };
-        rec.onend = () => {
-          // Auto-restart in conversation mode if recognition drops
-          if (conversationRef.current) {
-            setTimeout(() => {
-              try {
-                rec.start();
-              } catch {}
-            }, 100);
-          }
-        };
-        rec.onerror = (e) => {
-          console.warn("[protege] SR error", e.error);
-        };
-        recRef.current = rec;
-        rec.start();
-      } catch (err) {
-        console.warn("[protege] SR start failed", err);
-      }
-    }
-
     setConversation(true);
     setPhase("listening");
+    setLiveTranscript("");
     setStatusDetail("");
-
-    // Kick off the VAD + visualizer loop
-    tickVad();
+    vscode.postMessage({ type: "voice/start" });
   };
 
   const stopConversation = () => {
     setConversation(false);
-    setPhase("idle");
-    setStatusDetail("");
-
-    if (silenceTimerRef.current) {
-      clearTimeout(silenceTimerRef.current);
-      silenceTimerRef.current = null;
-    }
-
-    if (recRef.current) {
-      try {
-        recRef.current.abort();
-      } catch {}
-      recRef.current = null;
-    }
-
-    if (rafRef.current !== null) {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
-    }
-
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-    }
-    if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
-      audioCtxRef.current.close().catch(() => {});
-    }
-    audioCtxRef.current = null;
-    analyserRef.current = null;
-    setLevels(new Array(BAR_COUNT).fill(4));
+    setPhase("thinking");
+    setStatusDetail("Transcribing…");
+    vscode.postMessage({ type: "voice/stop" });
 
     stopAudio();
     setLiveTranscript("");
     utteranceFinalRef.current = "";
     utteranceInterimRef.current = "";
     userSpeakingRef.current = false;
-  };
-
-  const flushUtterance = () => {
-    const text = (
-      utteranceFinalRef.current +
-      " " +
-      utteranceInterimRef.current
-    )
-      .trim()
-      .replace(/\s+/g, " ");
-
-    utteranceFinalRef.current = "";
-    utteranceInterimRef.current = "";
-    userSpeakingRef.current = false;
-    setLiveTranscript("");
-
-    if (text.length < MIN_UTTERANCE_CHARS) return;
-
-    setPhase("thinking");
-    onSend(text);
-  };
-
-  const tickVad = () => {
-    const analyser = analyserRef.current;
-    if (!analyser || !conversationRef.current) return;
-
-    const timeData = new Uint8Array(analyser.fftSize);
-    analyser.getByteTimeDomainData(timeData);
-
-    // RMS (root-mean-square) of signal around 128 midpoint, normalized 0..1
-    let sumSquares = 0;
-    for (let i = 0; i < timeData.length; i++) {
-      const v = (timeData[i] - 128) / 128; // -1..1
-      sumSquares += v * v;
-    }
-    const rms = Math.sqrt(sumSquares / timeData.length);
-
-    // Update visualizer bars
-    const freqData = new Uint8Array(analyser.frequencyBinCount);
-    analyser.getByteFrequencyData(freqData);
-    const step = Math.floor(freqData.length / BAR_COUNT);
-    const nextBars: number[] = [];
-    for (let i = 0; i < BAR_COUNT; i++) {
-      const v = freqData[i * step] ?? 0;
-      nextBars.push(4 + (v / 255) * 54);
-    }
-    setLevels(nextBars);
-
-    const now = performance.now();
-
-    // === State machine ===
-    if (rms > SPEECH_RMS) {
-      // Sound present
-      if (!userSpeakingRef.current) {
-        if (speechStartTsRef.current === 0) {
-          speechStartTsRef.current = now;
-        }
-        if (now - speechStartTsRef.current >= SPEECH_ACTIVATION_MS) {
-          userSpeakingRef.current = true;
-
-          // BARGE-IN: user started speaking while Protege was speaking
-          if (phaseRef.current === "speaking") {
-            stopAudio();
-            setPhase("listening");
-          } else if (phaseRef.current === "thinking") {
-            // User barged in during thinking — cancel the interim transcript build
-            // (can't cancel the LLM call, but we reset our state)
-            setPhase("listening");
-          } else {
-            setPhase("listening");
-          }
-        }
-      }
-      lastSpeechTsRef.current = now;
-      // Clear any pending flush — user is still talking
-      if (silenceTimerRef.current) {
-        clearTimeout(silenceTimerRef.current);
-        silenceTimerRef.current = null;
-      }
-    } else if (rms < SILENCE_RMS) {
-      // Silence
-      speechStartTsRef.current = 0;
-      if (userSpeakingRef.current && !silenceTimerRef.current) {
-        // Start silence hangover timer — if user doesn't speak again for 1.4s, flush
-        silenceTimerRef.current = setTimeout(() => {
-          silenceTimerRef.current = null;
-          if (conversationRef.current && userSpeakingRef.current) {
-            flushUtterance();
-          }
-        }, SILENCE_HANGOVER_MS);
-      }
-    }
-
-    rafRef.current = requestAnimationFrame(tickVad);
   };
 
   /* ============ Cleanup ============ */
@@ -465,21 +354,12 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
   };
 
   const toggleOrb = () => {
+    // Block interaction until Kokoro is ready — otherwise we'd record
+    // the user, get a transcript, and have nothing to speak back.
+    if (ttsStatus !== "ready") return;
+    unlockAudio();
     if (conversation) {
       stopConversation();
-      return;
-    }
-    if (micState === "blocked") {
-      setTimeout(() => typeInputRef.current?.focus(), 50);
-      return;
-    }
-    if (ttsStatus !== "ready") {
-      // Kokoro not ready yet — no point starting a conversation we can't reply to
-      setStatusDetail(
-        ttsStatus === "error"
-          ? `Voice engine failed: ${ttsWarmupError ?? "unknown error"}`
-          : "Warming up voice engine… hang on a few seconds"
-      );
       return;
     }
     startConversation();
@@ -501,8 +381,9 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
   const statusLabel = () => {
     if (statusDetail) return statusDetail;
     if (ttsStatus === "error") return "Voice engine failed to load";
-    if (phase === "warming" || (ttsStatus === "warming" && phase === "idle"))
-      return "Warming up voice engine";
+    if (ttsStatus === "warming" || ttsStatus === "unknown")
+      return "Preparing voice engine";
+    if (phase === "warming") return "Warming up voice engine";
     if (phase === "listening") return "Listening";
     if (phase === "thinking") return "Thinking";
     if (phase === "speaking") return "Speaking";
@@ -577,13 +458,24 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
         <button
           className={`voice-orb ${phase === "listening" ? "listening" : ""} ${
             phase === "speaking" ? "speaking" : ""
-          }`}
+          } ${ttsStatus !== "ready" ? "warming" : ""}`}
           onClick={toggleOrb}
+          disabled={ttsStatus !== "ready"}
           aria-label={
             conversation ? "End conversation" : "Start conversation"
           }
         />
       </div>
+
+      {ttsStatus !== "ready" && ttsStatus !== "error" && (
+        <div className="voice-warmup-card">
+          <div className="voice-warmup-spinner" />
+          <div className="voice-warmup-title">Setting up your voice</div>
+          <div className="voice-warmup-sub">
+            First time loads a ~80MB voice model. Takes 30–120 seconds on first run, instant after that.
+          </div>
+        </div>
+      )}
 
       <div className="voice-status">
         {animated ? (
@@ -592,6 +484,12 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
           statusLabel()
         )}
       </div>
+
+      {phase === "speaking" && wakeWordActive && (
+        <div className="voice-barge-hint">
+          Say <strong>"Protege"</strong> to interrupt
+        </div>
+      )}
 
       {liveTranscript && (
         <div className="voice-transcript">{liveTranscript}</div>
@@ -638,21 +536,26 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
           </div>
           <div className="voice-mic-hint">
             <div className="voice-mic-hint-title">
-              Microphone blocked
+              Voice mode runs in your browser
             </div>
             <div className="voice-mic-hint-body">
-              Cursor doesn't have microphone permission yet. Grant it in
-              System Settings → Privacy → Microphone → <strong>Cursor</strong>,
-              then re-check below.
+              Cursor's webview can't access the microphone — it's blocked by
+              the editor's sandbox, not macOS. Open voice mode in your system
+              browser instead, where the mic works normally.
             </div>
             <div className="voice-mic-hint-actions">
               <button
                 className="mic-action-btn primary"
                 onClick={() => {
-                  vscode.postMessage({
-                    type: "openExternal",
-                    url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
-                  });
+                  vscode.postMessage({ type: "voice/openInBrowser" });
+                }}
+              >
+                Open in Browser
+              </button>
+              <button
+                className="mic-action-btn"
+                onClick={() => {
+                  vscode.postMessage({ type: "mic/openSettings" });
                 }}
               >
                 Open Settings
@@ -673,13 +576,31 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
                     // Still blocked. Tell the user to fully relaunch Cursor
                     // because TCC decisions require an app restart.
                     setStatusDetail(
-                      "Still blocked. Quit Cursor (⌘Q) and reopen after toggling."
+                      "Still blocked. Try Reset + Relaunch below, then quit Cursor with ⌘Q."
                     );
                   }
                 }}
               >
                 Re-check
               </button>
+            </div>
+            <div className="voice-mic-hint-stuck">
+              <div className="voice-mic-hint-stuck-label">
+                Still blocked even though Settings shows Cursor enabled?
+              </div>
+              <button
+                className="mic-action-btn danger"
+                onClick={() => {
+                  vscode.postMessage({ type: "mic/reset" });
+                }}
+              >
+                Reset TCC + Relaunch
+              </button>
+              <div className="voice-mic-hint-stuck-why">
+                macOS caches the first "deny" from before you granted access.
+                This wipes the cache so the next first-use prompt goes
+                through clean.
+              </div>
             </div>
           </div>
         </>
@@ -688,9 +609,30 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
       {error && <div className="error">{error}</div>}
       {!conversation && !showTypeUI && (
         <div className="voice-hint">
-          Tap the orb to start a real conversation
+          {wakeWordActive
+            ? wakeWordStatus === "recording"
+              ? "Heard you! Listening..."
+              : 'Say "Protege" or tap the orb'
+            : "Tap the orb to start a real conversation"
+          }
         </div>
       )}
+
+      <button
+        className={`wake-word-toggle ${wakeWordActive ? "active" : ""}`}
+        onClick={() => {
+          unlockAudio();
+          vscode.postMessage({ type: "wake/toggle" });
+        }}
+        title={wakeWordActive ? 'Wake word ON — say "Protege" to activate' : "Enable wake word detection"}
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="9" y="3" width="6" height="12" rx="3" />
+          <path d="M5 11a7 7 0 0014 0" />
+          <path d="M12 18v3" />
+        </svg>
+        {wakeWordActive ? '"Protege" ON' : 'Wake word'}
+      </button>
     </div>
   );
 }

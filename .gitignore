@@ -8,3 +8,10 @@ out
 .DS_Store
 .turbo
 coverage
+
+# Large on-device model / native binary artifacts — downloaded at runtime
+apps/extension/.model-cache/
+apps/extension/models/
+apps/extension/native/
+apps/extension/bin/
+*.gguf

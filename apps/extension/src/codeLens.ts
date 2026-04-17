@@ -1,20 +1,32 @@
 import * as vscode from "vscode";
 import type { Finding } from "@protege/types";
 import { getFindingsForUri } from "./analyzer.js";
+import { isLiveReviewActive } from "./liveReview.js";
 
 /**
  * CodeLens above each finding line — clickable tip that opens the Protege
  * panel and asks the mentor to explain the issue in context.
  */
+let activeProvider: FindingCodeLensProvider | null = null;
+
+export function refreshFindingCodeLens(): void {
+  activeProvider?.refresh();
+}
+
 export class FindingCodeLensProvider implements vscode.CodeLensProvider {
   private _onDidChange = new vscode.EventEmitter<void>();
   onDidChangeCodeLenses = this._onDidChange.event;
+
+  constructor() {
+    activeProvider = this;
+  }
 
   refresh() {
     this._onDidChange.fire();
   }
 
   provideCodeLenses(doc: vscode.TextDocument): vscode.CodeLens[] {
+    if (!isLiveReviewActive()) return [];
     const findings = getFindingsForUri(doc.uri);
     return findings.map((f) => {
       const lineIdx = Math.max(

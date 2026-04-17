@@ -38,8 +38,68 @@
         "title": "Protege: Toggle"
       },
       {
-        "command": "protege.diagnose",
-        "title": "Protege: Diagnose (list available commands)"
+        "command": "protege.teachThis",
+        "title": "Protege: Teach this"
+      },
+      {
+        "command": "protege.teachConcept",
+        "title": "Protege: Teach concept"
+      },
+      {
+        "command": "protege.explainSelection",
+        "title": "Protege: Explain selection"
+      },
+      {
+        "command": "protege.summarizeFile",
+        "title": "Protege: What does this file do?"
+      },
+      {
+        "command": "protege.weakSpots",
+        "title": "Protege: Show my weak spots"
+      },
+      {
+        "command": "protege.quizMe",
+        "title": "Protege: Quiz me"
+      },
+      {
+        "command": "protege.toggleLiveReview",
+        "title": "Protege: Toggle Live Review"
+      },
+      {
+        "command": "protege.startTeachFlow",
+        "title": "Protege: Start guided lesson"
+      },
+      {
+        "command": "protege.nextTeachStep",
+        "title": "Protege: Next lesson step"
+      },
+      {
+        "command": "protege.stopTeachFlow",
+        "title": "Protege: Stop lesson"
+      },
+      {
+        "command": "protege.refreshIQ",
+        "title": "Protege: Refresh Code IQ"
+      },
+      {
+        "command": "protege.scanActiveFile",
+        "title": "Protege: Scan active file"
+      },
+      {
+        "command": "protege.dismissTeachPopup",
+        "title": "Protege: Dismiss teaching popup"
+      },
+      {
+        "command": "protege.createExercise",
+        "title": "Protege: Create exercise"
+      },
+      {
+        "command": "protege.checkExercise",
+        "title": "Protege: Check exercise"
+      },
+      {
+        "command": "protege.showHint",
+        "title": "Protege: Show hint"
       }
     ],
     "keybindings": [
@@ -47,6 +107,41 @@
         "command": "protege.toggle",
         "key": "cmd+shift+l",
         "when": "!terminalFocus"
+      },
+      {
+        "command": "protege.teachThis",
+        "key": "cmd+k t",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "protege.explainSelection",
+        "key": "cmd+k e",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "protege.quizMe",
+        "key": "cmd+k q",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "protege.weakSpots",
+        "key": "cmd+k w",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "protege.createExercise",
+        "key": "cmd+k x",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "protege.showHint",
+        "key": "cmd+k h",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "protege.clearHighlights",
+        "key": "escape",
+        "when": "editorTextFocus && !editorHasSelection && !suggestWidgetVisible && !parameterHintsVisible && !inQuickOpen && !inZenMode && protege.hasHighlights"
       }
     ]
   },
@@ -61,9 +156,16 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@protege/types": "workspace:*"
+    "@protege/types": "workspace:*",
+    "d3-force": "^3.0.0",
+    "lucide-react": "^1.8.0",
+    "node-llama-cpp": "^3.18.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "simple-icons": "^16.16.0"
   },
   "devDependencies": {
+    "@types/d3-force": "^3.0.10",
     "@types/node": "^22.0.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",

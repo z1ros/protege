@@ -6,8 +6,26 @@ import type {
   Finding,
 } from "@protege/types";
 import { getUserId, fetchMe } from "./protegeClient.js";
+import { getGitHubUser } from "./auth.js";
 import { runChat } from "./chatRunner.js";
 import { getActiveFileEditor } from "./activeFile.js";
+import { classifyResponse, dispatchRouterActions } from "./responseRouter.js";
+import { getHistory, appendMessage, searchHistory, clearHistory } from "./chatHistory.js";
+import { clearAllHighlights } from "./tools.js";
+import { isLiveReviewActive } from "./liveReview.js";
+import { getOnDeviceStatus, onStatusChange } from "./onDeviceModel.js";
+import {
+  startRecording,
+  stopRecording,
+  transcribe,
+  isRecording,
+  collectAutoStopAudio,
+  startWakeWordListener,
+  stopWakeWordListener,
+  isWakeWordListening,
+  collectWakeAudio,
+  setStrictWakeMode,
+} from "./voiceCapture.js";
 
 /**
  * Registry so outside code (analyzer, status bar) can broadcast messages
@@ -23,6 +41,23 @@ export function broadcast(msg: HostToWebview) {
   }
 }
 
+// Forward on-device model status changes to every mounted webview so the
+// Live tab's "On-Device" card reflects real download/load state.
+let modelStatusListenerRegistered = false;
+function ensureModelStatusListener() {
+  if (modelStatusListenerRegistered) return;
+  modelStatusListenerRegistered = true;
+  onStatusChange((status) => {
+    broadcast({
+      type: "ai/modelStatus",
+      ready: status.ready,
+      loading: status.loading,
+      error: status.error,
+      downloadProgress: status.downloadProgress,
+    });
+  });
+}
+
 export function pushTeachFinding(finding: Finding) {
   broadcast({ type: "teach/finding", finding });
 }
@@ -31,6 +66,7 @@ export function mountProtegeWebview(
   webview: vscode.Webview,
   context: vscode.ExtensionContext
 ) {
+  ensureModelStatusListener();
   webview.options = {
     enableScripts: true,
     localResourceRoots: [
@@ -44,20 +80,224 @@ export function mountProtegeWebview(
 
   const sub = webview.onDidReceiveMessage(async (msg: WebviewToHost) => {
     if (msg.type === "chat/send") {
+      // Intercept teaching flow follow-up chips
+      const text = msg.message.trim().toLowerCase();
+      if (text === "next step →" || text === "next step") {
+        const { advanceFlow, isFlowActive } = await import("./teachingFlow.js");
+        if (isFlowActive()) { advanceFlow(); return; }
+      }
+      if (text === "stop lesson") {
+        vscode.commands.executeCommand("protege.stopTeachFlow");
+        return;
+      }
+      if (text === "teach me something else") {
+        vscode.commands.executeCommand("protege.startTeachFlow");
+        return;
+      }
+      if (text === "another exercise") {
+        vscode.commands.executeCommand("protege.createExercise");
+        return;
+      }
+      if (text === "show me a hint") {
+        vscode.commands.executeCommand("protege.showHint");
+        return;
+      }
+      if (text === "i give up — show solution" || text === "i give up") {
+        // TODO: show the solution from the active exercise
+        vscode.window.showInformationMessage("Try one more time! Use Cmd+K H for a hint.");
+        return;
+      }
       await handleChat(webview, userId, msg.message, msg.mode ?? "text");
     } else if (msg.type === "ready") {
       sendInitialState(webview, userId);
+
+      // Send persisted chat history so conversations survive reloads
+      const history = getHistory();
+      if (history.length > 0) {
+        post(webview, { type: "chat/history", messages: history });
+      }
+
+      // Send GitHub auth state (silent — don't prompt yet)
+      const ghUser = await getGitHubUser(false);
+      post(webview, {
+        type: "auth/user",
+        user: ghUser
+          ? {
+              githubId: ghUser.githubId,
+              login: ghUser.login,
+              email: ghUser.email,
+              avatarUrl: ghUser.avatarUrl,
+            }
+          : null,
+      });
+    } else if (msg.type === "auth/login") {
+      // User clicked "Sign in with GitHub" in the webview — prompt
+      const ghUser = await getGitHubUser(true);
+      post(webview, {
+        type: "auth/user",
+        user: ghUser
+          ? {
+              githubId: ghUser.githubId,
+              login: ghUser.login,
+              email: ghUser.email,
+              avatarUrl: ghUser.avatarUrl,
+            }
+          : null,
+      });
     } else if (msg.type === "watcher/engage") {
       // User clicked "Help me" on a proactive nudge — escalate to Claude
       const synthetic = buildEngagePrompt(msg.triggerId, msg.context);
       await handleChat(webview, userId, synthetic, "text");
+    } else if (msg.type === "scan/request") {
+      vscode.commands.executeCommand("protege.scanActiveFile");
+    } else if (msg.type === "liveReview/toggle") {
+      vscode.commands.executeCommand("protege.toggleLiveReview");
+    } else if (msg.type === "chat/search") {
+      const results = searchHistory(msg.query);
+      post(webview, { type: "chat/searchResults", results });
+    } else if (msg.type === "chat/clearHistory") {
+      clearHistory();
+      post(webview, { type: "chat/history", messages: [] });
+    } else if (msg.type === "feature/toggle") {
+      if (msg.feature === "inlineErrors") {
+        const { setInlineErrorsEnabled } = await import("./inlineErrors.js");
+        setInlineErrorsEnabled(msg.enabled);
+      } else if (msg.feature === "didYouKnow") {
+        const { setDidYouKnowEnabled } = await import("./didYouKnow.js");
+        setDidYouKnowEnabled(msg.enabled);
+      }
+    } else if (msg.type === "ai/setBackend") {
+      const { setAiBackend } = await import("./aiBackend.js");
+      setAiBackend(msg.backend);
+    } else if (msg.type === "ai/downloadModel") {
+      vscode.commands.executeCommand("protege.downloadOnDeviceModel");
     } else if (msg.type === "openExternal") {
       // Webview can't call openExternal itself — bounce through the host.
       // Used for jumping to macOS Settings → Privacy → Microphone.
+      // Also detects "command:<id>" URIs from the Quick Actions buttons and
+      // runs them as VS Code commands (openExternal can't execute commands).
       try {
-        await vscode.env.openExternal(vscode.Uri.parse(msg.url));
+        if (msg.url.startsWith("command:")) {
+          const rest = msg.url.slice("command:".length);
+          const qIdx = rest.indexOf("?");
+          const commandId = qIdx === -1 ? rest : rest.slice(0, qIdx);
+          let args: unknown[] = [];
+          if (qIdx !== -1) {
+            try {
+              const parsed = JSON.parse(decodeURIComponent(rest.slice(qIdx + 1)));
+              args = Array.isArray(parsed) ? parsed : [parsed];
+            } catch {
+              args = [];
+            }
+          }
+          await vscode.commands.executeCommand(commandId, ...args);
+        } else {
+          await vscode.env.openExternal(vscode.Uri.parse(msg.url));
+        }
       } catch (err) {
         console.warn("[protege] openExternal failed:", err);
+      }
+    } else if (msg.type === "voice/openInBrowser") {
+      const url = `http://localhost:8787/voice?userId=${encodeURIComponent(userId)}`;
+      try {
+        await vscode.env.openExternal(vscode.Uri.parse(url));
+      } catch (err) {
+        console.warn("[protege] voice/openInBrowser failed:", err);
+      }
+    } else if (msg.type === "voice/start") {
+      try {
+        // Auto-stop callback: when the binary detects silence and exits
+        // on its own, run the same transcribe→chat flow as manual stop.
+        const autoStop = async () => {
+          try {
+            const wav = collectAutoStopAudio();
+            post(webview, { type: "voice/recording", active: false });
+            if (wav.length < 1000) {
+              post(webview, { type: "voice/error", error: "Recording too short" });
+              return;
+            }
+            const text = await transcribe(wav);
+            if (!text.trim()) {
+              post(webview, { type: "voice/error", error: "Couldn't hear anything" });
+              return;
+            }
+            post(webview, { type: "voice/transcript", text });
+            await handleChat(webview, userId, text, "voice");
+          } catch (err) {
+            post(webview, { type: "voice/recording", active: false });
+            const stopErr = err instanceof Error ? err.message : String(err);
+            post(webview, { type: "voice/error", error: stopErr });
+          }
+        };
+        await startRecording(context.extensionUri.fsPath, autoStop);
+        post(webview, { type: "voice/recording", active: true });
+      } catch (err) {
+        const startErr = err instanceof Error ? err.message : String(err);
+        post(webview, { type: "voice/error", error: startErr });
+      }
+    } else if (msg.type === "voice/stop") {
+      try {
+        const wav = await stopRecording();
+        post(webview, { type: "voice/recording", active: false });
+        if (wav.length < 1000) {
+          post(webview, { type: "voice/error", error: "Recording too short" });
+          return;
+        }
+        const text = await transcribe(wav);
+        if (!text.trim()) {
+          post(webview, { type: "voice/error", error: "Couldn't hear anything" });
+          return;
+        }
+        post(webview, { type: "voice/transcript", text });
+        await handleChat(webview, userId, text, "voice");
+      } catch (err) {
+        post(webview, { type: "voice/recording", active: false });
+        const stopErr = err instanceof Error ? err.message : String(err);
+        post(webview, { type: "voice/error", error: stopErr });
+      }
+    } else if (msg.type === "voice/speaking") {
+      // While the bot speaks, switch wake detection to "strict" mode —
+      // a clear "Protege" will still barge in, but random noise and the
+      // bot's own voice bleeding through the mic will not.
+      setStrictWakeMode(!!msg.active);
+    } else if (msg.type === "wake/toggle") {
+      if (isWakeWordListening()) {
+        stopWakeWordListener();
+        post(webview, { type: "wake/state", active: false });
+      } else {
+        try {
+          await startWakeWordListener(context.extensionUri.fsPath, {
+            onWake: () => {
+              // Wake word detected — tell webview we're recording
+              post(webview, { type: "voice/recording", active: true });
+              post(webview, { type: "wake/state", active: true, status: "recording" });
+            },
+            onRecordingDone: async () => {
+              // Silence after speech — transcribe and chat
+              try {
+                const wav = collectWakeAudio();
+                post(webview, { type: "voice/recording", active: false });
+                post(webview, { type: "wake/state", active: true, status: "listening" });
+                if (wav.length < 1000) return;
+                const text = await transcribe(wav);
+                if (!text.trim()) return;
+                post(webview, { type: "voice/transcript", text });
+                await handleChat(webview, userId, text, "voice");
+              } catch (err) {
+                const errMsg = err instanceof Error ? err.message : String(err);
+                post(webview, { type: "voice/error", error: errMsg });
+              }
+            },
+            onError: (err) => {
+              post(webview, { type: "wake/state", active: false });
+              post(webview, { type: "voice/error", error: err });
+            },
+          });
+          post(webview, { type: "wake/state", active: true, status: "listening" });
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          post(webview, { type: "voice/error", error: errMsg });
+        }
       }
     }
   });
@@ -78,6 +318,22 @@ async function sendInitialState(webview: vscode.Webview, userId: string) {
       : null,
   } satisfies HostToWebview);
 
+  // Sync the Live Review toggle so the button reflects the real backend state
+  webview.postMessage({
+    type: "liveReview/state",
+    active: isLiveReviewActive(),
+  } satisfies HostToWebview);
+
+  // Sync on-device model status so the AI Engine selector reflects real state
+  const modelStatus = getOnDeviceStatus();
+  webview.postMessage({
+    type: "ai/modelStatus",
+    ready: modelStatus.ready,
+    loading: modelStatus.loading,
+    error: modelStatus.error,
+    downloadProgress: modelStatus.downloadProgress,
+  } satisfies HostToWebview);
+
   // Send current Code IQ
   try {
     const me = await fetchMe(userId);
@@ -95,6 +351,11 @@ async function sendInitialState(webview: vscode.Webview, userId: string) {
       dailyIq: me.dailyIq,
       milestones: me.milestones,
       recommendations: me.recommendations,
+      pillars: me.pillars,
+      level: me.level,
+      synergies: me.synergies,
+      velocity: me.velocity,
+      breakdown: me.breakdown,
     } satisfies HostToWebview);
   } catch {
     // backend may be offline
@@ -136,6 +397,20 @@ async function handleChat(
   message: string,
   mode: "text" | "voice"
 ) {
+  // Wipe any lingering highlight decorations from a previous turn. The
+  // model may paint new ones during this run via highlight_code, but we
+  // always start each turn on a fresh canvas — fixes the "highlights stay
+  // forever" UX bug.
+  clearAllHighlights().catch(() => {});
+
+  // Create the user message for persistence
+  const userMsg: ChatMessage = {
+    id: crypto.randomUUID(),
+    role: "user",
+    content: message,
+    createdAt: new Date().toISOString(),
+  };
+
   post(webview, { type: "chat/loading", loading: true });
 
   try {
@@ -161,6 +436,25 @@ async function handleChat(
       createdAt: new Date().toISOString(),
     };
     post(webview, { type: "chat/append", message: assistant });
+
+    // Persist both user + assistant messages to globalState
+    appendMessage(userMsg);
+    appendMessage(assistant);
+
+    // JARVIS: Route the reply through the Smart Response Router.
+    // This highlights relevant code in the editor, shows apply-fix
+    // notifications, and flashes the status bar — all automatically
+    // based on what Claude said.
+    try {
+      const editor = getActiveFileEditor();
+      const fileContent = editor?.document.getText();
+      const result = classifyResponse(reply, fileContent);
+      if (result.kind !== "general" && editor) {
+        dispatchRouterActions(result, editor, reply);
+      }
+    } catch {
+      // Router failures are non-fatal — chat still works fine
+    }
   } catch (err) {
     post(webview, {
       type: "chat/error",

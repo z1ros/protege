@@ -6,6 +6,7 @@ export const conceptRoute = new Hono();
 interface Body {
   userId?: string;
   concepts: string[];
+  contextScores?: Record<string, number>;
   filePath: string;
   fileHash: string;
   hasErrors?: boolean;
@@ -21,6 +22,7 @@ conceptRoute.post("/", async (c) => {
     filePath: body.filePath,
     fileHash: body.fileHash,
     concepts: body.concepts ?? [],
+    contextScores: body.contextScores ?? {},
     hasErrors: !!body.hasErrors,
     errorCount: body.errorCount ?? 0,
   });

@@ -30,6 +30,67 @@ const showFlashDecoration = vscode.window.createTextEditorDecorationType({
 /** Persistent highlight decorations — one per semantic kind. */
 type HighlightKind = "focus" | "bug" | "pattern" | "tip";
 
+/**
+ * Set of file URIs that currently have Protege highlights applied.
+ * Used by the save listener to know when to auto-clear: if the user
+ * saves a file in this set, we wipe the decorations (assumption: they
+ * touched the code, so the stale highlight no longer matches reality).
+ *
+ * Also drives the `protege.hasHighlights` VS Code context key, which
+ * gates the Escape keybinding so we only steal Esc when we have UI.
+ */
+const activeHighlightFiles = new Set<string>();
+let highlightAutoTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Auto-clear highlights after this many ms of inactivity. */
+const HIGHLIGHT_AUTO_CLEAR_MS = 45_000;
+
+function setHighlightContext() {
+  vscode.commands.executeCommand(
+    "setContext",
+    "protege.hasHighlights",
+    activeHighlightFiles.size > 0
+  );
+}
+
+function scheduleAutoClear() {
+  if (highlightAutoTimer) clearTimeout(highlightAutoTimer);
+  if (activeHighlightFiles.size === 0) return;
+  highlightAutoTimer = setTimeout(async () => {
+    highlightAutoTimer = null;
+    await clearHighlights();
+  }, HIGHLIGHT_AUTO_CLEAR_MS);
+}
+
+export function hasActiveHighlights(): boolean {
+  return activeHighlightFiles.size > 0;
+}
+
+export function isFileHighlighted(uri: vscode.Uri): boolean {
+  return activeHighlightFiles.has(uri.toString());
+}
+
+/**
+ * True while a Protege tool (edit_file / create_file) is writing to a
+ * file. The change listener in extension.ts skips clearing highlights
+ * during these programmatic edits — they're expected, not user intent.
+ */
+let _protegeEditing = false;
+export function isProtegeEditing(): boolean {
+  return _protegeEditing;
+}
+function withProtegeEditing<T>(fn: () => Promise<T>): Promise<T> {
+  _protegeEditing = true;
+  return fn().finally(() => {
+    // Keep the flag true for one animation frame after the edit resolves
+    // so the onDidChangeTextDocument event (which fires async) still sees it.
+    setTimeout(() => {
+      _protegeEditing = false;
+    }, 100);
+  });
+}
+export { withProtegeEditing };
+
 const HIGHLIGHT_STYLES: Record<HighlightKind, { bg: string; border: string }> = {
   focus:   { bg: "rgba(124, 229, 179, 0.14)", border: "#7ce5b3" }, // green
   bug:     { bg: "rgba(255, 143, 168, 0.17)", border: "#ff6fa8" }, // rose
@@ -107,17 +168,18 @@ async function dispatch(call: ToolCall): Promise<string> {
     case "run_file":
       return runFile(String(call.arguments.path ?? ""));
     case "edit_file":
-      return editFile(
-        String(call.arguments.path ?? ""),
-        String(call.arguments.oldString ?? ""),
-        String(call.arguments.newString ?? ""),
-        Boolean(call.arguments.replaceAll)
+      return withProtegeEditing(() =>
+        editFile(
+          String(call.arguments.path ?? ""),
+          String(call.arguments.oldString ?? ""),
+          String(call.arguments.newString ?? ""),
+          Boolean(call.arguments.replaceAll)
+        )
       );
     case "create_file":
-      return createFile(
-        String(call.arguments.path ?? ""),
-        String(call.arguments.content ?? "")
-      );
+    case "create_scratch_file":
+    case "run_file":
+      return "This tool has been disabled. Teach through chat responses instead.";
     default:
       throw new Error(`Unknown tool: ${call.name}`);
   }
@@ -219,6 +281,9 @@ interface HighlightRegion {
   endLine: number;
   kind?: HighlightKind;
   label?: string;
+  issue?: string;
+  fix?: string;
+  explanation?: string;
 }
 
 async function highlightCode(regions: HighlightRegion[]): Promise<string> {
@@ -258,19 +323,18 @@ async function highlightCode(regions: HighlightRegion[]): Promise<string> {
     );
 
     const label = r.label?.trim();
-    const hover = label
-      ? new vscode.MarkdownString(
-          `**Protege** · ${kindIcon(kind)} *${kind}*\n\n${escapeMd(label)}`
-        )
-      : new vscode.MarkdownString(`**Protege** · ${kindIcon(kind)} *${kind}*`);
+    const hover = buildRichHover(kind, label, r.issue, r.fix, r.explanation, {
+      path: r.path, startLine: r.startLine, endLine: r.endLine,
+    });
 
+    const inlineText = r.issue ?? label;
     const opt: vscode.DecorationOptions = {
       range,
       hoverMessage: hover,
-      renderOptions: label
+      renderOptions: inlineText
         ? {
             after: {
-              contentText: `  ← ${label}`,
+              contentText: `  ← ${inlineText}`,
               color: "rgba(245, 246, 250, 0.5)",
               fontStyle: "italic",
               margin: "0 0 0 1em",
@@ -292,21 +356,117 @@ async function highlightCode(regions: HighlightRegion[]): Promise<string> {
       preserveFocus: true,
     });
     editor.setDecorations(HIGHLIGHT_DECORATIONS[group.kind], group.options);
+    activeHighlightFiles.add(group.uri.toString());
     if (!firstShown && group.options.length > 0) {
       firstShown = { editor, range: group.options[0].range };
     }
   }
+  setHighlightContext();
+  scheduleAutoClear();
 
   if (firstShown) {
     firstShown.editor.revealRange(
       firstShown.range,
       vscode.TextEditorRevealType.InCenter
     );
+    // Move the cursor to the start of the highlighted range so VS Code's
+    // native hover popup has an anchor point, then trigger it. This makes
+    // the rich tooltip appear immediately — no need for the user to hover.
+    try {
+      const start = firstShown.range.start;
+      firstShown.editor.selection = new vscode.Selection(start, start);
+      // Slight delay so setDecorations has flushed before showHover runs
+      setTimeout(() => {
+        vscode.commands.executeCommand("editor.action.showHover").then(
+          () => {},
+          () => {}
+        );
+      }, 120);
+    } catch {}
   }
 
   return `Highlighted ${regions.length} region${
     regions.length === 1 ? "" : "s"
   } across ${groups.size} file${groups.size === 1 ? "" : "s"}`;
+}
+
+/**
+ * Build a rich MarkdownString hover — this is what VS Code pops up when
+ * the user (or we programmatically) trigger the hover at the highlighted
+ * line. Looks like the native HTML docs tooltip: bold header with codicon,
+ * horizontal rule, explanation body, then action links at the bottom.
+ */
+function buildRichHover(
+  kind: HighlightKind,
+  label: string | undefined,
+  issue: string | undefined,
+  fix: string | undefined,
+  explanation: string | undefined,
+  meta: { path: string; startLine: number; endLine: number }
+): vscode.MarkdownString {
+  const md = new vscode.MarkdownString(undefined, true);
+  md.isTrusted = true;
+  md.supportHtml = false;
+
+  const icon = kindIcon(kind);
+  const title = kindTitle(kind);
+  md.appendMarkdown(`### ${icon} Protege — ${title}\n\n`);
+
+  // Issue / what's wrong
+  if (issue) {
+    md.appendMarkdown(`**What's happening:** ${escapeMd(issue)}\n\n`);
+  } else if (label) {
+    md.appendMarkdown(`${escapeMd(label)}\n\n`);
+  }
+
+  // Fix / suggested code
+  if (fix) {
+    md.appendMarkdown(`**Suggested fix:**\n\n`);
+    md.appendCodeblock(fix, "");
+    md.appendMarkdown(`\n`);
+  }
+
+  // Explanation / why it matters
+  if (explanation) {
+    md.appendMarkdown(`**Why it matters:** ${escapeMd(explanation)}\n\n`);
+  }
+
+  md.appendMarkdown(`---\n\n`);
+
+  // Action bar
+  const actions: string[] = [];
+  if (fix) {
+    const fixArgs = encodeURIComponent(JSON.stringify({
+      path: meta.path,
+      startLine: meta.startLine,
+      endLine: meta.endLine,
+      fix,
+    }));
+    actions.push(`[$(wrench) Fix it for me](command:protege.applyFix?${fixArgs})`);
+  }
+  const teachArgs = encodeURIComponent(JSON.stringify({
+    kind,
+    label: issue ?? label ?? "",
+    explanation: explanation ?? "",
+  }));
+  actions.push(`[$(comment-discussion) Teach me more](command:protege.teachHighlight?${teachArgs})`);
+  actions.push(`[$(close) Clear](command:protege.clearHighlights)`);
+  md.appendMarkdown(actions.join(" · "));
+
+  return md;
+}
+
+function kindTitle(kind: HighlightKind): string {
+  switch (kind) {
+    case "focus":
+      return "Focus";
+    case "bug":
+      return "Bug";
+    case "pattern":
+      return "Pattern";
+    case "tip":
+      return "Tip";
+  }
 }
 
 async function clearHighlights(): Promise<string> {
@@ -317,7 +477,19 @@ async function clearHighlights(): Promise<string> {
       } catch {}
     }
   }
+  activeHighlightFiles.clear();
+  setHighlightContext();
   return "cleared";
+}
+
+/**
+ * Public wrapper so outside callers (webviewHost) can wipe highlights
+ * between turns. "Highlights stay forever" was a real UX bug — this
+ * lets the chat loop clear them before each new user message, so every
+ * turn starts with a fresh canvas.
+ */
+export async function clearAllHighlights(): Promise<void> {
+  await clearHighlights();
 }
 
 function kindIcon(kind: HighlightKind): string {

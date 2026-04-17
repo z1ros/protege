@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import type {
   GainEvent,
   MilestoneSummary,
@@ -7,8 +7,19 @@ import type {
 import { CinematicPlate } from "./CinematicPlate.js";
 import { IconStar, IconCheck, IconPlus } from "./icons.js";
 
+/**
+ * Profile page — merged with Settings.
+ *
+ * The top half is "who you are" (profile hero, stats, journey, recent wins).
+ * The bottom half is "how Protege behaves" (the preferences that used to
+ * live in a separate Settings overlay). Combined here because the user
+ * asked to reduce header icons and keep everything in one place, AND
+ * because theme control now lives in the header as a direct toggle.
+ */
+
 interface Props {
   userName: string;
+  avatarUrl?: string | null;
   memberSince: string;
   codeIq: number;
   maxIq: number;
@@ -132,6 +143,13 @@ export function ProfilePage({
         </section>
       )}
 
+      {/* ==========================================================
+          Preferences — what used to be the Settings overlay.
+          Theme control is intentionally omitted here because it now
+          lives as a direct toggle in the header.
+          ========================================================== */}
+      <PreferencesSections />
+
       <section className="profile-section profile-actions">
         <button className="ghost-btn" disabled>
           Edit profile
@@ -140,6 +158,180 @@ export function ProfilePage({
           Sign out
         </button>
       </section>
+
+      <div className="settings-footnote microcaps">
+        Protege v0.0.1 · your data stays local
+      </div>
+    </div>
+  );
+}
+
+/* ==========================================================
+   Preferences (formerly SettingsPage)
+   ========================================================== */
+
+function PreferencesSections() {
+  const [reduceMotion, setReduceMotion] = useState(
+    () => localStorage.getItem("protege:reduce-motion") === "1"
+  );
+  const [model, setModel] = useState("claude-sonnet-4-5");
+  const [temperature, setTemperature] = useState(0.7);
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [voice, setVoice] = useState<"bella" | "michael">("bella");
+  const [iqToasts, setIqToasts] = useState(true);
+  const [nudgeVerbosity, setNudgeVerbosity] = useState<
+    "quiet" | "normal" | "chatty"
+  >("normal");
+
+  // Reduce motion is the one preference that affects current-session CSS,
+  // so we sync it to a data attribute on the document element.
+  useEffect(() => {
+    document.documentElement.dataset.reduceMotion = reduceMotion ? "1" : "";
+    localStorage.setItem("protege:reduce-motion", reduceMotion ? "1" : "0");
+  }, [reduceMotion]);
+
+  return (
+    <>
+      <Section label="Model">
+        <Row label="Provider">
+          <div className="row-value microcaps">Anthropic</div>
+        </Row>
+        <Row label="Model">
+          <select
+            className="select"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+          >
+            <option value="claude-opus-4-6">Claude Opus 4.6</option>
+            <option value="claude-sonnet-4-5">Claude Sonnet 4.5</option>
+            <option value="claude-haiku-4-5">Claude Haiku 4.5</option>
+          </select>
+        </Row>
+        <Row label={`Temperature · ${temperature.toFixed(1)}`}>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.1}
+            value={temperature}
+            onChange={(e) => setTemperature(parseFloat(e.target.value))}
+            className="slider"
+            style={{ ["--fill" as never]: `${temperature * 100}%` }}
+          />
+        </Row>
+      </Section>
+
+      <Section label="Voice">
+        <Row label="Voice mode">
+          <Toggle checked={voiceEnabled} onChange={setVoiceEnabled} />
+        </Row>
+        <Row label="Voice">
+          <SegmentedControl
+            value={voice}
+            options={[
+              { value: "bella", label: "Bella" },
+              { value: "michael", label: "Michael" },
+            ]}
+            onChange={(v) => setVoice(v as typeof voice)}
+          />
+        </Row>
+      </Section>
+
+      <Section label="Appearance">
+        <Row label="Reduce motion">
+          <Toggle checked={reduceMotion} onChange={setReduceMotion} />
+        </Row>
+      </Section>
+
+      <Section label="Notifications">
+        <Row label="IQ gain toasts">
+          <Toggle checked={iqToasts} onChange={setIqToasts} />
+        </Row>
+        <Row label="Nudge verbosity">
+          <SegmentedControl
+            value={nudgeVerbosity}
+            options={[
+              { value: "quiet", label: "Quiet" },
+              { value: "normal", label: "Normal" },
+              { value: "chatty", label: "Chatty" },
+            ]}
+            onChange={(v) => setNudgeVerbosity(v as typeof nudgeVerbosity)}
+          />
+        </Row>
+      </Section>
+
+    </>
+  );
+}
+
+function Section({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="settings-section">
+      <div className="section-label microcaps">{label}</div>
+      <div className="section-card">{children}</div>
+    </section>
+  );
+}
+
+function Row({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="setting-row">
+      <div className="setting-row-label">{label}</div>
+      <div className="setting-row-value">{children}</div>
+    </div>
+  );
+}
+
+function Toggle({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <button
+      className={`toggle ${checked ? "on" : ""}`}
+      onClick={() => onChange(!checked)}
+      aria-pressed={checked}
+    >
+      <span className="toggle-thumb" />
+    </button>
+  );
+}
+
+function SegmentedControl<T extends string>({
+  value,
+  options,
+  onChange,
+}: {
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div className="segmented">
+      {options.map((o) => (
+        <button
+          key={o.value}
+          className={`segmented-btn ${value === o.value ? "active" : ""}`}
+          onClick={() => onChange(o.value)}
+        >
+          {o.label}
+        </button>
+      ))}
     </div>
   );
 }

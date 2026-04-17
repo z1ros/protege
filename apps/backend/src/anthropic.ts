@@ -4,7 +4,7 @@ export const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY ?? "",
 });
 
-export const MODEL = process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-5";
+export const MODEL = process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-6";
 
 // The real prompt now lives in prompts/persona.ts and is composed
 // per-request based on channel (text vs voice). MENTOR_SYSTEM_PROMPT is kept
@@ -72,7 +72,7 @@ export const TOOL_DEFINITIONS: Anthropic.Messages.Tool[] = [
   {
     name: "highlight_code",
     description:
-      "Paint labeled, color-coded highlights on line ranges in the editor. Persistent until next highlight_code or clear_highlights. Use BEFORE explaining so the user can see what you mean.",
+      "Paint interactive highlights on code in the editor. For bug/tip kinds, provide issue + fix + explanation to enable rich hover cards with 'Fix it for me' buttons. Use BEFORE explaining so the user can see what you mean.",
     input_schema: {
       type: "object",
       properties: {
@@ -88,7 +88,10 @@ export const TOOL_DEFINITIONS: Anthropic.Messages.Tool[] = [
                 type: "string",
                 enum: ["focus", "bug", "pattern", "tip"],
               },
-              label: { type: "string" },
+              label: { type: "string", description: "Short inline label shown after the highlighted line" },
+              issue: { type: "string", description: "What's wrong or noteworthy — one sentence" },
+              fix: { type: "string", description: "The corrected code snippet. Shown as a copyable code block in the hover card" },
+              explanation: { type: "string", description: "Why this matters — the conceptual lesson. Max two sentences" },
             },
             required: ["path", "startLine", "endLine"],
           },
@@ -117,42 +120,10 @@ export const TOOL_DEFINITIONS: Anthropic.Messages.Tool[] = [
       required: ["path", "oldString", "newString"],
     },
   },
-  {
-    name: "create_file",
-    description: "Create a new file. Fails if file already exists.",
-    input_schema: {
-      type: "object",
-      properties: {
-        path: { type: "string" },
-        content: { type: "string" },
-      },
-      required: ["path", "content"],
-    },
-  },
-  {
-    name: "create_scratch_file",
-    description:
-      "Create a demo/lesson file under .protege/lessons/. Keeps demos isolated from real code. Auto-appends a timestamp if name collides.",
-    input_schema: {
-      type: "object",
-      properties: {
-        name: { type: "string" },
-        content: { type: "string" },
-        explanation: { type: "string" },
-      },
-      required: ["name", "content"],
-    },
-  },
-  {
-    name: "run_file",
-    description:
-      "Execute a .js/.mjs/.cjs/.ts/.tsx/.py/.sh/.bash file inside the workspace and return stdout/stderr/exitCode. 10s timeout.",
-    input_schema: {
-      type: "object",
-      properties: { path: { type: "string" } },
-      required: ["path"],
-    },
-  },
+  // create_file REMOVED — Claude was dumping random lesson files into the
+  // workspace. Teaching happens through chat responses only.
+  // create_scratch_file REMOVED — same reason.
+  // run_file REMOVED — too risky without user confirmation.
   {
     name: "remember",
     description:
