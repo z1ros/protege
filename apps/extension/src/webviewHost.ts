@@ -111,6 +111,22 @@ export function mountProtegeWebview(
     } else if (msg.type === "ready") {
       sendInitialState(webview, userId);
 
+      // Hydrate the AI backend choice + last-call info so the Live tab
+      // reflects persisted state instead of defaulting to "auto".
+      const { getAiBackend, getLastCall } = await import("./aiBackend.js");
+      post(webview, { type: "ai/backend", backend: getAiBackend() });
+      const last = getLastCall();
+      if (last) {
+        post(webview, {
+          type: "ai/lastCall",
+          backend: last.backend,
+          atMs: last.atMs,
+          durationMs: last.durationMs,
+          ok: last.ok,
+          fallback: last.fallback,
+        });
+      }
+
       // Send persisted chat history so conversations survive reloads
       const history = getHistory();
       if (history.length > 0) {
@@ -169,6 +185,9 @@ export function mountProtegeWebview(
     } else if (msg.type === "ai/setBackend") {
       const { setAiBackend } = await import("./aiBackend.js");
       setAiBackend(msg.backend);
+      // Echo the persisted value back so the webview reflects the
+      // authoritative host state (and so new panels in parallel hydrate).
+      post(webview, { type: "ai/backend", backend: msg.backend });
     } else if (msg.type === "ai/downloadModel") {
       vscode.commands.executeCommand("protege.downloadOnDeviceModel");
     } else if (msg.type === "openExternal") {
@@ -266,7 +285,15 @@ export function mountProtegeWebview(
         post(webview, { type: "wake/state", active: false });
       } else {
         try {
+          // Immediately tell webview we're loading — the binary takes
+          // ~1-3s to load its three ONNX models before it can detect
+          // anything. The UI renders a "Warming up wake word…" state
+          // until we get WAKE:ready back via onReady.
+          post(webview, { type: "wake/state", active: true, status: "loading" });
           await startWakeWordListener(context.extensionUri.fsPath, {
+            onReady: () => {
+              post(webview, { type: "wake/state", active: true, status: "listening" });
+            },
             onWake: () => {
               // Wake word detected — tell webview we're recording
               post(webview, { type: "voice/recording", active: true });
@@ -293,7 +320,6 @@ export function mountProtegeWebview(
               post(webview, { type: "voice/error", error: err });
             },
           });
-          post(webview, { type: "wake/state", active: true, status: "listening" });
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
           post(webview, { type: "voice/error", error: errMsg });
@@ -356,6 +382,7 @@ async function sendInitialState(webview: vscode.Webview, userId: string) {
       synergies: me.synergies,
       velocity: me.velocity,
       breakdown: me.breakdown,
+      iqV2: me.iqV2,
     } satisfies HostToWebview);
   } catch {
     // backend may be offline

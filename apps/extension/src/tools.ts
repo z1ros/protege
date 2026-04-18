@@ -537,6 +537,77 @@ async function showCode(
 
 /* ========== edit / create ========== */
 
+/**
+ * Accept gate — when the AI calls edit_file, the user must accept the
+ * proposed edit before it's written. Silent auto-writes were the cause of
+ * a real incident where a teaching question refactored a live file
+ * without consent. The only way to bypass the prompt is for the user to
+ * explicitly enable `protege.autoAcceptEdits` in settings (or click
+ * "Always accept" in the modal, which flips the same setting).
+ */
+function isAutoAcceptOn(): boolean {
+  return (
+    vscode.workspace
+      .getConfiguration("protege")
+      .get<boolean>("autoAcceptEdits", false) === true
+  );
+}
+
+async function setAutoAcceptOn(): Promise<void> {
+  await vscode.workspace
+    .getConfiguration("protege")
+    .update("autoAcceptEdits", true, vscode.ConfigurationTarget.Global);
+}
+
+/** Build a short side-by-side snippet for the accept modal. */
+function buildDiffPreview(oldString: string, newString: string): string {
+  const MAX_LINES = 8;
+  const MAX_CHARS = 280;
+  const clipBlock = (s: string): string => {
+    const lines = s.split("\n");
+    const clipped = lines.slice(0, MAX_LINES).join("\n");
+    const more = lines.length > MAX_LINES ? `\n… (+${lines.length - MAX_LINES} more lines)` : "";
+    const full = clipped + more;
+    if (full.length > MAX_CHARS) return full.slice(0, MAX_CHARS - 1) + "…";
+    return full;
+  };
+  return `BEFORE:\n${clipBlock(oldString)}\n\nAFTER:\n${clipBlock(newString)}`;
+}
+
+async function confirmEditWithUser(
+  pathLike: string,
+  oldString: string,
+  newString: string
+): Promise<"accept" | "reject"> {
+  if (isAutoAcceptOn()) return "accept";
+
+  const ACCEPT = "Accept";
+  const REJECT = "Reject";
+  const ALWAYS = "Always accept";
+
+  const choice = await vscode.window.showInformationMessage(
+    `Protege wants to edit ${pathLike}`,
+    {
+      modal: true,
+      detail: buildDiffPreview(oldString, newString),
+    },
+    ACCEPT,
+    ALWAYS,
+    REJECT
+  );
+
+  if (choice === ALWAYS) {
+    await setAutoAcceptOn();
+    vscode.window.setStatusBarMessage(
+      "$(check) Protege edits will now auto-accept — toggle off via: Protege: Toggle Auto-Accept Edits",
+      5000
+    );
+    return "accept";
+  }
+  if (choice === ACCEPT) return "accept";
+  return "reject";
+}
+
 async function editFile(
   pathLike: string,
   oldString: string,
@@ -556,6 +627,15 @@ async function editFile(
     if (parts.length === 1) {
       throw new Error(`oldString not found in ${pathLike}`);
     }
+
+    // Gate the write on explicit user acceptance.
+    const decision = await confirmEditWithUser(pathLike, oldString, newString);
+    if (decision === "reject") {
+      throw new Error(
+        `User rejected the proposed edit to ${pathLike}. Do not retry automatically — ask them what they want to change before proposing another edit.`
+      );
+    }
+
     const newText = parts.join(newString);
     const fullRange = new vscode.Range(
       doc.positionAt(0),
@@ -583,6 +663,14 @@ async function editFile(
   if (second !== -1) {
     throw new Error(
       `oldString appears more than once in ${pathLike}; include more context or set replaceAll=true`
+    );
+  }
+
+  // Gate the write on explicit user acceptance.
+  const decision = await confirmEditWithUser(pathLike, oldString, newString);
+  if (decision === "reject") {
+    throw new Error(
+      `User rejected the proposed edit to ${pathLike}. Do not retry automatically — ask them what they want to change before proposing another edit.`
     );
   }
 

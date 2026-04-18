@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { detectConcepts } from "./concepts/detector.js";
 import { aiGenerateTip } from "./aiExplain.js";
+import { renderProtegeHover } from "./hoverTemplate.js";
 
 /**
  * "Did You Know?" — Protege's proactive teaching layer.
@@ -163,24 +164,37 @@ function showRichTip(
 
   const doc = editor.document;
   const targetLine = findConceptLine(doc, concept, editor.selection.active.line);
+
+  // Dedup: only skip if a non-Protege diagnostic actually overlaps the
+  // concept line — not just any diagnostic in the file.
+  const lineRange = new vscode.Range(targetLine, 0, targetLine, doc.lineAt(targetLine).text.length);
+  const otherDiags = vscode.languages.getDiagnostics(doc.uri).filter((d) => d.source !== "Protege");
+  if (otherDiags.some((d) => d.range.intersection(lineRange))) {
+    return;
+  }
+
   const lineText = doc.lineAt(targetLine).text;
   const range = new vscode.Range(targetLine, lineText.length, targetLine, lineText.length);
 
-  const md = new vscode.MarkdownString("", true);
-  md.isTrusted = true;
-  md.supportThemeIcons = true;
-
-  md.appendMarkdown(`### $(lightbulb) Did you know?\n\n`);
-  md.appendMarkdown(`**\`${concept}\`**\n\n`);
-  md.appendMarkdown(`${tipText}\n\n`);
-  md.appendMarkdown(`\n\n---\n\n`);
-
-  const learnArgs = encodeURIComponent(JSON.stringify([concept]));
-  md.appendMarkdown(
-    `[$(book) Learn more](command:protege.teachConcept?${learnArgs}) · ` +
-    `[$(close) Dismiss](command:protege.dismissTip) · ` +
-    `*Protege*`
-  );
+  const md = renderProtegeHover({
+    kind: "tip",
+    title: `Did you know? · ${concept}`,
+    body: tipText,
+    actions: [
+      {
+        icon: "book",
+        label: "Learn more",
+        command: "protege.teachConcept",
+        args: [concept],
+        primary: true,
+      },
+      {
+        icon: "close",
+        label: "Dismiss",
+        command: "protege.dismissTip",
+      },
+    ],
+  });
 
   editor.setDecorations(tipDecoration, [{ range, hoverMessage: md }]);
   activeTip = { editor, docUri: doc.uri.toString(), line: targetLine };

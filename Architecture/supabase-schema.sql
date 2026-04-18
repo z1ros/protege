@@ -29,8 +29,13 @@ CREATE TABLE IF NOT EXISTS users (
   velocity_log JSONB DEFAULT '[]',
   pillar_snapshots JSONB DEFAULT '[]',
   unlocked_milestones TEXT[] DEFAULT '{}',
-  unlocked_milestone_at JSONB DEFAULT '{}'
+  unlocked_milestone_at JSONB DEFAULT '{}',
+  -- cross-device user preferences (ai_backend, feature flags, etc.)
+  preferences JSONB DEFAULT '{}'
 );
+
+-- Idempotent migration for existing databases that predate the preferences column.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS preferences JSONB DEFAULT '{}';
 
 -- Concepts — one row per user × concept
 CREATE TABLE IF NOT EXISTS concepts (

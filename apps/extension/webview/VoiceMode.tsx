@@ -17,6 +17,10 @@ type TtsStatus = "unknown" | "warming" | "ready" | "error";
 const BACKEND_URL = "http://localhost:8787";
 const BAR_COUNT = 24;
 
+function formatMB(bytes: number): string {
+  return `${(bytes / 1_048_576).toFixed(1)} MB`;
+}
+
 // VAD thresholds — tuned for 8000Hz analyser on typical mic levels
 const SPEECH_RMS = 0.03;        // start-of-speech threshold (normalized 0..1)
 const SILENCE_RMS = 0.018;      // below this = silence
@@ -62,6 +66,10 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [ttsStatus, setTtsStatus] = useState<TtsStatus>("unknown");
   const [ttsWarmupError, setTtsWarmupError] = useState<string | null>(null);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [downloadLoaded, setDownloadLoaded] = useState(0);
+  const [downloadTotal, setDownloadTotal] = useState(0);
   const [conversation, setConversation] = useState(false); // continuous mode on/off
   const [liveTranscript, setLiveTranscript] = useState("");
   const [statusDetail, setStatusDetail] = useState("");
@@ -118,6 +126,10 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
         const data = (await res.json()) as {
           ready: boolean;
           warmupError: string | null;
+          stage?: "idle" | "downloading" | "loading" | "ready" | "error";
+          progress?: number;
+          loadedBytes?: number;
+          totalBytes?: number;
         };
         if (cancelled) return;
         if (data.warmupError) {
@@ -131,7 +143,16 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
           return;
         }
         setTtsStatus("warming");
-        timer = setTimeout(poll, 1500);
+        if (data.stage === "downloading") {
+          setDownloadProgress(data.progress ?? 0);
+          setDownloadLoaded(data.loadedBytes ?? 0);
+          setDownloadTotal(data.totalBytes ?? 0);
+          setIsDownloading(true);
+        } else {
+          setIsDownloading(false);
+        }
+        // Poll faster while downloading so the bar moves smoothly.
+        timer = setTimeout(poll, data.stage === "downloading" ? 500 : 1500);
       } catch (err) {
         if (cancelled) return;
         // Backend not reachable yet — keep trying, slower
@@ -357,6 +378,10 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
     // Block interaction until Kokoro is ready — otherwise we'd record
     // the user, get a transcript, and have nothing to speak back.
     if (ttsStatus !== "ready") return;
+    // Also block if the wake word listener is still loading its models
+    // — the user might tap intending to barge in before the listener is
+    // ready, which would leave wake detection offline mid-conversation.
+    if (wakeWordStatus === "loading") return;
     unlockAudio();
     if (conversation) {
       stopConversation();
@@ -458,21 +483,37 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
         <button
           className={`voice-orb ${phase === "listening" ? "listening" : ""} ${
             phase === "speaking" ? "speaking" : ""
-          } ${ttsStatus !== "ready" ? "warming" : ""}`}
+          } ${
+            ttsStatus !== "ready" || wakeWordStatus === "loading"
+              ? "warming"
+              : ""
+          }`}
           onClick={toggleOrb}
-          disabled={ttsStatus !== "ready"}
+          disabled={ttsStatus !== "ready" || wakeWordStatus === "loading"}
           aria-label={
             conversation ? "End conversation" : "Start conversation"
           }
         />
       </div>
 
-      {ttsStatus !== "ready" && ttsStatus !== "error" && (
+      {isDownloading && ttsStatus !== "ready" && ttsStatus !== "error" && (
         <div className="voice-warmup-card">
           <div className="voice-warmup-spinner" />
-          <div className="voice-warmup-title">Setting up your voice</div>
+          <div className="voice-warmup-title">Downloading voice model</div>
           <div className="voice-warmup-sub">
-            First time loads a ~80MB voice model. Takes 30–120 seconds on first run, instant after that.
+            One-time setup. Downloads ~80MB from HuggingFace.
+            {downloadTotal > 0 && (
+              <>
+                {" · "}
+                {formatMB(downloadLoaded)} / {formatMB(downloadTotal)}
+              </>
+            )}
+          </div>
+          <div className="voice-warmup-bar">
+            <div
+              className="voice-warmup-bar-fill"
+              style={{ width: `${Math.round((downloadProgress || 0) * 100)}%` }}
+            />
           </div>
         </div>
       )}
@@ -610,7 +651,9 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
       {!conversation && !showTypeUI && (
         <div className="voice-hint">
           {wakeWordActive
-            ? wakeWordStatus === "recording"
+            ? wakeWordStatus === "loading"
+              ? "Warming up wake word…"
+              : wakeWordStatus === "recording"
               ? "Heard you! Listening..."
               : 'Say "Protege" or tap the orb'
             : "Tap the orb to start a real conversation"
@@ -619,19 +662,32 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
       )}
 
       <button
-        className={`wake-word-toggle ${wakeWordActive ? "active" : ""}`}
+        className={`wake-word-toggle ${wakeWordActive ? "active" : ""} ${
+          wakeWordStatus === "loading" ? "loading" : ""
+        }`}
         onClick={() => {
           unlockAudio();
           vscode.postMessage({ type: "wake/toggle" });
         }}
-        title={wakeWordActive ? 'Wake word ON — say "Protege" to activate' : "Enable wake word detection"}
+        disabled={wakeWordStatus === "loading"}
+        title={
+          wakeWordStatus === "loading"
+            ? "Loading wake word models…"
+            : wakeWordActive
+            ? 'Wake word ON — say "Protege" to activate'
+            : "Enable wake word detection"
+        }
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <rect x="9" y="3" width="6" height="12" rx="3" />
           <path d="M5 11a7 7 0 0014 0" />
           <path d="M12 18v3" />
         </svg>
-        {wakeWordActive ? '"Protege" ON' : 'Wake word'}
+        {wakeWordStatus === "loading"
+          ? "Loading…"
+          : wakeWordActive
+          ? '"Protege" ON'
+          : "Wake word"}
       </button>
     </div>
   );

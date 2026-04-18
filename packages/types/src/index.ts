@@ -1,5 +1,5 @@
 export * from "./concepts.js";
-import type { Cluster, IqPillars, LevelInfo, SynergyResult } from "./concepts.js";
+import type { Cluster, IqPillars, IqV2, LevelInfo, SynergyResult } from "./concepts.js";
 
 export type Role = "user" | "assistant" | "system" | "tool";
 
@@ -179,6 +179,10 @@ export interface MeResponse {
   velocity: VelocityInfo;
   /** Daily IQ breakdown — where did my points come from / go? */
   breakdown: IqBreakdown;
+  /** Code IQ v2 — the engineer's benchmark. One number = mean of six
+   *  categories (Craft, Range, Velocity, Debug, Quality, Independence).
+   *  Computed in parallel with v1 during the transition. */
+  iqV2: IqV2;
 }
 
 export interface ActiveFileInfo {
@@ -259,6 +263,13 @@ export interface ToolResult {
 
 export type ChatMode = "text" | "voice";
 
+/**
+ * Cloud chat backend the user wants to route this request through. The
+ * server maps this to a concrete Anthropic model id. `undefined` means
+ * "use the server default" (backwards-compat with pre-selection clients).
+ */
+export type ChatBackend = "haiku" | "sonnet";
+
 export interface ChatRunRequest {
   userId?: string;
   workspace?: WorkspaceContext;
@@ -266,6 +277,8 @@ export interface ChatRunRequest {
   newUserMessage?: string; // present on first call of a turn
   toolResults?: ToolResult[]; // present on continuation calls
   mode?: ChatMode; // rendering channel — affects persona + post-processing
+  /** Which cloud model the user selected. Server defaults to Sonnet when omitted. */
+  backend?: ChatBackend;
 }
 
 export interface ChatRunResponse {
@@ -341,6 +354,7 @@ export type HostToWebview =
       synergies: SynergyResult;
       velocity: VelocityInfo;
       breakdown: IqBreakdown;
+      iqV2: IqV2;
     }
   | { type: "iq/gain"; gains: GainEvent[]; codeIq: number }
   | { type: "chat/autoSend"; message: string }
@@ -356,11 +370,45 @@ export type HostToWebview =
   | { type: "wake/state"; active: boolean; status?: string }
   | { type: "liveReview/state"; active: boolean }
   | {
+      type: "tip/detail";
+      tip: {
+        title: string;
+        body: string;
+        kind: "bug" | "perf" | "tip" | "warn" | "info";
+        ruleId: string;
+        currentLine?: string;
+        fix?: string;
+        lang?: string;
+        uri: string;
+        line: number;
+      };
+    }
+  | {
       type: "ai/modelStatus";
       ready: boolean;
       loading: boolean;
       error: string | null;
       downloadProgress: number;
+    }
+  /** Host pushes the currently selected backend so the webview hydrates
+   *  from persisted state (globalState) instead of defaulting to "auto" on
+   *  every reload. */
+  | { type: "ai/backend"; backend: "on-device" | "haiku" | "sonnet" | "auto" }
+  /** Host reports which backend actually executed the most recent query.
+   *  The webview shows this as a "last call" chip so the user can prove
+   *  on-device is running vs. silently falling through to Claude. */
+  | {
+      type: "ai/lastCall";
+      backend: "on-device" | "haiku" | "sonnet";
+      atMs: number;
+      durationMs: number;
+      ok: boolean;
+      /** Set when the chosen backend couldn't run and we fell back (or
+       *  refused to). The chip must render this loudly. */
+      fallback?: {
+        requested: "on-device" | "haiku" | "sonnet" | "auto";
+        reason: string;
+      };
     }
   | {
       type: "auth/user";

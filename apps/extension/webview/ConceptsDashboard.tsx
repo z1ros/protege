@@ -36,7 +36,10 @@ import type {
   StreakInfo,
   ClusterSummary,
   IqPillars,
+  IqV2,
+  IqV2Category,
 } from "@protege/types";
+import { IQV2_LEVEL_BANDS } from "@protege/types";
 
 interface Props {
   codeIq: number;
@@ -49,6 +52,7 @@ interface Props {
   streak: StreakInfo;
   clusters: ClusterSummary[];
   pillars: IqPillars | null;
+  iqV2: IqV2 | null;
 }
 
 /* ---------- mock data ---------- */
@@ -151,7 +155,7 @@ function bucketPoints(points: TrajPoint[], maxPts = 40): TrajPoint[] {
 
 export function ConceptsDashboard({
   codeIq, maxIq, totalConcepts, ruleCount, concepts,
-  dailyIq, recentGains, streak, clusters, pillars,
+  dailyIq, recentGains, streak, clusters, pillars, iqV2,
 }: Props) {
   // Filter today's gains
   const today = new Date().toISOString().slice(0, 10);
@@ -162,12 +166,16 @@ export function ConceptsDashboard({
 
   return (
     <div className="dash">
-      <LevelCard
-        codeIq={codeIq}
-        maxIq={maxIq}
-        streak={streak}
-        activeDays={activeDays}
-      />
+      {iqV2 ? (
+        <IqV2Card iqV2={iqV2} streak={streak} activeDays={activeDays} />
+      ) : (
+        <LevelCard
+          codeIq={codeIq}
+          maxIq={maxIq}
+          streak={streak}
+          activeDays={activeDays}
+        />
+      )}
 
       {dailyIq.length >= 2 ? (
         <TrajectoryCardReal dailyIq={dailyIq} />
@@ -188,15 +196,6 @@ export function ConceptsDashboard({
       )}
 
       <SkillSection concepts={concepts} />
-
-      {pillars ? (
-        <PillarsRadar pillars={pillars} />
-      ) : (
-        <EmptyCard
-          title="Coding Skills"
-          message="Save a file to light up your skill radar."
-        />
-      )}
     </div>
   );
 }
@@ -212,31 +211,531 @@ function SkillSection({ concepts }: { concepts: ConceptRow[] }) {
       className="dash-card skill-section has-cinema-bg"
       style={{ ["--bg-img" as never]: `url(${bgCycleBloom})` }}
     >
-      <div className="dash-card-head">
-        <div className="dash-card-title microcaps">Skills</div>
-        <div className="skill-toggle" role="tablist" aria-label="Skill view">
-          <button
-            role="tab"
-            aria-selected={view === "tree"}
-            className={`skill-toggle-opt ${view === "tree" ? "active" : ""}`}
-            onClick={() => setView("tree")}
-          >
-            Tree
-          </button>
-          <button
-            role="tab"
-            aria-selected={view === "map"}
-            className={`skill-toggle-opt ${view === "map" ? "active" : ""}`}
-            onClick={() => setView("map")}
-          >
-            Map
-          </button>
-        </div>
-      </div>
       {view === "tree" ? (
         <SkillTreeView concepts={concepts} onSwitchToMap={() => setView("map")} />
       ) : (
-        <SkillConstellation concepts={concepts} />
+        <SkillConstellation
+          concepts={concepts}
+          onBackToTree={() => setView("tree")}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ==========================================================
+   IqV2 card — the headline Code IQ with six category bars.
+
+   One number = arithmetic mean of the six categories (Craft, Range,
+   Velocity, Debug, Quality, Independence), each 0-1000. The headline
+   moves only when all categories move — you cannot fake staff level
+   with a 950 Craft and a 0 Debug.
+
+   Pending categories (Independence, until signal collection ships)
+   show with a dashed bar and are excluded from the mean.
+   ========================================================== */
+
+/* ----- Static metadata for the "show me the math" panel.
+   Every category lists (a) the question it answers, (b) the signals
+   it consumes with keys matching `category.inputs`, (c) the raw
+   formula in plain English, and (d) its level curve.
+   Keep in lockstep with apps/backend/src/iqV2.ts — if a formula
+   changes there, update the string here so the UI never lies. */
+interface CatMeta {
+  question: string;
+  signals: Array<{ key: string; label: string; hint?: string }>;
+  formula: string[];
+  levelCurve: string;
+  maxScore: number;
+}
+const CATEGORY_META: Record<IqV2Category["id"], CatMeta> = {
+  craft: {
+    question: "Can you write clean, correct code yourself?",
+    signals: [
+      { key: "authoredConcepts", label: "Practiced concepts", hint: "timesUsed ≥ 2" },
+      { key: "demonstratedConcepts", label: "Demonstrated across ≥ 3 files" },
+      { key: "raw", label: "Raw score" },
+    ],
+    formula: [
+      "Σ(authorship × difficulty × min(1, distinctFiles / 3) × mastery × 12)",
+      "authorship = 0.7 placeholder until keystroke + paste telemetry lands",
+    ],
+    levelCurve: "sigmoid((raw − 120) / 200) × 1000 — 60 raw → 100 IQ, 150 → 500, 300 → 820",
+    maxScore: 1000,
+  },
+  range: {
+    question: "How many domains can you actually work in?",
+    signals: [
+      { key: "liveDomains", label: "Live domains", hint: "≥ 3 concepts + progress ≥ 0.2" },
+      { key: "paradigmsUsed", label: "Paradigms used", hint: "react · functional · async · types" },
+      { key: "synergyPairs", label: "Active synergy pairs" },
+      { key: "oneTrickPenalty", label: "One-trick penalty" },
+      { key: "raw", label: "Raw score" },
+    ],
+    formula: [
+      "rawRange = liveDomains × 60",
+      "  + paradigmsUsed × 40",
+      "  + synergyPairs × 30",
+      "  + max(0, liveDomains − 1) × 40   // language-practiced proxy",
+      "  − oneTrickPenalty",
+    ],
+    levelCurve: "linear up to 600, compressed above (raw − 600) × 0.5",
+    maxScore: 1000,
+  },
+  velocity: {
+    question: "How fast can you ship working code?",
+    signals: [
+      { key: "featuresCompleted", label: "Features shipped", hint: "days with ≥ 3 gains" },
+      { key: "activeMinutes30d", label: "Active coding minutes (30d)" },
+      { key: "newConceptsPerWeek", label: "New concepts / week (4w avg)" },
+      { key: "raw", label: "Raw score" },
+    ],
+    formula: [
+      "rawVelocity = featuresCompleted × 25",
+      "  + min(200, activeMinutes30d / 30)",
+      "  + min(80, newConceptsPerWeek × 16)",
+      "  + levelUpsPerWeek × 40",
+    ],
+    levelCurve: "1000 × (1 − exp(−raw / 250)) — 100 → 330, 300 → 700, 700 → 940",
+    maxScore: 1000,
+  },
+  debug: {
+    question: "Can you find and fix root causes?",
+    signals: [
+      { key: "bugsAuthoredFixed", label: "Bugs authored-fixed", hint: "errorCount dropped after your edit" },
+      { key: "recentFixes", label: "Fixes in last 14 days" },
+      { key: "simplificationEvents", label: "Simplification events" },
+      { key: "raw", label: "Raw score" },
+    ],
+    formula: [
+      "rawDebug = bugsAuthoredFixed × 4",
+      "  + recentFixes × 4",
+      "  + max(0, 60 − diagnosticLatencyMin) × 2",
+      "  + simplificationEvents × 6",
+    ],
+    levelCurve: "linear to 400, sigmoid above: 400 + 600 × sigmoid((raw − 600) / 200)",
+    maxScore: 1000,
+  },
+  quality: {
+    question: "Does your code last?",
+    signals: [
+      { key: "cleanSaveRate", label: "Clean save rate", hint: "saves with 0 new flags" },
+      { key: "bugDensity", label: "Bug density", hint: "fix-gains / 100 concepts" },
+      { key: "typeStrictness", label: "Type strictness" },
+      { key: "raw", label: "Raw score" },
+    ],
+    formula: [
+      "rawQuality = cleanSaveRate × 200",
+      "  + max(0, 100 − bugDensity × 30)",
+      "  + typeStrictness × 100",
+      "  + testsAuthored × 8 + testCoverageAuthored × 150",
+      "  − recurringBugCount × 12",
+    ],
+    levelCurve: "sigmoid centered at 350 with 180 slope",
+    maxScore: 1000,
+  },
+  independence: {
+    question: "Are you getting better, or is the AI doing it?",
+    signals: [
+      { key: "authorshipRatio30d", label: "Authorship ratio (30d)", hint: "typed chars / total new chars" },
+      { key: "aiExplainabilityRate", label: "AI explainability rate", hint: "% of AI code you modify within 10 min" },
+      { key: "noAssistFeaturesCompleted", label: "Features shipped without AI" },
+    ],
+    formula: [
+      "rawIndependence = authorshipRatio30d × 500",
+      "  + aiExplainabilityRate × 150",
+      "  + noAssistFeaturesCompleted × 20",
+      "  + aiCorrectionsAuthored × 8",
+    ],
+    levelCurve: "direct — no curve. What you see is what your authorship is.",
+    maxScore: 1000,
+  },
+};
+
+function IqV2Card({
+  iqV2,
+  streak,
+  activeDays,
+}: {
+  iqV2: IqV2;
+  streak: StreakInfo;
+  activeDays: number;
+}) {
+  const [hoveredId, setHoveredId] = React.useState<IqV2Category["id"] | null>(
+    null
+  );
+  const [expandedId, setExpandedId] = React.useState<IqV2Category["id"] | null>(
+    null
+  );
+  const [ladderOpen, setLadderOpen] = React.useState(false);
+  const categories: IqV2Category[] = [
+    iqV2.craft,
+    iqV2.range,
+    iqV2.velocity,
+    iqV2.debug,
+    iqV2.quality,
+    iqV2.independence,
+  ];
+  const hovered = hoveredId
+    ? categories.find((c) => c.id === hoveredId) ?? null
+    : null;
+
+  // Overall ring progress — what fraction of the way to 1000 are you?
+  const overallPct = Math.min(1, iqV2.codeIq / 1000);
+
+  // When hovering a category, the ring shows that category's own progress
+  // so the orbit becomes an interactive lens into each pillar.
+  const ringPct = hovered && !hovered.pending
+    ? Math.min(1, hovered.score / 1000)
+    : overallPct;
+  const ringLabel = hovered ? hovered.label : iqV2.level.label;
+  const ringSub = hovered
+    ? hovered.pending
+      ? "awaiting signal data"
+      : `${hovered.score} / 1000`
+    : iqV2.level.next
+      ? `${iqV2.level.toNext} iq to ${iqV2.level.next}`
+      : "you are Legend";
+
+  // Ring geometry
+  const r = 38;
+  const c = 2 * Math.PI * r;
+  const dash = c * ringPct;
+  const gap = c - dash;
+
+  // Orbiting "pulse" dot — the single signature detail.
+  const pulseA = ringPct * Math.PI * 2 - Math.PI / 2;
+  const pulseX = 50 + Math.cos(pulseA) * r;
+  const pulseY = 50 + Math.sin(pulseA) * r;
+
+  // Tick marks per level threshold, so the ring reads like an instrument.
+  const ringTicks = [80, 180, 350, 550, 720, 860, 950].map((at) => ({
+    at,
+    frac: at / 1000,
+  }));
+
+  return (
+    <div
+      className="dash-card iqv2-card has-cinema-bg"
+      style={{ ["--bg-img" as never]: `url(${bgCometRider})` }}
+    >
+      <div className="iqv2-headline">
+        <div className="iqv2-orbit">
+          <svg viewBox="0 0 100 100" className="iqv2-ring" aria-hidden>
+            <defs>
+              <linearGradient id="iqV2RingGrad" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stopColor="#BDDBFF" />
+                <stop offset="60%" stopColor="#4A9EFF" />
+                <stop offset="100%" stopColor="#1E63C8" />
+              </linearGradient>
+              <filter id="iqV2RingGlow" x="-50%" y="-50%" width="200%" height="200%">
+                <feGaussianBlur stdDeviation="1.4" result="b" />
+                <feMerge>
+                  <feMergeNode in="b" />
+                  <feMergeNode in="SourceGraphic" />
+                </feMerge>
+              </filter>
+            </defs>
+            <circle
+              cx="50"
+              cy="50"
+              r={r}
+              fill="none"
+              stroke="rgba(255,255,255,0.07)"
+              strokeWidth="5"
+            />
+            {ringTicks.map((t, i) => {
+              const a = t.frac * Math.PI * 2 - Math.PI / 2;
+              const x1 = 50 + Math.cos(a) * (r - 4);
+              const y1 = 50 + Math.sin(a) * (r - 4);
+              const x2 = 50 + Math.cos(a) * (r + 4);
+              const y2 = 50 + Math.sin(a) * (r + 4);
+              return (
+                <line
+                  key={i}
+                  x1={x1}
+                  y1={y1}
+                  x2={x2}
+                  y2={y2}
+                  stroke="rgba(255,255,255,0.22)"
+                  strokeWidth="0.8"
+                  strokeLinecap="round"
+                />
+              );
+            })}
+            <circle
+              cx="50"
+              cy="50"
+              r={r}
+              fill="none"
+              stroke="url(#iqV2RingGrad)"
+              strokeWidth="5"
+              strokeLinecap="round"
+              strokeDasharray={`${dash} ${gap}`}
+              transform="rotate(-90 50 50)"
+              filter="url(#iqV2RingGlow)"
+              className="iqv2-ring-fill"
+            />
+            <g className="iqv2-ring-pulse">
+              <circle cx={pulseX} cy={pulseY} r="2.4" fill="currentColor" />
+              <circle
+                cx={pulseX}
+                cy={pulseY}
+                r="4"
+                fill="none"
+                stroke="rgba(158,204,255,0.5)"
+                strokeWidth="0.8"
+              />
+            </g>
+            <text
+              x="50"
+              y="48"
+              textAnchor="middle"
+              dominantBaseline="central"
+              className="iqv2-ring-num"
+            >
+              {hovered && !hovered.pending ? hovered.score : iqV2.codeIq}
+            </text>
+            <text
+              x="50"
+              y="62"
+              textAnchor="middle"
+              dominantBaseline="central"
+              className="iqv2-ring-max"
+            >
+              / 1000
+            </text>
+          </svg>
+        </div>
+
+        <div className="iqv2-meta">
+          <div className="iqv2-level">{ringLabel}</div>
+          <div className="iqv2-level-sub-row">
+            <div className="iqv2-level-sub microcaps">{ringSub}</div>
+            {!hovered && (
+              <button
+                type="button"
+                className={`iqv2-ladder-toggle ${ladderOpen ? "open" : ""}`}
+                onClick={() => setLadderOpen((o) => !o)}
+                aria-expanded={ladderOpen}
+              >
+                <span>{ladderOpen ? "hide levels" : "all levels"}</span>
+                <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                  <path d="M3 4.5l3 3 3-3" />
+                </svg>
+              </button>
+            )}
+          </div>
+          <div className="iqv2-explain">
+            {hovered
+              ? hovered.explanation
+              : `mean of ${
+                  categories.filter((c) => !c.pending).length
+                } categories · hover to preview · click a bar to see the math`}
+          </div>
+        </div>
+      </div>
+
+      {ladderOpen && <IqV2Ladder currentIq={iqV2.codeIq} currentLevelId={iqV2.level.id} />}
+
+      <div className="iqv2-bars">
+        {categories.map((cat) => (
+          <React.Fragment key={cat.id}>
+            <IqV2Bar
+              cat={cat}
+              hovered={hoveredId === cat.id}
+              expanded={expandedId === cat.id}
+              onEnter={() => setHoveredId(cat.id)}
+              onLeave={() => setHoveredId(null)}
+              onToggle={() =>
+                setExpandedId((id) => (id === cat.id ? null : cat.id))
+              }
+            />
+            {expandedId === cat.id && <IqV2Explain cat={cat} />}
+          </React.Fragment>
+        ))}
+      </div>
+
+      <div className="iqv2-foot">
+        <TrendStat label="Streak" value={`${streak.current}d`} />
+        <TrendStat label="Longest" value={`${streak.longest}d`} />
+        <TrendStat label="Active days" value={activeDays} />
+      </div>
+    </div>
+  );
+}
+
+function IqV2Bar({
+  cat,
+  hovered,
+  expanded,
+  onEnter,
+  onLeave,
+  onToggle,
+}: {
+  cat: IqV2Category;
+  hovered: boolean;
+  expanded: boolean;
+  onEnter: () => void;
+  onLeave: () => void;
+  onToggle: () => void;
+}) {
+  const pct = Math.max(0, Math.min(100, cat.score / 10));
+  return (
+    <button
+      className={`iqv2-bar-row ${cat.pending ? "pending" : ""} ${hovered ? "hovered" : ""} ${expanded ? "expanded" : ""}`}
+      onMouseEnter={onEnter}
+      onMouseLeave={onLeave}
+      onFocus={onEnter}
+      onBlur={onLeave}
+      onClick={() => !cat.pending && onToggle()}
+      aria-label={`${cat.label}: ${cat.score} of 1000`}
+      aria-expanded={expanded}
+      title={cat.pending ? "Awaiting signal data" : "Click to see the math"}
+    >
+      <span className="iqv2-bar-label microcaps">{cat.label}</span>
+      <span className="iqv2-bar-track">
+        <span
+          className="iqv2-bar-fill"
+          style={{ width: cat.pending ? "0%" : `${pct}%` }}
+        />
+      </span>
+      <span className="iqv2-bar-score">
+        {cat.pending ? "—" : cat.score}
+      </span>
+      <span className="iqv2-bar-chevron" aria-hidden>
+        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+          <path d="M3 4.5l3 3 3-3" />
+        </svg>
+      </span>
+    </button>
+  );
+}
+
+/** Level ladder — shows all eight tiers (Curious → Legend) with the
+ *  user's exact distance to each one. Collapsed by default, toggled
+ *  by the "all levels" button under the headline level label.
+ *
+ *  Rows render three states:
+ *    reached  — past tier, faded, marked "reached"
+ *    current  — where you are, highlighted, shows progress bar inside
+ *    locked   — future tier, shows "X IQ to reach" */
+function IqV2Ladder({
+  currentIq,
+  currentLevelId,
+}: {
+  currentIq: number;
+  currentLevelId: string;
+}) {
+  const currentIdx = IQV2_LEVEL_BANDS.findIndex((b) => b.id === currentLevelId);
+  return (
+    <div className="iqv2-ladder" role="region" aria-label="All engineering levels">
+      <div className="iqv2-ladder-head microcaps">
+        Engineering Levels · 0 → 1000
+      </div>
+      <div className="iqv2-ladder-rows">
+        {IQV2_LEVEL_BANDS.map((band, i) => {
+          const isCurrent = i === currentIdx;
+          const isReached = i < currentIdx;
+          const isLocked = i > currentIdx;
+          const gap = isLocked ? band.min - currentIq : 0;
+          // progress inside the current band
+          const pct = isCurrent
+            ? Math.max(
+                0,
+                Math.min(
+                  100,
+                  ((currentIq - band.min) / Math.max(1, band.max - band.min)) * 100
+                )
+              )
+            : isReached
+              ? 100
+              : 0;
+          return (
+            <div
+              key={band.id}
+              className={`iqv2-ladder-row ${isCurrent ? "current" : ""} ${isReached ? "reached" : ""} ${isLocked ? "locked" : ""}`}
+            >
+              <span className="iqv2-ladder-marker" aria-hidden>
+                {isReached ? "✓" : isCurrent ? "●" : "○"}
+              </span>
+              <span className="iqv2-ladder-name">{band.label}</span>
+              <span className="iqv2-ladder-range microcaps">
+                {band.min}–{band.max}
+              </span>
+              <span className="iqv2-ladder-bar">
+                <span
+                  className="iqv2-ladder-bar-fill"
+                  style={{ width: `${pct}%` }}
+                />
+              </span>
+              <span className="iqv2-ladder-status">
+                {isReached ? "reached" : isCurrent ? "you are here" : `+${gap} iq`}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <div className="iqv2-ladder-foot microcaps">
+        Each tier is exponentially harder to reach — curves are sigmoid /
+        log inside every category. Staff-level means all six pillars above ~700.
+      </div>
+    </div>
+  );
+}
+
+/** Explainer panel — opens under a clicked bar and shows the question,
+ *  signals (with their current raw values from `cat.inputs`), the
+ *  formula in plain English, and the level curve.
+ *
+ *  These strings stay in lockstep with the backend math in
+ *  apps/backend/src/iqV2.ts. If a formula changes there, the string
+ *  here must change too — don't let the UI lie about how the score
+ *  was computed. */
+function IqV2Explain({ cat }: { cat: IqV2Category }) {
+  const meta = CATEGORY_META[cat.id];
+  return (
+    <div className="iqv2-explain-panel" role="region" aria-label={`${cat.label} breakdown`}>
+      <div className="iqv2-ex-question">{meta.question}</div>
+
+      <div className="iqv2-ex-block">
+        <div className="iqv2-ex-h microcaps">Signals we track</div>
+        <div className="iqv2-ex-signals">
+          {meta.signals.map((s) => {
+            const value = cat.inputs[s.key];
+            const hasValue = value !== undefined && value !== null;
+            return (
+              <div key={s.key} className="iqv2-ex-signal">
+                <span className="iqv2-ex-signal-label">
+                  {s.label}
+                  {s.hint && <span className="iqv2-ex-signal-hint"> — {s.hint}</span>}
+                </span>
+                <span className="iqv2-ex-signal-val">
+                  {hasValue ? String(value) : "—"}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="iqv2-ex-block">
+        <div className="iqv2-ex-h microcaps">Formula</div>
+        <pre className="iqv2-ex-formula">
+          {meta.formula.join("\n")}
+        </pre>
+      </div>
+
+      <div className="iqv2-ex-block">
+        <div className="iqv2-ex-h microcaps">Level curve</div>
+        <div className="iqv2-ex-curve">{meta.levelCurve}</div>
+      </div>
+
+      {cat.pending && (
+        <div className="iqv2-ex-pending">
+          This category is pending — signal collection (keystroke / paste /
+          AI-accept) ships next. Currently excluded from the headline average.
+        </div>
       )}
     </div>
   );
@@ -587,158 +1086,3 @@ function TodayCardReal({ gains }: { gains: GainEvent[] }) {
   );
 }
 
-/** Coding skills radar — all five pillars, always a full pentagon.
- *
- *   Depth        — how deeply you know the skills you use
- *   Breadth      — diversity of domains you've touched
- *   Velocity     — speed of learning (new concepts per week)
- *   Consistency  — regularity of coding (streak + active days)
- *   Quality      — bug-free, fix-driven improvement
- *
- * This is the canonical measure of coding skill — each axis tells a
- * distinct story, and together they're the composite IQ. */
-function PillarsRadar({ pillars }: { pillars: IqPillars }) {
-  const axes = [
-    { id: "depth", label: "Depth", score: pillars.depth.score, max: pillars.depth.max, delta: pillars.depth.delta, explanation: pillars.depth.explanation },
-    { id: "breadth", label: "Breadth", score: pillars.breadth.score, max: pillars.breadth.max, delta: pillars.breadth.delta, explanation: pillars.breadth.explanation },
-    { id: "velocity", label: "Velocity", score: pillars.velocity.score, max: pillars.velocity.max, delta: pillars.velocity.delta, explanation: pillars.velocity.explanation },
-    { id: "consistency", label: "Consistency", score: pillars.consistency.score, max: pillars.consistency.max, delta: pillars.consistency.delta, explanation: pillars.consistency.explanation },
-    { id: "quality", label: "Quality", score: pillars.quality.score, max: pillars.quality.max, delta: pillars.quality.delta, explanation: pillars.quality.explanation },
-  ];
-
-  const size = 260;
-  const cx = size / 2;
-  const cy = size / 2;
-  const radius = 78;
-  const n = axes.length;
-
-  const pointAt = (i: number, frac: number) => {
-    const angle = (Math.PI * 2 * i) / n - Math.PI / 2;
-    return [cx + Math.cos(angle) * radius * frac, cy + Math.sin(angle) * radius * frac] as const;
-  };
-
-  const rings = [0.2, 0.4, 0.6, 0.8, 1];
-  const polyFor = (frac: number) =>
-    axes.map((_, i) => pointAt(i, frac).map((v) => v.toFixed(1)).join(",")).join(" ");
-  const valuePoly = axes
-    .map((a, i) => {
-      const frac = Math.max(0.02, Math.min(1, a.score / Math.max(1, a.max)));
-      return pointAt(i, frac).map((v) => v.toFixed(1)).join(",");
-    })
-    .join(" ");
-
-  const [hovered, setHovered] = React.useState<number | null>(null);
-  const hoverAxis = hovered !== null ? axes[hovered] : null;
-
-  return (
-    <div
-      className="dash-card radar-card has-cinema-bg"
-      style={{ ["--bg-img" as never]: `url(${bgGreenPlanet})` }}
-    >
-      <div className="dash-card-head">
-        <div className="dash-card-title microcaps">Coding Skills</div>
-        <div className="dash-card-note microcaps">
-          {hoverAxis ? hoverAxis.explanation : "five pillars · hover an axis"}
-        </div>
-      </div>
-      <svg viewBox={`0 0 ${size} ${size}`} className="radar-svg" preserveAspectRatio="xMidYMid meet">
-        {rings.map((f, i) => (
-          <polygon
-            key={i}
-            points={polyFor(f)}
-            fill="none"
-            stroke="rgba(var(--text-rgb), 0.08)"
-            strokeWidth="0.8"
-          />
-        ))}
-        {axes.map((_, i) => {
-          const [x, y] = pointAt(i, 1);
-          return (
-            <line
-              key={i}
-              x1={cx}
-              y1={cy}
-              x2={x}
-              y2={y}
-              stroke="rgba(var(--text-rgb), 0.08)"
-              strokeWidth="0.8"
-            />
-          );
-        })}
-        <polygon
-          points={valuePoly}
-          fill="rgba(var(--electric-rgb), 0.22)"
-          stroke="rgba(var(--sky-rgb), 0.95)"
-          strokeWidth="1.5"
-          strokeLinejoin="round"
-          className="radar-polygon"
-        />
-        {axes.map((a, i) => {
-          const frac = Math.max(0.02, Math.min(1, a.score / Math.max(1, a.max)));
-          const [x, y] = pointAt(i, frac);
-          const isHover = hovered === i;
-          return (
-            <circle
-              key={i}
-              cx={x}
-              cy={y}
-              r={isHover ? 4 : 2.8}
-              fill="currentColor"
-              style={{ transition: "r 120ms ease" }}
-            />
-          );
-        })}
-        {axes.map((a, i) => {
-          const [lx, ly] = pointAt(i, 1.3);
-          const pct = Math.round((a.score / Math.max(1, a.max)) * 100);
-          return (
-            <g
-              key={`l-${i}`}
-              onMouseEnter={() => setHovered(i)}
-              onMouseLeave={() => setHovered(null)}
-              style={{ cursor: "pointer" }}
-            >
-              {/* Invisible hit area so labels + nearby axis are easy to hover */}
-              <rect x={lx - 32} y={ly - 14} width="64" height="30" fill="transparent" />
-              <text x={lx} y={ly} textAnchor="middle" className="radar-label">
-                {a.label}
-              </text>
-              <text x={lx} y={ly + 11} textAnchor="middle" className="radar-value">
-                {a.score}
-                <tspan className="radar-value-max"> / {a.max}</tspan>
-              </text>
-              {a.delta !== 0 && (
-                <text
-                  x={lx}
-                  y={ly + 22}
-                  textAnchor="middle"
-                  className={`radar-delta ${a.delta > 0 ? "up" : "down"}`}
-                >
-                  {a.delta > 0 ? "+" : ""}
-                  {a.delta}
-                </text>
-              )}
-            </g>
-          );
-        })}
-      </svg>
-      <div className="radar-legend">
-        {axes.map((a) => {
-          const pct = Math.round((a.score / Math.max(1, a.max)) * 100);
-          return (
-            <div key={a.id} className="radar-legend-row">
-              <span className="radar-legend-label microcaps">{a.label}</span>
-              <span className="radar-legend-bar">
-                <span
-                  className="radar-legend-bar-fill"
-                  style={{ width: `${pct}%` }}
-                />
-              </span>
-              <span className="radar-legend-pct">{pct}%</span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}

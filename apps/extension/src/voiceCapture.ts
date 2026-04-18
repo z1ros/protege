@@ -150,6 +150,7 @@ export async function startWakeWordListener(
     onWake: () => void;
     onRecordingDone: () => void;
     onError: (err: string) => void;
+    onReady?: () => void;
   }
 ): Promise<void> {
   if (wakeProcess) return;
@@ -189,6 +190,11 @@ export async function startWakeWordListener(
       const avgMatch = trimmed.match(/WAKE WORD DETECTED! avg=([\d.]+)/);
       if (avgMatch) {
         lastWakeAvg = parseFloat(avgMatch[1]);
+      }
+
+      if (trimmed === "WAKE:ready") {
+        callbacks.onReady?.();
+        continue;
       }
 
       if (trimmed === "WAKE:detected") {
@@ -287,5 +293,28 @@ export async function transcribe(wavBuffer: Buffer): Promise<string> {
   }
 
   const data = (await res.json()) as { text?: string };
-  return data.text ?? "";
+  const text = (data.text ?? "").trim();
+  // Whisper hallucinates on silent / near-silent audio. These are the
+  // most common "ghost transcripts" — treat them as nothing heard so we
+  // don't fire random chat turns when the user didn't actually speak.
+  const normalized = text.toLowerCase().replace(/[.!?,]/g, "").trim();
+  const GHOST_TRANSCRIPTS = new Set([
+    "",
+    "thank you",
+    "thanks",
+    "thank you.",
+    "thanks for watching",
+    "thanks for watching!",
+    "you",
+    "bye",
+    "bye.",
+    ".",
+    "okay",
+    "ok",
+  ]);
+  if (GHOST_TRANSCRIPTS.has(normalized)) {
+    pipeLog("protege-stt", `dropped ghost transcript: "${text}"`);
+    return "";
+  }
+  return text;
 }

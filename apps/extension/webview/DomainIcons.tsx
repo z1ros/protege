@@ -31,6 +31,7 @@ import {
   Database,
   Layers,
   GitBranch,
+  type LucideIcon,
 } from "lucide-react";
 
 /**
@@ -42,13 +43,13 @@ import {
  * inherit the taxonomy color passed in via `color`.
  */
 
-const S = 18;
+const DEFAULT_SIZE = 18;
 
-function BrandIcon({ icon }: { icon: SimpleIcon }) {
+function BrandIcon({ icon, size = DEFAULT_SIZE }: { icon: SimpleIcon; size?: number }) {
   return (
     <svg
-      width={S}
-      height={S}
+      width={size}
+      height={size}
       viewBox="0 0 24 24"
       fill={`#${icon.hex}`}
       aria-label={icon.title}
@@ -80,7 +81,7 @@ const BRAND: Record<string, SimpleIcon> = {
 };
 
 // Categorical domains — use lucide line icons, tinted by taxonomy color.
-const LUCIDE: Record<string, React.ComponentType<{ size?: number; strokeWidth?: number }>> = {
+const LUCIDE: Record<string, LucideIcon> = {
   sql: Database,
   "system-design": Layers,
   security: Shield,
@@ -96,12 +97,20 @@ const LUCIDE: Record<string, React.ComponentType<{ size?: number; strokeWidth?: 
   dsa: GitBranch,
 };
 
-export function DomainIcon({ domainId, color }: { domainId: string; color: string }) {
+export function DomainIcon({
+  domainId,
+  color,
+  size = DEFAULT_SIZE,
+}: {
+  domainId: string;
+  color: string;
+  size?: number;
+}) {
   const brand = BRAND[domainId];
   if (brand) {
     return (
       <span className="domain-icon">
-        <BrandIcon icon={brand} />
+        <BrandIcon icon={brand} size={size} />
       </span>
     );
   }
@@ -109,14 +118,14 @@ export function DomainIcon({ domainId, color }: { domainId: string; color: strin
   if (LucideGlyph) {
     return (
       <span className="domain-icon" style={{ color, display: "inline-flex" }}>
-        <LucideGlyph size={S} strokeWidth={1.6} />
+        <LucideGlyph size={size} strokeWidth={1.6} />
       </span>
     );
   }
   // Unknown domain — minimal colored dot so layout doesn't break.
   return (
     <span className="domain-icon" style={{ color }}>
-      <svg width={S} height={S} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2">
+      <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2">
         <circle cx="8" cy="8" r="5" />
       </svg>
     </span>

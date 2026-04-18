@@ -5,6 +5,7 @@ import type {
   DailyIqPoint,
   GainEvent,
   IqPillars,
+  IqV2,
   MilestoneSummary,
   Recommendation,
   StreakInfo,
@@ -27,6 +28,7 @@ interface Props {
   milestones: MilestoneSummary[];
   recommendations: Recommendation[];
   pillars: IqPillars | null;
+  iqV2: IqV2 | null;
 }
 
 const LEVEL_LABEL: Record<string, string> = {
@@ -52,6 +54,7 @@ export function ConceptsTab({
   milestones,
   recommendations,
   pillars,
+  iqV2,
 }: Props) {
   const [view, setView] = useState<View>("overview");
   const [clusterFilter, setClusterFilter] = useState<string | null>(null);
@@ -104,6 +107,7 @@ export function ConceptsTab({
           streak={streak}
           clusters={clusters}
           pillars={pillars}
+          iqV2={iqV2}
         />
       )}
 

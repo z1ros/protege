@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import type {
+  ChatBackend,
   ChatMode,
   ChatRunRequest,
   ChatRunResponse,
@@ -9,6 +10,29 @@ import type {
 } from "@protege/types";
 import { BACKEND_URL } from "./protegeClient.js";
 import { executeTool, buildWorkspaceContext } from "./tools.js";
+
+/**
+ * We import the user's backend preference via dynamic require to avoid
+ * a circular import (aiBackend imports runSingleQuery from here). Live-
+ * binding dynamic lookup is safe because this is only called inside
+ * request functions, long after both modules have finished loading.
+ */
+function resolveCloudBackend(): ChatBackend {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getAiBackend } = require("./aiBackend.js") as {
+      getAiBackend: () => "on-device" | "haiku" | "sonnet" | "auto";
+    };
+    const choice = getAiBackend();
+    if (choice === "sonnet") return "sonnet";
+    if (choice === "haiku") return "haiku";
+    // on-device / auto both mean "no cloud preference" from the user; if
+    // we end up here, on-device wasn't available → fall through to haiku.
+    return "haiku";
+  } catch {
+    return "haiku";
+  }
+}
 
 const MAX_TOOL_ROUNDS = 8; // safety cap
 
@@ -43,6 +67,8 @@ export async function runChat(
   let newUserMessage: string | undefined = userMessage;
   let toolResults: ToolResult[] | undefined = undefined;
 
+  const backend = resolveCloudBackend();
+
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const body: ChatRunRequest = {
       userId,
@@ -51,6 +77,7 @@ export async function runChat(
       newUserMessage,
       toolResults,
       mode,
+      backend,
     };
 
     const res = await fetch(`${BACKEND_URL}/chat`, {
@@ -112,6 +139,7 @@ export async function runSingleQuery(prompt: string): Promise<string> {
     messages: [],
     newUserMessage: prompt,
     mode: "text",
+    backend: resolveCloudBackend(),
   };
 
   const res = await fetch(`${BACKEND_URL}/chat`, {

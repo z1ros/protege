@@ -184,6 +184,51 @@ export async function recordCloudGain(
 }
 
 /**
+ * Fetch the cross-device preferences blob for a user. Returns an empty
+ * object if the user has none (or if Supabase isn't configured).
+ */
+export async function getCloudPreferences(
+  userId: string
+): Promise<Record<string, unknown>> {
+  const sb = getSupabase();
+  if (!sb) return {};
+
+  const { data, error } = await sb
+    .from("users")
+    .select("preferences")
+    .eq("id", userId)
+    .single();
+
+  if (error || !data) return {};
+  const prefs = (data as { preferences?: Record<string, unknown> }).preferences;
+  return prefs && typeof prefs === "object" ? prefs : {};
+}
+
+/**
+ * Merge a partial preferences patch into the user's preferences column.
+ * Overwrites the keys present in `patch`; leaves others intact.
+ */
+export async function saveCloudPreferences(
+  userId: string,
+  patch: Record<string, unknown>
+): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) return;
+
+  const current = await getCloudPreferences(userId);
+  const merged = { ...current, ...patch };
+
+  const { error } = await sb
+    .from("users")
+    .update({ preferences: merged })
+    .eq("id", userId);
+
+  if (error) {
+    console.warn("[protege] saveCloudPreferences failed:", error.message);
+  }
+}
+
+/**
  * Get leaderboard data — top users by concept count.
  * Anonymized: only shows login + avatar + stats.
  */

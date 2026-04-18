@@ -108,7 +108,7 @@ export const TOOL_DEFINITIONS: Anthropic.Messages.Tool[] = [
   {
     name: "edit_file",
     description:
-      "Replace exact text in an existing file. oldString must be unique unless replaceAll=true. Always read_file first.",
+      "Propose an edit to a file. The user must accept the proposed edit in a preview diff before it is applied — this is NOT a silent write. Keep edits small and targeted; always read_file first so oldString matches byte-for-byte. oldString must be unique unless replaceAll=true.",
     input_schema: {
       type: "object",
       properties: {

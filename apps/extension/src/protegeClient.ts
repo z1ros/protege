@@ -78,4 +78,45 @@ export async function fetchMe(userId: string): Promise<MeResponse> {
   return (await res.json()) as MeResponse;
 }
 
+/**
+ * Read the user's cross-device preferences blob from Supabase (or `{}` if
+ * the backend isn't configured / network fails). Shape is client-owned.
+ */
+export async function fetchPreferences(
+  userId: string
+): Promise<Record<string, unknown>> {
+  try {
+    const res = await fetch(
+      `${BACKEND_URL}/preferences?userId=${encodeURIComponent(userId)}`,
+      { headers: headers(userId) }
+    );
+    if (!res.ok) return {};
+    const body = (await res.json()) as { preferences?: Record<string, unknown> };
+    return body.preferences ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Patch the user's preferences blob. Fire-and-forget — we don't block
+ * the UI on cloud sync. Local persistence is the source of truth for the
+ * current session; the cloud is the source of truth across devices.
+ */
+export async function patchPreferences(
+  userId: string,
+  patch: Record<string, unknown>
+): Promise<boolean> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/preferences?userId=${encodeURIComponent(userId)}`, {
+      method: "PATCH",
+      headers: { ...headers(userId), "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 export { BACKEND_URL };

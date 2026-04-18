@@ -151,6 +151,26 @@
   color: var(--muted);
 }
 
+.voice-warmup-bar {
+  width: 100%;
+  max-width: 260px;
+  height: 4px;
+  margin-top: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+.voice-warmup-bar-fill {
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    rgb(var(--electric-rgb)) 0%,
+    rgba(var(--electric-rgb), 0.7) 100%
+  );
+  border-radius: 999px;
+  transition: width 300ms ease;
+}
+
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
@@ -562,4 +582,15 @@
 @keyframes wake-breathe {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
+}
+
+.wake-word-toggle.loading {
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.1);
+  cursor: wait;
+  opacity: 0.7;
+}
+.wake-word-toggle.loading svg {
+  animation: spin 0.9s linear infinite;
 }

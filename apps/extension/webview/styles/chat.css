@@ -796,36 +796,8 @@
   color: inherit;
 }
 
-/* ==========================================================
-   Protege Orbit — a theme designed from scratch for this app.
-
-   Built against the brand color rgb(74, 158, 255) (electric blue).
-   Background is deep-space navy (not flat black) for depth. Text is
-   starlight blue-white. Function calls wear the brand — they're the
-   most common meaningful token in chat code samples, so they should
-   carry the identity. Warm secondaries (amber strings, rose keywords)
-   balance the cool base so blocks feel cinematic, not clinical.
-
-   Discipline:
-     • Only keywords + comments italicize — creates rhythm, not chaos
-     • Only function calls get weight 600 — makes them the focal point
-     • Lime for JSX attrs is the one surprise, and it only appears in JSX
-     • Slate for comments — visible, humble, never shouts
-   ========================================================== */
-.hl-keyword  { color: #ff7b9c; font-style: italic; }   /* rose — const/if/return/import */
-.hl-string   { color: #e9c48f; }                        /* amber — "hello", `template` */
-.hl-comment  { color: #475775; font-style: italic; }   /* slate — // note */
-.hl-number   { color: #ffa96c; }                        /* orange — 42, 3.14 */
-.hl-func     { color: #4a9eff; font-weight: 600; }     /* electric blue — useState() ← brand */
-.hl-type     { color: #ffcb8b; }                        /* gold — Promise, MyClass */
-.hl-op       { color: #8ddcff; }                        /* soft cyan — =>, ===, ?. */
-.hl-prop     { color: #9be6cd; }                        /* mint — .length, .map */
-.hl-builtin  { color: #82b7ff; }                        /* sky — console, Math, true */
-.hl-tag      { color: #7dd3fc; }                        /* sky — <div> */
-.hl-attr     { color: #b0e67c; }                        /* lime — className= */
-.hl-regex    { color: #82b7ff; }                        /* sky — /pattern/ */
-
-/* Code block text body */
+/* Token colors are inlined by Shiki (see webview/syntax/orbit-theme.ts).
+   Only the default text color for unhighlighted spans lives here. */
 .md-code-wrap,
 .md-code-inline { color: #cbd5ea; }
 
@@ -1122,6 +1094,88 @@
   background: rgba(var(--electric-rgb), 0.12);
   color: var(--electric);
   animation: pulse 1.4s infinite ease-in-out;
+}
+
+/* "Last call" chip — proves which backend actually handled the most
+   recent aiQuery() so the user can see on-device vs. cloud in real time. */
+.live-lastcall {
+  margin-top: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 11px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text);
+  letter-spacing: 0.02em;
+  transition: background 240ms ease, border-color 240ms ease;
+}
+.live-lastcall.ondevice {
+  background: rgba(130, 170, 255, 0.08);
+  border-color: rgba(130, 170, 255, 0.3);
+}
+.live-lastcall.cloud {
+  background: rgba(255, 203, 139, 0.06);
+  border-color: rgba(255, 203, 139, 0.25);
+}
+.live-lastcall.failed {
+  background: rgba(255, 123, 156, 0.08);
+  border-color: rgba(255, 123, 156, 0.35);
+}
+.live-lastcall-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 6px currentColor;
+}
+.live-lastcall.ondevice .live-lastcall-dot { color: #82b7ff; }
+.live-lastcall.cloud .live-lastcall-dot { color: #ffcb8b; }
+.live-lastcall.failed .live-lastcall-dot { color: #ff7b9c; }
+.live-lastcall-label {
+  font-size: 9px;
+  color: var(--text-faint);
+  letter-spacing: 0.14em;
+}
+.live-lastcall-backend {
+  color: var(--glow);
+  font-weight: 600;
+}
+.live-lastcall-sep { color: var(--text-faint); }
+.live-lastcall-time,
+.live-lastcall-ago {
+  color: var(--text-dim);
+}
+.live-lastcall-warn {
+  margin-left: 4px;
+  color: #ff7b9c;
+  font-weight: 600;
+}
+/* Fallback state — user wanted on-device but we went to cloud.
+   Make it loud so it can never be mistaken for the intended path. */
+.live-lastcall.fallback {
+  background: rgba(255, 203, 139, 0.14);
+  border-color: rgba(255, 203, 139, 0.55);
+  box-shadow: 0 0 10px rgba(255, 203, 139, 0.18);
+}
+.live-lastcall.fallback .live-lastcall-dot { color: #ffcb8b; }
+.live-lastcall-fallback {
+  margin-left: 6px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(255, 203, 139, 0.2);
+  color: #ffcb8b;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.3); }
 }
 
 /* Download progress bar */

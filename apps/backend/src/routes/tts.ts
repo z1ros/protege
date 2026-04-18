@@ -4,6 +4,7 @@ import {
   isKokoroReady,
   startKokoroWarmup,
   kokoroWarmupError,
+  kokoroWarmupStatus,
 } from "../kokoro.js";
 
 export const ttsRoute = new Hono();
@@ -20,10 +21,15 @@ export const ttsRoute = new Hono();
 startKokoroWarmup();
 
 ttsRoute.get("/status", (c) => {
+  const s = kokoroWarmupStatus();
   return c.json({
     ready: isKokoroReady(),
     warmupError: kokoroWarmupError(),
     provider: "kokoro",
+    stage: s.stage, // "idle" | "downloading" | "loading" | "ready" | "error"
+    progress: s.progress, // 0..1 fraction when downloading
+    loadedBytes: s.loadedBytes,
+    totalBytes: s.totalBytes,
   });
 });
 

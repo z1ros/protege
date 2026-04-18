@@ -38,6 +38,7 @@ import {
   milestoneBonusIq,
   milestoneDefinition,
 } from "./milestones.js";
+import { computeIqV2 } from "./iqV2.js";
 
 /**
  * JSON-file-backed store for MVP. Shape mirrors the Supabase schema we'll
@@ -771,6 +772,7 @@ interface InternalSnapshot {
   synergies: import("@protege/types").SynergyResult;
   velocity: import("@protege/types").VelocityInfo;
   breakdown: import("@protege/types").IqBreakdown;
+  iqV2: import("@protege/types").IqV2;
 }
 
 async function computeSnapshot(
@@ -1156,6 +1158,18 @@ async function computeSnapshot(
     user.pillarSnapshots = user.pillarSnapshots.slice(-7);
   }
 
+  // ---- Code IQ v2 — computed in parallel with v1 during the transition ----
+  const iqV2 = computeIqV2({
+    user,
+    rows,
+    clusters,
+    synergies,
+    velocity: velocityInfo,
+    streak,
+    gains: recentGains,
+    nowMs: now,
+  });
+
   return {
     user,
     codeIq: pillarIq,
@@ -1174,6 +1188,7 @@ async function computeSnapshot(
     synergies,
     velocity: velocityInfo,
     breakdown,
+    iqV2,
   };
 }
 

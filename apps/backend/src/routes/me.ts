@@ -30,6 +30,7 @@ meRoute.get("/", async (c) => {
     synergies: snap.synergies,
     velocity: snap.velocity,
     breakdown: snap.breakdown,
+    iqV2: snap.iqV2,
   };
   return c.json(res);
 });

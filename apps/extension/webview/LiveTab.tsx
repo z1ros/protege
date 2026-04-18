@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { vscode } from "./vscode.js";
+import { vscode, onHostMessage } from "./vscode.js";
 
 /**
  * Live Tab — JARVIS mission control.
@@ -31,11 +31,56 @@ interface AnalysisItem {
 
 type AiBackend = "on-device" | "haiku" | "sonnet" | "auto";
 
+interface LastCall {
+  backend: "on-device" | "haiku" | "sonnet";
+  atMs: number;
+  durationMs: number;
+  ok: boolean;
+  fallback?: {
+    requested: "on-device" | "haiku" | "sonnet" | "auto";
+    reason: string;
+  };
+}
+
+const BACKEND_LABEL: Record<LastCall["backend"], string> = {
+  "on-device": "Qwen 1.5B (on-device)",
+  haiku: "Claude Haiku 4.5",
+  sonnet: "Claude Sonnet 4.5",
+};
+
 export function LiveTab({ fileName, liveReviewOn, onToggleLiveReview, modelStatus }: Props) {
   const [inlineErrors, setInlineErrors] = useState(true);
   const [didYouKnow, setDidYouKnow] = useState(true);
   // "Teaching Annotations" toggle removed — feature not yet implemented.
   const [aiBackend, setAiBackend] = useState<AiBackend>("auto");
+  const [lastCall, setLastCall] = useState<LastCall | null>(null);
+  const [now, setNow] = useState(Date.now());
+
+  // Subscribe to host pushes for backend state + live call events so the
+  // Live tab (a) hydrates on mount from persisted globalState and (b)
+  // reflects every aiQuery() call as it happens.
+  useEffect(() => {
+    const off = onHostMessage((msg) => {
+      if (msg.type === "ai/backend") {
+        setAiBackend(msg.backend);
+      } else if (msg.type === "ai/lastCall") {
+        setLastCall({
+          backend: msg.backend,
+          atMs: msg.atMs,
+          durationMs: msg.durationMs,
+          ok: msg.ok,
+          fallback: msg.fallback,
+        });
+      }
+    });
+    return off;
+  }, []);
+
+  // Keep the "X seconds ago" text fresh — cheap, one interval per tab.
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 3000);
+    return () => clearInterval(id);
+  }, []);
 
   const modelReady = modelStatus.ready;
   const modelDownloading = modelStatus.loading && !modelStatus.ready;
@@ -120,6 +165,44 @@ export function LiveTab({ fileName, liveReviewOn, onToggleLiveReview, modelStatu
             >
               <span className="live-action-label">Retry</span>
             </button>
+          </div>
+        )}
+
+        {/* Live "last call" chip — proves which backend actually ran.
+            When a fallback happened (user wanted on-device but we went to
+            cloud), the chip turns AMBER + shows the reason, so it never
+            lies about what just executed. */}
+        {lastCall && (
+          <div
+            className={`live-lastcall ${lastCall.backend === "on-device" ? "ondevice" : "cloud"} ${lastCall.ok ? "" : "failed"} ${lastCall.fallback ? "fallback" : ""}`}
+            title={
+              lastCall.fallback
+                ? `Requested ${lastCall.fallback.requested} but routed to ${BACKEND_LABEL[lastCall.backend]}: ${lastCall.fallback.reason}`
+                : `Last aiQuery() routed to ${BACKEND_LABEL[lastCall.backend]}`
+            }
+          >
+            <span className="live-lastcall-dot" />
+            <span className="live-lastcall-label microcaps">Last call</span>
+            <span className="live-lastcall-backend">{BACKEND_LABEL[lastCall.backend]}</span>
+            <span className="live-lastcall-sep">·</span>
+            <span className="live-lastcall-time">{lastCall.durationMs}ms</span>
+            <span className="live-lastcall-sep">·</span>
+            <span className="live-lastcall-ago">{formatAgo(now - lastCall.atMs)}</span>
+            {!lastCall.ok && <span className="live-lastcall-warn">failed</span>}
+            {lastCall.fallback && (
+              <span className="live-lastcall-fallback">
+                fallback · {lastCall.fallback.reason}
+              </span>
+            )}
+          </div>
+        )}
+        {/* When saved backend needs on-device but model is still loading,
+            say so explicitly — so silence doesn't look like Claude is used. */}
+        {(aiBackend === "on-device" || aiBackend === "auto") && modelDownloading && (
+          <div className="live-lastcall ondevice" style={{ marginTop: 6 }}>
+            <span className="live-lastcall-dot" style={{ animation: "pulse 1.2s ease-in-out infinite" }} />
+            <span className="live-lastcall-label microcaps">Loading on-device model…</span>
+            <span className="live-lastcall-time">{downloadProgress}%</span>
           </div>
         )}
       </div>
@@ -335,4 +418,15 @@ function AiOption({
       )}
     </button>
   );
+}
+
+function formatAgo(ms: number): string {
+  if (ms < 0) ms = 0;
+  const s = Math.floor(ms / 1000);
+  if (s < 1) return "just now";
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  return `${h}h ago`;
 }

@@ -94,14 +94,12 @@ export function registerAnalyzer(
     try {
       findings = await analyzeFile(userId, file);
       findingsByUri.set(doc.uri.toString(), findings);
-      // Only render Protege diagnostics when live review is on — this is the
-      // single switch that controls all visible Protege annotations.
-      const { isLiveReviewActive } = await import("./liveReview.js");
-      if (isLiveReviewActive()) {
-        renderDiagnostics(doc, findings, diagnostics);
-      } else {
-        diagnostics.delete(doc.uri);
-      }
+      // Protege diagnostics were causing our text to stack inside the core
+      // editor hover (alongside TS + Cursor's "Fix with Agent"). We now
+      // surface findings through dedicated Protege surfaces only (CodeLens,
+      // inlay hint, inset card), so skip pushing them into the diagnostic
+      // hover stream entirely.
+      diagnostics.delete(doc.uri);
     } catch (e) {
       log.appendLine(`[protege] analyze err: ${e}`);
     }

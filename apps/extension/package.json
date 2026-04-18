@@ -8,6 +8,9 @@
   "engines": {
     "vscode": "^1.90.0"
   },
+  "enabledApiProposals": [
+    "editorInsets"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -32,6 +35,26 @@
       {
         "command": "protege.openInNewTab",
         "title": "Protege: Open in New Tab"
+      },
+      {
+        "command": "protege.enableInlineCards",
+        "title": "Protege: Enable Inline Cards (inset setup)"
+      },
+      {
+        "command": "protege.toggleAutoAcceptEdits",
+        "title": "Protege: Toggle Auto-Accept AI Edits"
+      },
+      {
+        "command": "protege.toggleFlowScan",
+        "title": "Protege: Toggle Cross-File Flow Scan (IDLE tier)"
+      },
+      {
+        "command": "protege.testOnDevice",
+        "title": "Protege: Test On-Device Model"
+      },
+      {
+        "command": "protege.showLogs",
+        "title": "Protege: Show Logs"
       },
       {
         "command": "protege.toggle",
@@ -100,8 +123,39 @@
       {
         "command": "protege.showHint",
         "title": "Protege: Show hint"
+      },
+      {
+        "command": "protege.applyGhost",
+        "title": "Protege: Apply Ghost (Tab)"
+      },
+      {
+        "command": "protege.explainGhost",
+        "title": "Protege: Explain Ghost"
+      },
+      {
+        "command": "protege.dismissGhost",
+        "title": "Protege: Dismiss Ghost (Esc)"
+      },
+      {
+        "command": "protege.openTeachPeek",
+        "title": "Protege: Open Teach Peek"
       }
     ],
+    "configuration": {
+      "title": "Protege",
+      "properties": {
+        "protege.autoAcceptEdits": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, AI-proposed edits from chat are applied without a confirmation dialog. When false (recommended), every edit shows a preview diff and requires explicit acceptance."
+        },
+        "protege.flowScanEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable the IDLE (Tier 3) cross-file flow scanner. Runs on-device in the background during idle periods to find architectural issues that span multiple files. Experimental — adds CPU load during idle time."
+        }
+      }
+    },
     "keybindings": [
       {
         "command": "protege.toggle",
@@ -142,6 +196,21 @@
         "command": "protege.clearHighlights",
         "key": "escape",
         "when": "editorTextFocus && !editorHasSelection && !suggestWidgetVisible && !parameterHintsVisible && !inQuickOpen && !inZenMode && protege.hasHighlights"
+      },
+      {
+        "command": "protege.applyGhost",
+        "key": "tab",
+        "when": "editorTextFocus && protege.ghostActive && !inlineSuggestionVisible && !suggestWidgetVisible && !parameterHintsVisible"
+      },
+      {
+        "command": "protege.explainGhost",
+        "key": "cmd+.",
+        "when": "editorTextFocus && protege.ghostActive && !suggestWidgetVisible"
+      },
+      {
+        "command": "protege.dismissGhost",
+        "key": "escape",
+        "when": "editorTextFocus && protege.ghostActive && !suggestWidgetVisible && !parameterHintsVisible && !inQuickOpen"
       }
     ]
   },
@@ -157,11 +226,13 @@
   },
   "dependencies": {
     "@protege/types": "workspace:*",
+    "@shikijs/langs": "^4.0.2",
     "d3-force": "^3.0.0",
     "lucide-react": "^1.8.0",
     "node-llama-cpp": "^3.18.1",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
+    "shiki": "^4.0.2",
     "simple-icons": "^16.16.0"
   },
   "devDependencies": {

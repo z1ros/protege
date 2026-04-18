@@ -37,11 +37,29 @@ export const chatRoute = new Hono();
  * at ~10% of input token cost. Huge win for a mentor that makes many
  * multi-turn tool rounds per user question.
  */
+/**
+ * Map the client-side backend preference to a concrete Anthropic model id.
+ * When no preference is supplied, fall back to the server's default MODEL.
+ * This is what finally made the Live-tab backend toggle *actually* change
+ * the model — previously the server used MODEL unconditionally and the
+ * client's choice was purely cosmetic.
+ */
+function resolveModel(backend: ChatRunRequest["backend"]): string {
+  if (backend === "haiku") {
+    return process.env.ANTHROPIC_HAIKU_MODEL ?? "claude-haiku-4-5";
+  }
+  if (backend === "sonnet") {
+    return process.env.ANTHROPIC_SONNET_MODEL ?? "claude-sonnet-4-6";
+  }
+  return MODEL;
+}
+
 chatRoute.post("/", async (c) => {
   const body = (await c.req.json()) as ChatRunRequest;
   const userId = body.userId ?? c.req.header("x-user-id") ?? "local-dev";
   const mode = body.mode ?? "text";
   const basePersona = buildSystemPrompt(mode);
+  const model = resolveModel(body.backend);
 
   let messages: OAITurn[] = body.messages ?? [];
 
@@ -120,11 +138,11 @@ chatRoute.post("/", async (c) => {
   const { systemText, anthropicMessages } = toAnthropic(messages);
 
   console.log(
-    `[protege] /chat provider=anthropic model=${MODEL} turns=${messages.length} lastRole=${messages.at(-1)?.role}`
+    `[protege] /chat provider=anthropic model=${model} requestedBackend=${body.backend ?? "default"} turns=${messages.length} lastRole=${messages.at(-1)?.role}`
   );
 
   const res = await anthropic.messages.create({
-    model: MODEL,
+    model,
     max_tokens: 4096,
     // Prompt caching on the (stable) system prompt — saves ~90% on repeat tokens.
     system: [
@@ -232,7 +250,7 @@ chatRoute.post("/", async (c) => {
     // (no extra client roundtrip) when Claude is just updating memory.
     const { systemText: st2, anthropicMessages: am2 } = toAnthropic(messages);
     const res2 = await anthropic.messages.create({
-      model: MODEL,
+      model,
       max_tokens: 4096,
       system: [{ type: "text", text: st2, cache_control: { type: "ephemeral" } }],
       tools: TOOL_DEFINITIONS,

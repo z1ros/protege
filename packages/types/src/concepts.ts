@@ -703,3 +703,120 @@ export function compositeIq(pillars: IqPillars): number {
     + pillars.quality.score;
   return Math.min(IQ_CEILING, Math.round(sum));
 }
+
+/* ================================================================
+   Code IQ v2 — the engineer's benchmark.
+
+   One headline number = arithmetic mean of six categories, each 0–1000.
+   Designed against the calibration table in Architecture/code-iq-v2-plan.md
+   so that a staff engineer would sign off on every point.
+
+   Each category answers a specific question and has its own signals,
+   raw formula, and level curve. The composite is forgiving to no one —
+   a 950-Craft / 0-Debug engineer averages 158, not 950.
+
+   Independence is the new category that measures authorship vs. AI use.
+   While signal collection (keystrokes, paste, AI-accept) is not yet in
+   place, Independence is marked `pending: true` and excluded from the
+   average — the headline is then over 5 categories.
+   ================================================================ */
+
+export type IqV2CategoryId =
+  | "craft"
+  | "range"
+  | "velocity"
+  | "debug"
+  | "quality"
+  | "independence";
+
+export interface IqV2Category {
+  id: IqV2CategoryId;
+  label: string;
+  /** Normalized 0-1000 score after the category's level curve. */
+  score: number;
+  /** Delta vs. previous snapshot (roughly: yesterday). */
+  delta: number;
+  /** One-line rationale for the current score. */
+  explanation: string;
+  /** True when we don't yet have the signals required to score this. */
+  pending: boolean;
+  /** Raw inputs so the "why is my score this" tooltip can show math. */
+  inputs: Record<string, number>;
+}
+
+export interface IqV2 {
+  /** The headline number — mean of non-pending category scores. */
+  codeIq: number;
+  /** Level band matching the calibration table. */
+  level: IqV2LevelBand;
+  /** Weekly delta on the headline. */
+  weeklyDelta: number;
+  craft: IqV2Category;
+  range: IqV2Category;
+  velocity: IqV2Category;
+  debug: IqV2Category;
+  quality: IqV2Category;
+  independence: IqV2Category;
+}
+
+export interface IqV2LevelBand {
+  id:
+    | "curious"
+    | "learning"
+    | "junior"
+    | "mid"
+    | "senior"
+    | "staff"
+    | "principal"
+    | "legend";
+  label: string;
+  min: number;
+  max: number;
+  /** IQ points until the next band. */
+  toNext: number;
+  /** Name of the next band, or null if Legend. */
+  next: string | null;
+}
+
+/** The calibration table from the plan. Authoritative — do not adjust
+ *  without updating Architecture/code-iq-v2-plan.md. */
+export const IQV2_LEVEL_BANDS: Array<{
+  id: IqV2LevelBand["id"];
+  label: string;
+  min: number;
+  max: number;
+}> = [
+  { id: "curious",    label: "Curious",    min:   0, max:  80 },
+  { id: "learning",   label: "Learning",   min:  80, max: 180 },
+  { id: "junior",     label: "Junior",     min: 180, max: 350 },
+  { id: "mid",        label: "Mid",        min: 350, max: 550 },
+  { id: "senior",     label: "Senior",     min: 550, max: 720 },
+  { id: "staff",      label: "Staff",      min: 720, max: 860 },
+  { id: "principal",  label: "Principal",  min: 860, max: 950 },
+  { id: "legend",     label: "Legend",     min: 950, max: 1000 },
+];
+
+export function iqV2LevelFor(iq: number): IqV2LevelBand {
+  let band = IQV2_LEVEL_BANDS[0];
+  for (const b of IQV2_LEVEL_BANDS) {
+    if (iq >= b.min) band = b;
+  }
+  const idx = IQV2_LEVEL_BANDS.findIndex((b) => b.id === band.id);
+  const next = idx < IQV2_LEVEL_BANDS.length - 1
+    ? IQV2_LEVEL_BANDS[idx + 1]
+    : null;
+  return {
+    id: band.id,
+    label: band.label,
+    min: band.min,
+    max: band.max,
+    toNext: next ? Math.max(0, next.min - iq) : 0,
+    next: next?.label ?? null,
+  };
+}
+
+/** Standard logistic sigmoid — used for level curves so that top tiers
+ *  are exponentially harder than bottom tiers. */
+export function iqSigmoid(x: number): number {
+  return 1 / (1 + Math.exp(-x));
+}

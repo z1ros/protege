@@ -8,12 +8,12 @@ import type {
   GainEvent,
   IqBreakdown,
   IqPillars,
+  IqV2,
   LevelInfo,
   MilestoneSummary,
   Recommendation,
   StreakInfo,
   SynergyResult,
-  UnpromptedNudge,
   VelocityInfo,
 } from "@protege/types";
 import { vscode, onHostMessage } from "./vscode.js";
@@ -25,6 +25,7 @@ import { CinematicPlate } from "./CinematicPlate.js";
 import { AssistantMarkdown } from "./AssistantMarkdown.js";
 import { Overlay } from "./Overlay.js";
 import { StreakJournal } from "./StreakJournal.js";
+import { TipDetailOverlay, type TipDetail } from "./TipDetailOverlay.js";
 // Overlay pages are heavy (cinematic hero + dashboard widgets) and only
 // render when the user explicitly opens them via the header icons. Splitting
 // them into their own chunks keeps the initial bundle lean.
@@ -91,6 +92,7 @@ export function App() {
   const [synergies, setSynergies] = useState<SynergyResult | null>(null);
   const [velocityInfo, setVelocityInfo] = useState<VelocityInfo | null>(null);
   const [breakdown, setBreakdown] = useState<IqBreakdown | null>(null);
+  const [iqV2, setIqV2] = useState<IqV2 | null>(null);
   const [toast, setToast] = useState<GainEvent | null>(null);
   const [overlay, setOverlay] = useState<"profile" | "subscription" | null>(null);
   const [authUser, setAuthUser] = useState<{
@@ -102,13 +104,13 @@ export function App() {
   const [scanning, setScanning] = useState(false);
   const [liveMode, setLiveMode] = useState(false);
   const [streakOpen, setStreakOpen] = useState(false);
-  const [nudges, setNudges] = useState<UnpromptedNudge[]>([]);
   const [modelStatus, setModelStatus] = useState<{
     ready: boolean;
     loading: boolean;
     error: string | null;
     downloadProgress: number;
   }>({ ready: false, loading: false, error: null, downloadProgress: 0 });
+  const [tipDetail, setTipDetail] = useState<TipDetail | null>(null);
   // Theme state — "dark" (default) | "light" | "auto" (respects OS)
   // Persisted to localStorage so it survives reloads. The actual DOM
   // attribute update happens in a useEffect below; everything else in
@@ -166,6 +168,7 @@ export function App() {
         setSynergies(msg.synergies);
         setVelocityInfo(msg.velocity);
         setBreakdown(msg.breakdown);
+        setIqV2(msg.iqV2);
       } else if (msg.type === "iq/gain") {
         setCodeIq(msg.codeIq);
         const top = [...msg.gains].sort((a, b) => b.deltaIq - a.deltaIq)[0];
@@ -194,6 +197,8 @@ export function App() {
           error: msg.error,
           downloadProgress: msg.downloadProgress,
         });
+      } else if (msg.type === "tip/detail") {
+        setTipDetail(msg.tip);
       } else if (msg.type === "scan/started") {
         setScanning(true);
       } else if (msg.type === "scan/done") {
@@ -215,9 +220,11 @@ export function App() {
       } else if (msg.type === "auth/user") {
         setAuthUser(msg.user);
       } else if (msg.type === "watcher/nudge") {
-        setNudges((n) => [...n.slice(-4), msg.nudge]);
+        // Watcher nudges are no longer rendered in chat — they looked bad
+        // inline with user messages. Keeping the handler as a no-op so any
+        // future surface (status bar, inlay, etc.) can re-subscribe here.
       } else if (msg.type === "watcher/dismiss") {
-        setNudges((n) => n.filter((x) => x.id !== msg.id));
+        // same as above — no-op
       }
     });
     vscode.postMessage({ type: "ready" });
@@ -602,48 +609,6 @@ export function App() {
                 </div>
               )}
               {error && <div className="error">{error}</div>}
-              {nudges.map((n) => (
-                <div
-                  key={n.id}
-                  className={`nudge nudge-${n.severity}`}
-                  data-trigger={n.triggerId}
-                >
-                  <div className="nudge-label">Protege · unprompted</div>
-                  <div className="nudge-text">{n.text}</div>
-                  <div className="nudge-actions">
-                    {n.canEscalate && (
-                      <button
-                        className="nudge-btn nudge-engage"
-                        onClick={() => {
-                          vscode.postMessage({
-                            type: "watcher/engage",
-                            nudgeId: n.id,
-                            triggerId: n.triggerId,
-                            context: n.context,
-                          });
-                          setNudges((x) => x.filter((y) => y.id !== n.id));
-                        }}
-                      >
-                        <IconCheck size={12} strokeWidth={2.6} />
-                        <span>Help me</span>
-                      </button>
-                    )}
-                    <button
-                      className="nudge-btn nudge-dismiss"
-                      onClick={() => {
-                        vscode.postMessage({
-                          type: "watcher/dismiss",
-                          nudgeId: n.id,
-                        });
-                        setNudges((x) => x.filter((y) => y.id !== n.id));
-                      }}
-                    >
-                      <IconX size={12} strokeWidth={2.6} />
-                      <span>Dismiss</span>
-                    </button>
-                  </div>
-                </div>
-              ))}
               <div ref={endRef} />
             </div>
           )}
@@ -742,6 +707,7 @@ export function App() {
           milestones={milestones}
           recommendations={recommendations}
           pillars={pillars}
+          iqV2={iqV2}
         />
       ) : mode === "live" ? (
         <LiveTab
@@ -837,6 +803,10 @@ export function App() {
           </Suspense>
         </div>
       </Overlay>
+
+      {tipDetail && (
+        <TipDetailOverlay tip={tipDetail} onClose={() => setTipDetail(null)} />
+      )}
 
     </div>
   );
