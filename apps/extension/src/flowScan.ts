@@ -136,7 +136,7 @@ async function runOnePass(): Promise<void> {
     )
     .join("\n\n");
 
-  const prompt = `You are auditing a cluster of related files for ARCHITECTURAL issues — bugs that span MULTIPLE FILES, not style nits. Examples:
+  const prompt = `You are auditing a cluster of related files for ARCHITECTURAL issues — bugs that span MULTIPLE FILES, not style nits. AND you are a teaching mentor: each finding must come with a real lesson the user can learn from. Examples of target issues:
 - context provider wraps the wrong subtree for a consumer
 - stale state passed through multiple component hops
 - API shape mismatch between producer and consumer
@@ -147,8 +147,12 @@ Return ONLY a JSON array. Each item is an object:
 - "primaryFile": relative path — the file that should host the main finding
 - "line": 1-based line in primaryFile
 - "severity": "warn" | "perf" | "info"
-- "message": one sentence, plain English, specific
 - "ruleId": short kebab-case id
+- "label": 3–5 word tag for an inline decoration
+- "message": one concise sentence stating what's wrong
+- "teaser": one-sentence WHY this matters (≤ 100 chars)
+- "lesson": exactly 2 sentences. What's wrong + what to do instead. No analogies, no metaphors, no preamble.
+- "voiceScript": 40–55 words plain spoken English for TTS. Direct and factual. No metaphors, no "imagine if", no "let me explain". Open with what's wrong, close with the fix.
 - "anchors": array of { "file": "<relative path>", "line": <1-based>, "label": "<why this line matters>" } — MUST include 1+ anchor in a DIFFERENT file to count as a flow
 - "flowId": short unique id for this finding
 
@@ -159,7 +163,7 @@ Rules:
 
 ${block}`;
 
-  const raw = await aiQuery(prompt, 800);
+  const raw = await aiQuery(prompt, 800, { kind: "scan" });
   if (!raw) return;
 
   const findings = parseFlowFindings(raw, usable);
@@ -212,6 +216,10 @@ interface RawFlowFinding {
   severity?: Suggestion["severity"];
   message?: string;
   ruleId?: string;
+  label?: string;
+  teaser?: string;
+  lesson?: string;
+  voiceScript?: string;
   anchors?: Array<{ file?: string; line?: number; label?: string }>;
   flowId?: string;
 }
@@ -270,13 +278,25 @@ function parseFlowFindings(
     const line = Math.max(0, Math.floor(item.line) - 1);
     const range = new vscode.Range(line, 0, line, 0);
 
+    const ruleId = (item.ruleId || "cross-file-flow").trim();
+    const message = item.message.trim();
+    const label = item.label?.trim() || ruleId.replace(/[-_]/g, " ").toLowerCase();
+    const teaser =
+      item.teaser?.trim() ||
+      (message.length > 100 ? message.slice(0, 99) + "…" : message);
+    const lesson = item.lesson?.trim() || message;
+    const voiceScript = item.voiceScript?.trim() || message;
     out.push({
       _primaryUri: primaryUri.toString(),
       suggestion: {
         range,
-        message: item.message.trim(),
+        message,
         severity: item.severity!,
-        ruleId: (item.ruleId || "cross-file-flow").trim(),
+        ruleId,
+        label,
+        teaser,
+        lesson,
+        voiceScript,
         scope: "flow",
         anchors,
         flowId: item.flowId || `flow-${Date.now().toString(36)}`,

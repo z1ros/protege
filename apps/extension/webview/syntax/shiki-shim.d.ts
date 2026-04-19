@@ -26,3 +26,9 @@ declare module "@shikijs/langs/*" {
   const lang: LanguageRegistration[];
   export default lang;
 }
+
+declare module "@shikijs/themes/*" {
+  import type { ThemeRegistration } from "@shikijs/types";
+  const theme: ThemeRegistration;
+  export default theme;
+}

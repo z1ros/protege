@@ -4,10 +4,21 @@ import fs from "node:fs";
 import { log, logBlock } from "./log.js";
 
 /**
- * On-Device Model Manager — runs Qwen2.5-Coder-1.5B locally via llama.cpp.
+ * On-Device Model Manager — runs Qwen2.5-Coder-7B locally via llama.cpp.
  *
- * No cloud, no API key, no cost. The model downloads ~900MB on first use
- * and loads from disk cache on subsequent activations (~2-3s warm-up).
+ * Upgraded from 1.5B → 7B (2026-04-18). The 1.5B model was genuinely
+ * limited — missed subtle React / async / state-flow issues, struggled
+ * with multi-field JSON output, and produced shallow teaching prose. 7B
+ * is the first on-device size that approaches usable review quality:
+ * catches index-as-key, prefer-const, missing-await etc. reliably and
+ * keeps JSON discipline under a larger prompt.
+ *
+ * Tradeoff: download is ~4.7 GB instead of ~1.1 GB, and scans take
+ * ~5-10s on M1/M2 instead of ~1-2s. For users who want instant, switch
+ * to Haiku (cloud) — the AI Engine picker in the Live tab handles it.
+ *
+ * No cloud, no API key, no cost. The model downloads on first use and
+ * loads from disk cache on subsequent activations (~5-8s warm-up).
  *
  * Used by:
  *   - Smart hover explanations
@@ -20,10 +31,14 @@ import { log, logBlock } from "./log.js";
  * When on-device is selected and not yet downloaded, a download prompt appears.
  */
 
-// Model config
-const MODEL_REPO = "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF";
-const MODEL_FILE = "qwen2.5-coder-1.5b-instruct-q5_k_m.gguf";
-const MODEL_SIZE_MB = 1100;
+// Model config — Qwen2.5-Coder-7B-Instruct, Q4_K_M quantization.
+// Q4_K_M is the sweet spot for 7B: ~4.7 GB, negligible quality loss vs
+// Q5/Q8, runs comfortably on 16 GB RAM machines. If you want higher
+// quality at the cost of ~700 MB more disk + slightly slower inference,
+// switch to Q5_K_M.
+const MODEL_REPO = "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF";
+const MODEL_FILE = "qwen2.5-coder-7b-instruct-q4_k_m.gguf";
+const MODEL_SIZE_MB = 4680;
 
 // State
 let model: unknown = null; // LlamaModel instance
@@ -146,9 +161,13 @@ export async function initOnDeviceModel(
     // files or the SAVE-tier prompt that stuffs 5 neighbor snippets.
     context = await (model as { createContext: (opts: { contextSize: number }) => Promise<unknown> })
       .createContext({ contextSize: 8192 });
-    session = new LlamaChatSession({
-      contextSequence: (context as { getSequence: () => unknown }).getSequence(),
-    });
+    // node-llama-cpp's getSequence() returns a LlamaContextSequence at
+    // runtime. Rest of the file treats llama types structurally via
+    // narrow casts; we do the same here and pass through as any so the
+    // constructor's exact type parameter doesn't need to be imported.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const seq = (context as { getSequence: () => unknown }).getSequence() as any;
+    session = new LlamaChatSession({ contextSequence: seq });
 
     const elapsed = Date.now() - startMs;
     console.log(`[protege] On-device model ready in ${elapsed}ms`);

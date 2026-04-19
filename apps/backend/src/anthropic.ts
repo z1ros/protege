@@ -125,6 +125,35 @@ export const TOOL_DEFINITIONS: Anthropic.Messages.Tool[] = [
   // create_scratch_file REMOVED — same reason.
   // run_file REMOVED — too risky without user confirmation.
   {
+    name: "teach_step",
+    description:
+      "Agentic teaching beat. Highlights ONE piece of code and narrates ONE short spoken sentence about it. Use repeatedly (4-8 times) to walk the user through a concept, one idea per call. The extension applies the highlight, speaks the narration via TTS (mic muted during speech), waits for playback to finish, then returns so you can issue the next beat. Only use in teaching mode.",
+    input_schema: {
+      type: "object",
+      properties: {
+        highlight: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "Workspace-relative or absolute path" },
+            startLine: { type: "number" },
+            endLine: { type: "number", description: "Same as startLine for a single line" },
+            label: { type: "string", description: "Optional short inline tag (e.g. 'state init')" },
+          },
+          required: ["path", "startLine", "endLine"],
+        },
+        narration: {
+          type: "string",
+          description: "ONE sentence, under 20 words, spoken aloud. Contractions ok. No markdown, no code, no line numbers read out.",
+        },
+        pauseMsAfter: {
+          type: "number",
+          description: "Optional silence after speaking, 200-800ms for absorption. Default 0.",
+        },
+      },
+      required: ["highlight", "narration"],
+    },
+  },
+  {
     name: "remember",
     description:
       "Save a durable fact about the user for future sessions. Use sparingly — only things worth remembering next week. Types: profile (stack, goals), struggle (recurring gaps), win (breakthroughs), decision (choices + why), preference (how they like to work), context (short-term project notes).",

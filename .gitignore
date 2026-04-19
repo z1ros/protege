@@ -15,3 +15,14 @@ apps/extension/models/
 apps/extension/native/
 apps/extension/bin/
 *.gguf
+
+# Wake-word training artifacts (23 GB: generated clips, features, checkpoints, ACAV100M)
+voice/training/output/
+voice/training/data/
+voice-wav/
+
+# Raw voice source recordings (user + ElevenLabs) — personal, not needed in repo
+voice/*.m4a
+voice/*.wav
+voice/*.mp3
+voice/elevanlabs/

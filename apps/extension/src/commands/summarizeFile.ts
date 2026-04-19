@@ -26,8 +26,15 @@ export async function summarizeFile(): Promise<void> {
     async () => {
       try {
         const reply = await aiQuery(
-          `Summarize this ${lang} file in 3-4 sentences. What does it do, what's its role in the project, and what patterns does it use?\n\n\`\`\`${lang}\n${preview}\n\`\`\``
+          `Summarize this ${lang} file in 3-4 sentences. What does it do, what's its role in the project, and what patterns does it use?\n\n\`\`\`${lang}\n${preview}\n\`\`\``,
+          256,
+          { kind: "teach" }
         );
+
+        if (!reply) {
+          vscode.window.showWarningMessage("Protege: no response from AI backend.");
+          return;
+        }
 
         const conceptNote =
           concepts.length > 0

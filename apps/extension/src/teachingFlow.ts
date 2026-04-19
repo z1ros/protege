@@ -120,7 +120,11 @@ Rules:
 - Make the last step a practice exercise
 - Keep explanations short and practical`;
 
-    const reply = await aiQuery(prompt);
+    const reply = await aiQuery(prompt, 512, { kind: "teach" });
+    if (!reply) {
+      vscode.window.showWarningMessage("Protege: no response from AI backend for lesson generation.");
+      return;
+    }
 
     // Parse the JSON
     let parsed: { steps: TeachStep[] };

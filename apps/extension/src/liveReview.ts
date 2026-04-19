@@ -357,6 +357,49 @@ function stopLiveReview(): void {
   notifyLiveReviewOff();
 }
 
+// Syntax-error rule ids that mean "user is mid-edit, file is broken
+// right now." When TS reports these we refuse to scan — typing in the
+// middle of JSX / a function body / an async block always trips them
+// transiently, and no amount of AI cleverness can usefully review code
+// that doesn't parse. The set is deliberately small; anything not listed
+// is a real issue that Protege CAN talk about (type mismatches,
+// unused imports, etc.). See fightMidEditNoise() below.
+const IN_PROGRESS_TS_CODES = new Set<number>([
+  1005,  // ';' expected / expected token (opening tag, closing paren, etc.)
+  1109,  // Expression expected
+  1128,  // Declaration or statement expected
+  1131,  // Property or signature expected
+  1136,  // Property assignment expected
+  1161,  // Unterminated regular expression literal
+  1381,  // Unexpected token
+  17002, // Expected corresponding JSX closing tag
+  17008, // JSX element has no corresponding closing tag
+  17014, // JSX fragment has no corresponding closing tag
+  17015, // JSX attribute must have an initializer
+]);
+
+/**
+ * True when the file has TypeScript diagnostics that scream "the user is
+ * mid-edit, everything is broken right now". Asking an LLM to review a
+ * file mid-type produces dozens of phantom findings on lines the user
+ * is still writing — annoying AND expensive. Skip the scan until TS
+ * stops complaining about structure; the next debounce will catch up.
+ */
+function isFileMidEdit(uri: vscode.Uri): boolean {
+  const diags = vscode.languages.getDiagnostics(uri);
+  for (const d of diags) {
+    if (d.source !== "ts") continue; // only gate on TS, not cSpell / ESLint
+    if (d.severity !== vscode.DiagnosticSeverity.Error) continue;
+    const code = typeof d.code === "number"
+      ? d.code
+      : typeof d.code === "object" && d.code && typeof (d.code as { value: unknown }).value === "number"
+        ? ((d.code as { value: number }).value)
+        : -1;
+    if (IN_PROGRESS_TS_CODES.has(code)) return true;
+  }
+  return false;
+}
+
 async function runReview(editor: vscode.TextEditor): Promise<void> {
   if (!active) return;
 
@@ -365,6 +408,17 @@ async function runReview(editor: vscode.TextEditor): Promise<void> {
     return;
   }
   if (isScanning) return;
+
+  // Mid-edit guard: if TS is currently reporting unresolved syntax (user
+  // is halfway through typing a JSX tag, function body, etc.), skip this
+  // scan. Running an LLM review on broken syntax produces phantom findings
+  // AND costs tokens/time for zero useful output. We'll catch up on the
+  // next debounce after TS stops complaining.
+  if (isFileMidEdit(editor.document.uri)) {
+    const name = editor.document.fileName.split(/[\\/]/).pop() ?? "file";
+    log("liveReview", `LIVE skip ${name} — TS reports unresolved syntax (user is mid-edit)`);
+    return;
+  }
 
   pendingChangeSize = 0;
   lastScannedText = text;
@@ -381,7 +435,12 @@ async function runReview(editor: vscode.TextEditor): Promise<void> {
 
   let raw: Suggestion[] = [];
   try {
-    raw = await reviewDocument(editor.document, cancelSignal);
+    // Pass the cursor line so the on-device prompt can focus its attention
+    // on the window the user is actively editing. Cloud models (Haiku /
+    // Sonnet) ignore this and review the whole file — they have the scale
+    // for it and catch cross-function issues a focus window would miss.
+    const activeLine = editor.selection.active.line;
+    raw = await reviewDocument(editor.document, cancelSignal, activeLine);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log("liveReview", `reviewDocument THREW for ${scanFile} — ${msg}`);
@@ -396,12 +455,33 @@ async function runReview(editor: vscode.TextEditor): Promise<void> {
     return;
   }
 
-  // NOTE: we intentionally do NOT dedup live review against TS/cSpell.
-  // The inlay hint hover is an isolated surface (separate hover target from
-  // the code), so our popup never stacks with theirs. Users get:
-  //   hover code  → TS/cSpell/Cursor
-  //   hover `💡 Protege` inlay → ONLY Protege, clean.
-  const suggestions = raw;
+  // Line-level dedup: drop Protege findings that land on lines TS has
+  // already flagged with an error. If TS says "this line is broken", the
+  // user sees a red squiggle and is already on notice — adding a Protege
+  // whisper on the same line is noise and usually wrong (Protege's
+  // finding was about the broken version of the code). Different rules
+  // from our earlier "never stack with TS" worry — that one cared about
+  // hover popups, this one cares about inline decorations that Protege
+  // now owns (whisper highlight + tag). See the hello.tsx mid-edit
+  // screenshot that prompted this pass.
+  const tsErrorLines = new Set<number>();
+  const tsDiags = vscode.languages.getDiagnostics(editor.document.uri);
+  for (const d of tsDiags) {
+    if (d.source !== "ts") continue;
+    if (d.severity !== vscode.DiagnosticSeverity.Error) continue;
+    for (let i = d.range.start.line; i <= d.range.end.line; i++) {
+      tsErrorLines.add(i);
+    }
+  }
+  const suggestions = tsErrorLines.size
+    ? raw.filter((s) => !tsErrorLines.has(s.range.start.line))
+    : raw;
+  if (raw.length > suggestions.length) {
+    log(
+      "liveReview",
+      `LIVE dropped ${raw.length - suggestions.length} finding(s) on TS-error lines`
+    );
+  }
 
   isScanning = false;
   currentSuggestions = suggestions;

@@ -49,6 +49,18 @@ const WHISPER_HIGHLIGHT = vscode.window.createTextEditorDecorationType({
   rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
 });
 
+// Separate end-of-line "tag" decoration — shows the suggestion's `label`
+// (3–5 words) as ambient inline text, so the user knows WHAT the finding
+// is about at a glance without hovering. Plan §3 originally made the
+// whisper "zero text" for purity, but in practice a short tag is more
+// useful than pure highlight: catches the eye AND communicates, all
+// without a click. The hover still carries the teaser, the thread the
+// lesson, voice the narrative — we're just adding an ambient label, not
+// duplicating deeper content.
+const WHISPER_TAG = vscode.window.createTextEditorDecorationType({
+  rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
+});
+
 // Track underlined ranges per URI so the hover provider can check whether a
 // given hover position is over one of our whispers (vs random code).
 const whisperRangesByUri = new Map<string, vscode.Range[]>();
@@ -88,22 +100,119 @@ export function registerUnderlineWhisper(
     })
   );
 
-  // Hover provider intentionally NOT registered.
+  // Interactive hover: shows the actual issue + clickable Apply fix /
+  // Explain / Dismiss buttons RIGHT IN the hover. This is the primary
+  // action surface because hovering is a natural, fast gesture — users
+  // don't have to guess "click the line and wait" to interact.
   //
-  // Earlier versions popped a small markdown tip on hover. With the Ghost
-  // Lens now rendering above the cursor line with Apply / Explain / Dismiss
-  // buttons, the hover was a redundant second surface showing the same
-  // message — users found it confusing ("why is it explaining twice?").
-  //
-  // The Whisper is now pure visual signal. To interact: park the cursor
-  // on the whispered line and the Ghost Lens appears after 800ms.
+  // The Ghost Lens above the cursor line still exists for keyboard-driven
+  // users (Tab / ⌘. / Esc parity), but the hover is the discoverable one.
+  disposables.push(
+    vscode.languages.registerHoverProvider(
+      { scheme: "file" },
+      {
+        provideHover(doc, position) {
+          const uri = doc.uri.toString();
+          const ranges = whisperRangesByUri.get(uri);
+          if (!ranges || ranges.length === 0) return undefined;
+          const hit = ranges.find((r) => r.contains(position));
+          if (!hit) return undefined;
 
-  // ⌘. / click → inline peek expansion.
+          const s = findSuggestionAtLine(uri, hit.start.line);
+          if (!s) return undefined;
+
+          return new vscode.Hover(buildActionHover(s, uri, doc.languageId), hit);
+        },
+      }
+    )
+  );
+
+  // ⌘. / click → opens the inline teaching thread on the current line.
+  // When invoked from a keybinding the caller passes no args; fall back to
+  // the active editor's cursor position so the command Just Works.
   disposables.push(
     vscode.commands.registerCommand(
       "protege.openTeachPeek",
+      async (args?: { uri?: string; line?: number }) => {
+        const editor = vscode.window.activeTextEditor;
+        const uri = args?.uri ?? editor?.document.uri.toString();
+        const line =
+          typeof args?.line === "number"
+            ? args.line
+            : editor?.selection.active.line;
+        if (!uri || typeof line !== "number") return;
+        await openInlinePeek(uri, line);
+      }
+    )
+  );
+
+  // ---- Hover action commands ----
+  // The interactive hover exposes Apply fix / Explain / Dismiss as markdown
+  // command links. These three commands back those links directly so hover
+  // clicks work without requiring the Ghost Lens to be active.
+
+  disposables.push(
+    vscode.commands.registerCommand(
+      "protege.applyWhisperFix",
       async (args: { uri: string; line: number }) => {
-        await openInlinePeek(args.uri, args.line);
+        if (!args || typeof args.line !== "number") return;
+        const uri = args.uri ?? vscode.window.activeTextEditor?.document.uri.toString();
+        if (!uri) return;
+        const s = findSuggestionAtLine(uri, args.line);
+        if (!s) return;
+        // Always route Fix through smartFix, not through the scan's
+        // pre-stored `fix` string. The scan's fix is often wrong (Qwen
+        // compresses it, Haiku sometimes hallucinates keys, etc.).
+        // smartFix fires a fresh cloud round-trip with full context.
+        await vscode.commands.executeCommand("protege.smartFix", {
+          uri,
+          line: s.range.start.line,
+        });
+      }
+    )
+  );
+
+  disposables.push(
+    vscode.commands.registerCommand(
+      "protege.explainWhisper",
+      async (args: { uri: string; line: number }) => {
+        if (!args || typeof args.line !== "number") return;
+        const uri = args.uri ?? vscode.window.activeTextEditor?.document.uri.toString();
+        if (!uri) return;
+        const s = findSuggestionAtLine(uri, args.line);
+        if (!s) return;
+
+        // The hover's button carries a 🎙 mic icon — that promises voice.
+        // Always play the clip. If explainMode is "both", also open the
+        // sidebar so the user has the full written reply to reference.
+        const { resolveExplainMode } = await import("./explainMode.js");
+        const mode = resolveExplainMode();
+
+        const { runVoiceExplanation } = await import("./ghostMentor.js");
+        void runVoiceExplanation(s);
+
+        if (mode === "both") {
+          await vscode.commands.executeCommand(
+            "protege.teachConcept",
+            s.ruleId
+          );
+        }
+      }
+    )
+  );
+
+  disposables.push(
+    vscode.commands.registerCommand(
+      "protege.dismissWhisper",
+      async (args: { uri: string; line: number }) => {
+        if (!args || typeof args.line !== "number") return;
+        const uri = args.uri ?? vscode.window.activeTextEditor?.document.uri.toString();
+        if (!uri) return;
+        // For MVP, "dismiss" just nudges the user into a Protege-free zone
+        // by hiding the hover (VS Code hovers auto-hide). A future version
+        // will mark the suggestion as snoozed for this session so the
+        // whisper clears too.
+        void uri;
       }
     )
   );
@@ -117,6 +226,7 @@ export function registerUnderlineWhisper(
   disposables.push(
     new vscode.Disposable(() => {
       WHISPER_HIGHLIGHT.dispose();
+      WHISPER_TAG.dispose();
       whisperRangesByUri.clear();
     })
   );
@@ -131,13 +241,12 @@ function renderWhispers(editor: vscode.TextEditor): void {
   const uri = doc.uri.toString();
   const suggestions = getSuggestionsForUri(uri);
 
-  // Build token ranges. We used to skip any range overlapping a non-Protege
-  // diagnostic (to avoid "blue + red squiggle mud"), but with the new
-  // HIGHLIGHT visual (soft white token background + left stripe), there's
-  // no squiggle to mud with — and the skip made Protege silent on every
-  // file that had TS errors, which is the exact file a student needs help
-  // with. TS/Protege now coexist: TS reports the error, Protege teaches
-  // the "why".
+  // Just the highlight ranges — the inline `← <label>` end-of-line tag
+  // was removed (2026-04-18, user feedback: "we don't show this inline
+  // stuff anymore, we show this on top of the code"). The label, message,
+  // and actions all live in the Ghost Lens CodeLens row above the line
+  // now (see ghostMentor.ts), which renders for every finding on the
+  // file, not just the cursor-parked one.
   const ranges: vscode.Range[] = [];
   for (const s of suggestions) {
     const tokenRange = resolveTokenRange(doc, s);
@@ -146,6 +255,10 @@ function renderWhispers(editor: vscode.TextEditor): void {
   }
 
   editor.setDecorations(WHISPER_HIGHLIGHT, ranges);
+  // Clear any stale inline tags from prior renders (the WHISPER_TAG type
+  // still exists for back-compat / quick re-enable; we just never push
+  // options to it now).
+  editor.setDecorations(WHISPER_TAG, []);
   whisperRangesByUri.set(uri, ranges);
 
   const name = doc.fileName.split(/[\\/]/).pop() ?? "file";
@@ -184,7 +297,103 @@ function resolveTokenRange(
   return new vscode.Range(line, col, line, col + match[0].length);
 }
 
-// ---- Inline peek (stub — wires to the chat panel for MVP) ----
+// ---- Interactive hover builder (slim) ----
+//
+// Target: ≤ 4 visual rows. Users were reading 8+ rows including VS Code's
+// own type-hover stacking below — it felt like a modal instead of a
+// sticky-note.
+//
+// Layout:
+//   💡 Rule Title
+//   One-sentence why.
+//   <fix code, one or two lines>
+//   🪄 Fix · 🎙 Explain · ✕
+//
+// `isTrusted = true` is required for `command:` URIs to work from hover.
+
+function buildActionHover(
+  s: Suggestion,
+  uri: string,
+  lang: string
+): vscode.MarkdownString {
+  const md = new vscode.MarkdownString();
+  md.isTrusted = true;
+  md.supportThemeIcons = true;
+
+  const title = s.label
+    ? s.label.replace(/\b\w/g, (c) => c.toUpperCase())
+    : s.ruleId.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+  // Title only — no `· line N`, no lightbulb icon. The user said both
+  // were noise (they already see which line they're hovering on).
+  // Cleaner: rule name, then a one-line explanation, then actions.
+  md.appendMarkdown(`**${title}**\n\n`);
+
+  // Short explanation — one sentence. Teaser preferred; falls back to
+  // first sentence of `message` when teaser is missing.
+  const teaser = compactMessage(s.teaser || s.message);
+  md.appendMarkdown(`${teaser}\n\n`);
+
+  // Compact fix block when we have one — max 2 lines, longer fixes are
+  // truncated with an ellipsis so the hover never scrolls.
+  if (s.fix && s.fix.trim()) {
+    const compact = compactFix(s.fix.trim());
+    md.appendCodeblock(compact, lang || "typescript");
+  }
+
+  // Action row — three compact links.
+  //   🪄 Fix    — only shown when a fix exists (Haiku regenerates on click)
+  //   📖 Teach  — opens the inline Comment Thread AND speaks the lesson.
+  //               One button, both surfaces. Voice + text compose naturally:
+  //               you hear the narrative while reading the paragraph.
+  //   ✕ Dismiss
+  // Dropped the standalone "🎙 Explain" button — it was confusing next to
+  // 📖 Teach (both meant "tell me more"). Teach now delivers both.
+  const argsObj = encodeURIComponent(
+    JSON.stringify({ uri, line: s.range.start.line })
+  );
+  const applyCmd = `command:protege.applyWhisperFix?${argsObj}`;
+  const teachCmd = `command:protege.openTeachingThread?${argsObj}`;
+  const dismissCmd = `command:protege.dismissWhisper?${argsObj}`;
+
+  const parts: string[] = [];
+  if (s.fix) parts.push(`[$(wand) Fix](${applyCmd})`);
+  parts.push(`[$(book) Teach](${teachCmd})`);
+  parts.push(`[$(close)](${dismissCmd})`);
+  md.appendMarkdown(`${parts.join("  ·  ")}`);
+
+  return md;
+}
+
+function compactMessage(msg: string): string {
+  // Strict one-row budget. Plan §3 caps the hover at 4 visual rows
+  // total (title + teaser + fix + actions), so the teaser only has ONE
+  // row. Take the first sentence; hard-cap at MAX if it's still too long.
+  //
+  // This is also the key to plan anti-feature #3 ("no duplicating the
+  // lesson text across surfaces"). When the model omits a dedicated
+  // teaser and both hover + thread fall back to `message`, the hover
+  // gets the first clause while the thread still renders the full
+  // paragraph. Never identical content on both surfaces.
+  const MAX = 80;
+  const trimmed = msg.trim().replace(/\s+/g, " ");
+  const firstSentence = trimmed.split(/(?<=[.!?])\s+/)[0] ?? trimmed;
+  if (firstSentence.length <= MAX) return firstSentence;
+  return firstSentence.slice(0, MAX - 1) + "…";
+}
+
+function compactFix(fix: string): string {
+  const lines = fix.split("\n");
+  if (lines.length <= 2) return fix;
+  return lines.slice(0, 2).join("\n") + "\n…";
+}
+
+// ---- Inline peek → inline teaching thread ----
+//
+// `⌘.` (or the Ghost Lens "Explain" button, or a command palette entry)
+// routes here. Used to open the sidebar chat with a teaching prompt — now
+// opens the in-editor Comment Thread where the full lesson lives. This
+// keeps eyes on code: the user never leaves the editor to read the paragraph.
 
 async function openInlinePeek(uriStr: string | undefined, line: number): Promise<void> {
   const editor = vscode.window.activeTextEditor;
@@ -193,14 +402,16 @@ async function openInlinePeek(uriStr: string | undefined, line: number): Promise
   const s = findSuggestionAtLine(uri, line);
   if (!s) return;
 
-  // Jump caret to the line so context is obvious, then open the Protege
-  // panel. The full inline-peek expansion is Stage-2 work; for MVP the sidebar
-  // carries the full teaching.
-  const pos = new vscode.Position(line, 0);
+  // Park the cursor on the finding line so VS Code scrolls the thread into
+  // view even when the user invoked the command from a scrolled-off spot.
+  const pos = new vscode.Position(s.range.start.line, 0);
   editor.selection = new vscode.Selection(pos, pos);
   editor.revealRange(
     new vscode.Range(pos, pos),
     vscode.TextEditorRevealType.InCenterIfOutsideViewport
   );
-  await vscode.commands.executeCommand("protege.teachConcept", s.ruleId);
+  await vscode.commands.executeCommand("protege.openTeachingThread", {
+    uri,
+    line: s.range.start.line,
+  });
 }

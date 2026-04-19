@@ -57,6 +57,18 @@
         "title": "Protege: Show Logs"
       },
       {
+        "command": "protege.toggleVoiceExplain",
+        "title": "Protege: Cycle Explain Mode (text → voice → both)"
+      },
+      {
+        "command": "protege.calibrateWakeWord",
+        "title": "Protege: Calibrate Wake Word (personalize detection)"
+      },
+      {
+        "command": "protege.restartWakeListener",
+        "title": "Protege: Restart Wake Word Listener"
+      },
+      {
         "command": "protege.toggle",
         "title": "Protege: Toggle"
       },
@@ -139,6 +151,10 @@
       {
         "command": "protege.openTeachPeek",
         "title": "Protege: Open Teach Peek"
+      },
+      {
+        "command": "protege.toggleMaxPlanBackend",
+        "title": "Protege: Max Plan — switch Qwen 7B ↔ Haiku"
       }
     ],
     "configuration": {
@@ -153,6 +169,16 @@
           "type": "boolean",
           "default": false,
           "description": "Enable the IDLE (Tier 3) cross-file flow scanner. Runs on-device in the background during idle periods to find architectural issues that span multiple files. Experimental — adds CPU load during idle time."
+        },
+        "protege.explainMode": {
+          "type": "string",
+          "enum": [
+            "text",
+            "voice",
+            "both"
+          ],
+          "default": "text",
+          "description": "How Protege delivers the Ghost Lens \"Explain\" action. `text` (default) opens the sidebar with a chat reply. `voice` speaks a short explanation through Kokoro TTS while your eyes stay on the code. `both` does both at once. Modifier keys still override per-click: hold ⌘ to force voice, ⇧ to force text."
         }
       }
     },
@@ -193,6 +219,10 @@
         "when": "editorTextFocus"
       },
       {
+        "command": "protege.toggleMaxPlanBackend",
+        "key": "cmd+k b"
+      },
+      {
         "command": "protege.clearHighlights",
         "key": "escape",
         "when": "editorTextFocus && !editorHasSelection && !suggestWidgetVisible && !parameterHintsVisible && !inQuickOpen && !inZenMode && protege.hasHighlights"
@@ -203,8 +233,13 @@
         "when": "editorTextFocus && protege.ghostActive && !inlineSuggestionVisible && !suggestWidgetVisible && !parameterHintsVisible"
       },
       {
-        "command": "protege.explainGhost",
+        "command": "protege.openTeachPeek",
         "key": "cmd+.",
+        "when": "editorTextFocus && protege.ghostActive && !suggestWidgetVisible"
+      },
+      {
+        "command": "protege.explainGhost",
+        "key": "cmd+alt+.",
         "when": "editorTextFocus && protege.ghostActive && !suggestWidgetVisible"
       },
       {
@@ -225,9 +260,15 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@iconify-json/devicon-plain": "^1.2.57",
+    "@iconify-json/simple-icons": "^1.2.78",
+    "@iconify/react": "^6.0.2",
+    "@iconify/utils": "^3.1.0",
     "@protege/types": "workspace:*",
     "@shikijs/langs": "^4.0.2",
+    "@shikijs/themes": "^4.0.2",
     "d3-force": "^3.0.0",
+    "highlight.js": "^11.11.1",
     "lucide-react": "^1.8.0",
     "node-llama-cpp": "^3.18.1",
     "react-markdown": "^10.1.0",
@@ -236,6 +277,8 @@
     "simple-icons": "^16.16.0"
   },
   "devDependencies": {
+    "@svgr/core": "^8.1.0",
+    "@svgr/plugin-jsx": "^8.1.0",
     "@types/d3-force": "^3.0.10",
     "@types/node": "^22.0.0",
     "@types/react": "^18.3.0",
@@ -246,6 +289,7 @@
     "react-dom": "^18.3.0",
     "tsup": "^8.3.0",
     "typescript": "^5.6.0",
+    "unplugin-icons": "^23.0.1",
     "vite": "^5.4.0"
   }
 }

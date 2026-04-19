@@ -6,7 +6,7 @@ import { runSingleQuery } from "./chatRunner.js";
  * AI Backend Selector — routes queries to the right model.
  *
  * The user chooses their preferred backend in the Live tab:
- *   - "on-device" → Qwen 1.5B via llama.cpp (free, instant, offline)
+ *   - "on-device" → Qwen2.5-Coder 7B via llama.cpp (free, offline, ~5-10s/scan)
  *   - "haiku"     → Claude Haiku 4.5 via API (fast, cheap, cloud)
  *   - "sonnet"    → Claude Sonnet 4.5 via API (best quality, cloud)
  *   - "auto"      → on-device if ready, fall back to haiku
@@ -57,7 +57,10 @@ export function initAiBackend(context: vscode.ExtensionContext): void {
   ctx = context;
   const saved = context.globalState.get<AiBackend>(STATE_KEY);
   if (saved === "on-device" || saved === "haiku" || saved === "sonnet" || saved === "auto") {
-    currentBackend = saved;
+    // TEMP: Sonnet is hidden from the UI; if someone had it persisted
+    // from before, transparently flip them to Haiku so the picker
+    // doesn't end up with a phantom "no option selected" state.
+    currentBackend = saved === "sonnet" ? "haiku" : saved;
   }
 
   // Cloud hydration — fire-and-forget. If the user has a preference saved
@@ -124,7 +127,28 @@ export function initAiBackend(context: vscode.ExtensionContext): void {
 }
 
 export function setAiBackend(backend: AiBackend): void {
+  const previous = currentBackend;
   currentBackend = backend;
+
+  // Invalidate the "LAST CALL" chip on backend change. Otherwise an
+  // in-flight scan from the previous backend can complete *after* the
+  // user switches, leaving the UI claiming "you're on On-Device but the
+  // last call was Sonnet" — which looks like the routing is broken when
+  // it actually isn't. Clearing here means the chip just disappears
+  // until the next call fires on the NEW backend, which is always
+  // honest: "here's what just ran."
+  if (previous !== backend) {
+    lastCall = null;
+    void (async () => {
+      try {
+        const { broadcast } = await import("./webviewHost.js");
+        broadcast({ type: "ai/lastCallCleared" });
+      } catch {
+        /* noop */
+      }
+    })();
+  }
+
   if (ctx) {
     // Local persistence — authoritative for this machine, survives reloads.
     void ctx.globalState.update(STATE_KEY, backend);
@@ -179,21 +203,83 @@ function recordCall(info: LastCallInfo): void {
 }
 
 /**
- * Send a query to the AI — routed based on user preference.
+ * Kind of AI call — lets the router choose the right backend based on
+ * whether this is a high-frequency automatic scan or a user-triggered
+ * teach/chat call.
+ *
+ *   "scan"  → every 3s debounce while typing / on save / on idle.
+ *             Happens thousands of times a day per user. MUST stay cheap.
+ *             In "auto" mode these use on-device only; if Qwen isn't
+ *             loaded the scan skips silently (better than surprise
+ *             $30/user/month Haiku bills).
+ *
+ *   "teach" → user-triggered (hover Explain, thread Teach/Ask, chat,
+ *             voice follow-up). ~10-50/day/user. Quality matters, latency
+ *             is acceptable, cost is bounded. In "auto" mode these always
+ *             go to Haiku.
+ */
+export type AiIntent = "scan" | "teach";
+
+/**
+ * Send a query to the AI — routed based on user preference AND intent.
  *
  * @param prompt — the prompt to send
  * @param maxTokens — max response length (only used for on-device)
- * @returns the response text, or null if all backends failed
+ * @param opts.kind — "scan" (cheap, local-first) or "teach" (quality, cloud)
+ * @returns the response text, or null if no backend could handle it
  */
 export async function aiQuery(
   prompt: string,
-  maxTokens = 256
+  maxTokens = 256,
+  opts: { kind?: AiIntent } = {}
 ): Promise<string | null> {
   const backend = currentBackend;
+  const kind: AiIntent = opts.kind ?? "scan";
   let fallback: { requested: AiBackend; reason: string } | undefined;
 
-  // On-device path
-  if (backend === "on-device" || backend === "auto") {
+  // ---- Smart mix ("auto") ----
+  // This is where the Haiku + on-device hybrid lives. Call kind decides
+  // the route so the economics work out:
+  //   auto + scan  → on-device (skip if unavailable — no cloud fallback)
+  //   auto + teach → Haiku (always cloud; on-device is too slow / too
+  //                  inconsistent for teaching prose)
+  if (backend === "auto") {
+    if (kind === "scan") {
+      if (!isOnDeviceReady()) {
+        // Silent skip — the user installed "auto" for the margin, not
+        // for surprise cloud bills on every keystroke. The Live tab will
+        // show the download prompt; once Qwen is ready, scans resume.
+        recordCall({
+          backend: "on-device",
+          atMs: Date.now(),
+          durationMs: 0,
+          ok: false,
+          fallback: { requested: "auto", reason: "on-device not ready · scan skipped" },
+        });
+        console.log("[protege] aiQuery(scan) → skipped · on-device not ready, refusing Haiku fallback on scan path");
+        return null;
+      }
+      const start = Date.now();
+      const result = await generateLocal(prompt, maxTokens);
+      const duration = Date.now() - start;
+      recordCall({
+        backend: "on-device",
+        atMs: Date.now(),
+        durationMs: duration,
+        ok: !!result,
+      });
+      console.log(`[protege] aiQuery(scan) → on-device · ${duration}ms`);
+      return result;
+    }
+    // kind === "teach" → fall through to Haiku path below
+    fallback = undefined;
+  }
+
+  // ---- On-device (explicit) ----
+  // When the user picked "on-device" strict, both scan AND teach run
+  // locally — even for teach, which will be slower and rougher than
+  // Haiku. That's the user's explicit choice.
+  if (backend === "on-device") {
     if (isOnDeviceReady()) {
       const start = Date.now();
       const result = await generateLocal(prompt, maxTokens);
@@ -205,44 +291,38 @@ export async function aiQuery(
           durationMs: duration,
           ok: true,
         });
-        console.log(`[protege] aiQuery → on-device (Qwen) · ${duration}ms`);
+        console.log(`[protege] aiQuery(${kind}) → on-device (Qwen) · ${duration}ms`);
         return result;
       }
-      // On-device errored. For strict "on-device", fail visibly — do NOT
-      // silently become a Claude call. For "auto", record the fallback.
-      if (backend === "on-device") {
-        recordCall({
-          backend: "on-device",
-          atMs: Date.now(),
-          durationMs: duration,
-          ok: false,
-          fallback: { requested: "on-device", reason: "local generation failed" },
-        });
-        console.warn("[protege] aiQuery → on-device errored; not falling back because backend=on-device");
-        return null;
-      }
-      fallback = { requested: "auto", reason: "local generation failed" };
-    } else if (backend === "on-device") {
-      // Strict on-device: user said no cloud — respect that. Record a
-      // failure so the chip turns red and the user sees that nothing ran.
-      const reason = "on-device model not ready (open Live tab to download/load)";
-      console.warn(`[protege] aiQuery → ${reason}`);
       recordCall({
         backend: "on-device",
         atMs: Date.now(),
-        durationMs: 0,
+        durationMs: duration,
         ok: false,
-        fallback: { requested: "on-device", reason },
+        fallback: { requested: "on-device", reason: "local generation failed" },
       });
+      console.warn("[protege] aiQuery → on-device errored; not falling back because backend=on-device");
       return null;
-    } else {
-      // "auto" + not ready → mark as fallback to cloud
-      fallback = { requested: "auto", reason: "on-device not ready" };
     }
+    const reason = "on-device model not ready (open Live tab to download/load)";
+    console.warn(`[protege] aiQuery → ${reason}`);
+    recordCall({
+      backend: "on-device",
+      atMs: Date.now(),
+      durationMs: 0,
+      ok: false,
+      fallback: { requested: "on-device", reason },
+    });
+    return null;
   }
 
-  // Cloud path — when explicit "haiku"/"sonnet" or "auto" fallback
-  const cloudBackend: ActualBackend = backend === "sonnet" ? "sonnet" : "haiku";
+  // ---- Cloud path ----
+  // Reached when: backend is explicit "haiku" / "sonnet" / user picked
+  // "auto" + kind=="teach". Always goes to Claude via /chat.
+  // TEMP: Sonnet is disabled — all cloud calls go to Haiku regardless of
+  // user pick. Easy revert: change `"haiku"` back to
+  // `backend === "sonnet" ? "sonnet" : "haiku"`.
+  const cloudBackend: ActualBackend = "haiku";
   const start = Date.now();
   try {
     const result = await runSingleQuery(prompt);
@@ -255,7 +335,7 @@ export async function aiQuery(
       fallback,
     });
     console.log(
-      `[protege] aiQuery → ${cloudBackend} (Claude) · ${duration}ms${
+      `[protege] aiQuery(${kind}) → ${cloudBackend} (Claude) · ${duration}ms${
         fallback ? ` · fallback from ${fallback.requested} (${fallback.reason})` : ""
       }`
     );
@@ -276,13 +356,17 @@ export async function aiQuery(
 
 /**
  * Get the name of the backend that would handle the next query.
- * Useful for showing "Powered by: Qwen 1.5B" or "Powered by: Haiku" in UI.
+ * Useful for showing "Powered by: Qwen 7B" or "Powered by: Haiku" in UI.
  */
 export function getActiveBackendName(): string {
-  if (currentBackend === "on-device") return "Qwen 1.5B (on-device)";
-  if (currentBackend === "haiku") return "Claude Haiku 4.5";
-  if (currentBackend === "sonnet") return "Claude Sonnet 4.5";
+  if (currentBackend === "on-device") return "Qwen 7B (on-device)";
+  // TEMP: Sonnet folded into Haiku for the moment. If the user has
+  // "sonnet" persisted from before, we still report Haiku — that's
+  // what they're actually getting.
+  if (currentBackend === "haiku" || currentBackend === "sonnet") {
+    return "Claude Haiku 4.5";
+  }
   // auto
-  if (isOnDeviceReady()) return "Qwen 1.5B (on-device)";
+  if (isOnDeviceReady()) return "Qwen 7B (on-device)";
   return "Claude Haiku 4.5 (fallback)";
 }

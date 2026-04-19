@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { guessInlineLang, highlightInner } from "./syntax/highlighter";
@@ -63,34 +63,14 @@ function extractText(node: React.ReactNode): string {
   return String(node ?? "");
 }
 
-/** Hook: asynchronously highlight `code`. While pending, returns null. */
-function useHighlighted(code: string, lang: string): string | null {
-  const [html, setHtml] = useState<string | null>(null);
-  const tokenRef = useRef(0);
-
-  useEffect(() => {
-    const token = ++tokenRef.current;
-    let cancelled = false;
-    highlightInner(code, lang).then((inner) => {
-      if (cancelled || token !== tokenRef.current) return;
-      setHtml(inner);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [code, lang]);
-
-  return html;
-}
-
 function InlineCode({ text, lang }: { text: string; lang: string }) {
-  const html = useHighlighted(text, lang);
-  if (html === null) {
-    return <code className="md-code-inline">{text}</code>;
-  }
+  // highlight.js is fully synchronous — no useEffect, no Promise, no
+  // fallback flash. Memoize per (text, lang) so identical inline pills
+  // (used a lot in chat) don't re-tokenize on every render.
+  const html = useMemo(() => highlightInner(text, lang), [text, lang]);
   return (
     <code
-      className="md-code-inline"
+      className="md-code-inline hljs"
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );
@@ -99,7 +79,10 @@ function InlineCode({ text, lang }: { text: string; lang: string }) {
 function CodeBlock({ lang, code }: { lang: string; code: string }) {
   const [copied, setCopied] = useState(false);
   const trimmed = code.replace(/\n$/, "");
-  const html = useHighlighted(trimmed, lang || "text");
+  const html = useMemo(
+    () => highlightInner(trimmed, lang || "text"),
+    [trimmed, lang]
+  );
 
   const handleCopy = useCallback(() => {
     navigator.clipboard
@@ -130,16 +113,10 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
         </button>
       </div>
       <pre className="md-pre">
-        {html === null ? (
-          <code className={`md-code-block ${lang ? `language-${lang}` : ""}`}>
-            {trimmed}
-          </code>
-        ) : (
-          <code
-            className={`md-code-block ${lang ? `language-${lang}` : ""}`}
-            dangerouslySetInnerHTML={{ __html: html }}
-          />
-        )}
+        <code
+          className={`md-code-block hljs ${lang ? `language-${lang}` : ""}`}
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
       </pre>
     </div>
   );

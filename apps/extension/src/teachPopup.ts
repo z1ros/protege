@@ -59,10 +59,13 @@ export function showTeachPopups(
 
   if (ranges.length === 0) return;
 
-  // Create a subtle highlight decoration for the symbols
+  // Create a subtle highlight decoration for the symbols.
+  // DecorationRenderOptions has `border` (CSS shorthand) but no
+  // `borderBottom`; we smuggle the bottom-only border via textDecoration
+  // which gets inlined as-is at runtime.
   const decoration = vscode.window.createTextEditorDecorationType({
     backgroundColor: "rgba(122, 162, 247, 0.1)",
-    borderBottom: "2px solid rgba(122, 162, 247, 0.5)",
+    textDecoration: "none; border-bottom: 2px solid rgba(122, 162, 247, 0.5)",
     overviewRulerColor: "rgba(122, 162, 247, 0.4)",
     overviewRulerLane: vscode.OverviewRulerLane.Center,
   });
@@ -149,12 +152,14 @@ export function dismissTeachPopup(): void {
   // Show a brief "learned" underline on the current line
   if (editor) {
     const learnedDecoration = vscode.window.createTextEditorDecorationType({
-      borderBottom: "2px dotted rgba(158, 206, 106, 0.6)",
+      // borderBottom + fontSize don't exist on the typed options but work
+      // at runtime as inlined CSS — we smuggle both via textDecoration.
+      textDecoration: "none; border-bottom: 2px dotted rgba(158, 206, 106, 0.6)",
       after: {
         contentText: " ✓ learned",
         color: "rgba(158, 206, 106, 0.7)",
         fontStyle: "italic",
-        fontSize: "0.85em",
+        textDecoration: "none; font-size: 0.85em",
         margin: "0 0 0 1em",
       },
     });

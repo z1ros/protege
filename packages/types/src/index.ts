@@ -261,7 +261,7 @@ export interface ToolResult {
   error?: string;
 }
 
-export type ChatMode = "text" | "voice";
+export type ChatMode = "text" | "voice" | "teaching";
 
 /**
  * Cloud chat backend the user wants to route this request through. The
@@ -279,6 +279,14 @@ export interface ChatRunRequest {
   mode?: ChatMode; // rendering channel — affects persona + post-processing
   /** Which cloud model the user selected. Server defaults to Sonnet when omitted. */
   backend?: ChatBackend;
+  /**
+   * Disable tool-use entirely for this request. The server omits the
+   * `tools` array from the Anthropic call, forcing the model to reply
+   * with text only. Set by one-shot callers (review engine, voice
+   * explain) that just need a JSON/string reply and can't consume
+   * tool-call rounds.
+   */
+  noTools?: boolean;
 }
 
 export interface ChatRunResponse {
@@ -313,6 +321,19 @@ export type WebviewToHost =
   | { type: "voice/start" }
   | { type: "voice/stop" }
   | { type: "voice/speaking"; active: boolean }
+  | {
+      /**
+       * Webview → host: the TTS clip started via `voice/playExplain` has
+       * finished playing (or errored). Host uses this to swap the
+       * "speaking…" chip for the post-voice handoff invite, so the timing
+       * matches real playback instead of a guess based on word count.
+       */
+      type: "voice/playbackDone";
+      reason: "ended" | "error";
+      /** Correlation id from `voice/playExplain` so the host can resolve
+       *  the right awaiter (teach_step tool waits on this). */
+      requestId?: string;
+    }
   | { type: "wake/toggle" }
   | { type: "scan/request" }
   | { type: "auth/login" }
@@ -357,7 +378,40 @@ export type HostToWebview =
       iqV2: IqV2;
     }
   | { type: "iq/gain"; gains: GainEvent[]; codeIq: number }
+  | {
+      /**
+       * Host → webview: drop the "LAST CALL" chip in the Live tab. Sent
+       * when the user switches AI backend so a stale Sonnet/Haiku call
+       * doesn't linger on-screen after they've moved to On-Device.
+       */
+      type: "ai/lastCallCleared";
+    }
   | { type: "chat/autoSend"; message: string }
+  | {
+      /**
+       * Host → webview: flip the chat panel into voice-input mode and
+       * auto-send `message` as the first turn of a new follow-up thread.
+       * Used by the Teaching Thread's "Ask" button so clicking Ask
+       * transitions the user into a spoken conversation with the mentor
+       * without leaving the editor.
+       */
+      type: "voice/primeConversation";
+      message: string;
+    }
+  | {
+      /**
+       * Host → webview: play this short explanation through TTS.
+       * The webview calls /tts, streams the WAV, and plays it via its
+       * persistent AudioContext (same path as Voice Mode). Used by the
+       * Ghost Lens "Explain" button when explainMode is "voice" or "both".
+       */
+      type: "voice/playExplain";
+      text: string;
+      voice?: "female" | "male";
+      /** Optional id; webview echoes it in `voice/playbackDone.requestId`
+       *  so hosts can await a specific clip (teach_step chaining). */
+      requestId?: string;
+    }
   | { type: "scan/started" }
   | { type: "scan/done"; found: number; summary: string }
   | { type: "file/active"; file: ActiveFileInfo | null }

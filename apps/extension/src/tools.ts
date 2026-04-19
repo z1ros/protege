@@ -176,6 +176,10 @@ async function dispatch(call: ToolCall): Promise<string> {
           Boolean(call.arguments.replaceAll)
         )
       );
+    case "teach_step": {
+      const { runTeachStep } = await import("./teachingStep.js");
+      return runTeachStep(call.arguments as Parameters<typeof runTeachStep>[0]);
+    }
     case "create_file":
     case "create_scratch_file":
     case "run_file":
@@ -286,6 +290,10 @@ interface HighlightRegion {
   explanation?: string;
 }
 
+/** Exported alias so the teach_step tool can reuse the same highlight
+ *  pipeline without duplicating decoration/hover logic. */
+export { highlightCode as highlightCodeForTeaching };
+
 async function highlightCode(regions: HighlightRegion[]): Promise<string> {
   if (!regions || regions.length === 0) {
     return "no regions provided";
@@ -327,14 +335,21 @@ async function highlightCode(regions: HighlightRegion[]): Promise<string> {
       path: r.path, startLine: r.startLine, endLine: r.endLine,
     });
 
-    const inlineText = r.issue ?? label;
+    // Inline `← <tag>` decoration — kept because it's zero-effort
+    // discoverability, but now uses a short tag (label > 5 words of issue)
+    // so it fits on one line. The full sentence lives in the hover, and
+    // the full lesson in the teaching Comment Thread (⌘. / 📖 Teach).
+    // Prior behavior pasted the entire `r.issue` sentence which got cut
+    // off mid-word on anything past ~60 chars — see
+    // Architecture/unified-teaching-surfaces-plan.md §5.
+    const inlineTag = buildInlineTag(label, r.issue);
     const opt: vscode.DecorationOptions = {
       range,
       hoverMessage: hover,
-      renderOptions: inlineText
+      renderOptions: inlineTag
         ? {
             after: {
-              contentText: `  ← ${inlineText}`,
+              contentText: `  ← ${inlineTag}`,
               color: "rgba(245, 246, 250, 0.5)",
               fontStyle: "italic",
               margin: "0 0 0 1em",
@@ -388,6 +403,48 @@ async function highlightCode(regions: HighlightRegion[]): Promise<string> {
   return `Highlighted ${regions.length} region${
     regions.length === 1 ? "" : "s"
   } across ${groups.size} file${groups.size === 1 ? "" : "s"}`;
+}
+
+// ---- Inline tag derivation ----
+//
+// Inline decorations can't wrap — VS Code's `after.contentText` is single-
+// line. Long `issue` messages (full sentences) get cut off on any real
+// screen. Keep the inline useful by emitting a punchy 3–5 word *tag* and
+// leaving the sentence for the hover and the full paragraph for the thread.
+//
+// Preference order:
+//   1. `label` — the chat tool's short annotation (already punchy)
+//   2. first ≤5 words of `issue`, stripped of filler verbs like "Using",
+//      "Don't", "This", "The" etc. that usually open a sentence
+//   3. first sentence of `issue`, capped at 40 chars
+
+const FILLER_PREFIXES = new Set([
+  "using", "this", "the", "a", "an", "dont", "don't", "do", "its", "it's",
+  "you", "we", "heres", "here's", "prefer", "avoid", "consider",
+]);
+
+function buildInlineTag(label: string | undefined, issue: string | undefined): string {
+  const lab = label?.trim();
+  if (lab && lab.length <= 40) return lab;
+
+  const raw = (issue ?? lab ?? "").trim();
+  if (!raw) return "";
+
+  // Take the first sentence only — "X. Also Y." should not spill "Also Y"
+  // into the tag.
+  const firstSentence = raw.split(/[.!?]/)[0]?.trim() ?? raw;
+  const words = firstSentence.split(/\s+/).filter(Boolean);
+
+  // Drop up to two leading filler words ("Using array index as key…" → "array index as key").
+  let startIdx = 0;
+  for (let i = 0; i < Math.min(2, words.length); i++) {
+    if (FILLER_PREFIXES.has(words[i].toLowerCase())) startIdx = i + 1;
+    else break;
+  }
+  const trimmedWords = words.slice(startIdx);
+  const tag = trimmedWords.slice(0, 5).join(" ");
+  if (tag.length <= 40) return tag.toLowerCase();
+  return tag.slice(0, 39).toLowerCase() + "…";
 }
 
 /**

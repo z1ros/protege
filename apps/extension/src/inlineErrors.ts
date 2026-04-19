@@ -203,7 +203,9 @@ async function updateInlineExplanations(editor: vscode.TextEditor): Promise<void
           contentText: `  ${explanation}`,
           color: ERROR_COLOR_STR,
           fontStyle: "italic",
-          fontSize: "0.85em",
+          // fontSize smuggled through textDecoration — not in the typed
+          // attachment options but applied as inline CSS at runtime.
+          textDecoration: "none; font-size: 0.85em",
         },
       },
     });
@@ -219,7 +221,7 @@ async function updateInlineExplanations(editor: vscode.TextEditor): Promise<void
           contentText: `  ${explanation}`,
           color: WARNING_COLOR_STR,
           fontStyle: "italic",
-          fontSize: "0.85em",
+          textDecoration: "none; font-size: 0.85em",
         },
       },
     });
@@ -340,7 +342,7 @@ async function handleFixIt(
           `Reply with ONLY the fixed line (or lines). No explanation, no markdown fencing.`,
         ].join("\n");
 
-        const fixedCode = await aiQuery(prompt);
+        const fixedCode = await aiQuery(prompt, 256, { kind: "teach" });
         if (!fixedCode || fixedCode.trim().length === 0) {
           vscode.window.showWarningMessage(
             "Protege couldn't generate a fix for this error."

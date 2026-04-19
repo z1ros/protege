@@ -16,16 +16,25 @@ let wakeAudioChunks: Buffer[] = [];
 let onWakeDetected: (() => void) | null = null;
 let onWakeRecordingStopped: (() => void) | null = null;
 
-// When the bot is speaking, we still want to allow barge-in via a clear
-// "Protege" — but not random noises or the bot's own voice bleeding through
-// the mic. So during TTS we apply a stricter confidence threshold on top of
-// the binary's already-sensitive detection.
+// When the bot is speaking, we fully suspend the wake listener. No wake
+// events fire, no recordings start. Prevents bot voice bleed from mic
+// triggering false barge-ins. Trade: no mid-speech interrupt — user waits
+// ~500ms after bot finishes. setSuspended(false) re-enables after buffer.
+let suspended = false;
+
+// Legacy strict-mode gate (still used for the rare moment between
+// suspend release and fresh wake events). Bot voice typically fades
+// within 100ms; the 500ms unsuspend buffer covers decay.
 let strictMode = false;
 let lastWakeAvg = 0;
-const STRICT_AVG_THRESHOLD = 0.35;
+const STRICT_AVG_THRESHOLD = 0.55;
 
 export function setStrictWakeMode(v: boolean): void {
   strictMode = v;
+}
+
+export function setWakeSuspended(v: boolean): void {
+  suspended = v;
 }
 
 function pipeLog(tag: string, msg: string): void {
@@ -151,7 +160,8 @@ export async function startWakeWordListener(
     onRecordingDone: () => void;
     onError: (err: string) => void;
     onReady?: () => void;
-  }
+  },
+  thresholdOverride?: number
 ): Promise<void> {
   if (wakeProcess) return;
 
@@ -169,7 +179,12 @@ export async function startWakeWordListener(
   onWakeDetected = callbacks.onWake;
   onWakeRecordingStopped = callbacks.onRecordingDone;
 
-  wakeProcess = spawn(binPath, ["--wake-word", "--model", modelPath], {
+  const args = ["--wake-word", "--model", modelPath];
+  if (typeof thresholdOverride === "number" && Number.isFinite(thresholdOverride)) {
+    args.push("--threshold", thresholdOverride.toFixed(3));
+  }
+
+  wakeProcess = spawn(binPath, args, {
     stdio: ["pipe", "pipe", "pipe"],
   });
 
@@ -198,6 +213,10 @@ export async function startWakeWordListener(
       }
 
       if (trimmed === "WAKE:detected") {
+        if (suspended) {
+          pipeLog("protege-wake", "wake suppressed (mic suspended during bot speech)");
+          continue;
+        }
         if (strictMode && lastWakeAvg < STRICT_AVG_THRESHOLD) {
           pipeLog(
             "protege-wake",
@@ -205,11 +224,13 @@ export async function startWakeWordListener(
           );
           continue;
         }
-        // Wake word heard — binary is now recording
-        wakeAudioChunks = []; // clear any stale data
+        wakeAudioChunks = [];
         onWakeDetected?.();
       } else if (trimmed === "RECORDING:stopped") {
-        // Silence after speech — audio is ready
+        if (suspended) {
+          pipeLog("protege-wake", "recording stop suppressed (mic suspended)");
+          continue;
+        }
         onWakeRecordingStopped?.();
       }
     }
@@ -246,6 +267,71 @@ export function collectWakeAudio(): Buffer {
   wav.writeUInt32LE(wav.length - 8, 4);
   wav.writeUInt32LE(wav.length - 44, 40);
   return wav;
+}
+
+/* ================================================================
+   Calibration mode — record a single utterance, score against the
+   wake-word pipeline, return the peak probability. Used by the
+   onboarding flow to pick a per-user threshold.
+   ================================================================ */
+
+/** Record one utterance using the binary's built-in VAD auto-stop. Returns a
+ *  WAV buffer (16kHz mono 16-bit PCM). Throws if no speech is detected. */
+export async function recordSingleUtterance(extensionPath: string, timeoutMs = 8000): Promise<Buffer> {
+  const binPath = getBinaryPath(extensionPath);
+  if (!fs.existsSync(binPath)) throw new Error(`Voice binary not found: ${binPath}`);
+
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let errLog = "";
+    const proc = spawn(binPath, [], { stdio: ["pipe", "pipe", "pipe"] });
+
+    const timeout = setTimeout(() => {
+      proc.kill("SIGKILL");
+      reject(new Error(`recordSingleUtterance: no speech detected within ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    proc.stdout?.on("data", (c: Buffer) => chunks.push(c));
+    proc.stderr?.on("data", (c: Buffer) => { errLog += c.toString(); });
+    proc.on("error", (err) => { clearTimeout(timeout); reject(err); });
+    proc.on("exit", () => {
+      clearTimeout(timeout);
+      const wav = Buffer.concat(chunks);
+      if (wav.length < 44) {
+        reject(new Error(`recordSingleUtterance: empty audio (${errLog.slice(0, 200)})`));
+        return;
+      }
+      wav.writeUInt32LE(wav.length - 8, 4);
+      wav.writeUInt32LE(wav.length - 44, 40);
+      resolve(wav);
+    });
+  });
+}
+
+/** Run the wake-word pipeline on a WAV file. Returns the peak probability
+ *  (0–1) reported by the binary via `CALIBRATE_PEAK=<f32>` on stdout. */
+export async function scoreWavAgainstWakeModel(extensionPath: string, wavPath: string): Promise<number> {
+  const binPath = getBinaryPath(extensionPath);
+  const modelPath = getModelPath(extensionPath);
+  if (!fs.existsSync(binPath)) throw new Error(`Voice binary not found: ${binPath}`);
+  if (!fs.existsSync(modelPath)) throw new Error(`Model not found: ${modelPath}`);
+
+  return new Promise((resolve, reject) => {
+    let stdout = "";
+    let stderr = "";
+    const proc = spawn(binPath, ["--calibrate", wavPath, "--model", modelPath], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    proc.stdout?.on("data", (c: Buffer) => { stdout += c.toString(); });
+    proc.stderr?.on("data", (c: Buffer) => { stderr += c.toString(); });
+    proc.on("error", reject);
+    proc.on("exit", (code) => {
+      if (code !== 0) { reject(new Error(`calibrate exit ${code}: ${stderr.slice(0, 300)}`)); return; }
+      const m = stdout.match(/CALIBRATE_PEAK=([\d.]+)/);
+      if (!m) { reject(new Error(`no CALIBRATE_PEAK in stdout: ${stdout.slice(0, 200)}`)); return; }
+      resolve(parseFloat(m[1]));
+    });
+  });
 }
 
 /* ================================================================

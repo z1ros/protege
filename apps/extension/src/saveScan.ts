@@ -27,7 +27,7 @@ import type { Anchor, Suggestion } from "./reviewEngine.js";
  * and Ghost render them without any surface changes.
  *
  * On-device-friendly: keeps neighbor context budget small (5 files max,
- * top 40 lines each) so Qwen 1.5B can chew it in ~3-5s.
+ * top 40 lines each) so Qwen 7B can chew it in ~8-15s.
  */
 
 // ---- Tuning ----
@@ -100,7 +100,7 @@ async function run(doc: vscode.TextDocument): Promise<void> {
     const neighbors = await collectNeighborContext(doc);
 
     const prompt = buildPrompt(doc, target, neighbors);
-    const raw = await aiQuery(prompt, 768);
+    const raw = await aiQuery(prompt, 768, { kind: "scan" });
     if (!raw) return;
 
     const findings = parseFindings(raw, doc, neighbors);
@@ -173,16 +173,20 @@ function buildPrompt(
           )
           .join("\n\n");
 
-  return `You are a senior code reviewer auditing a file plus its immediate neighbors. Find issues that span MULTIPLE lines (a whole function) or MULTIPLE files (usage / provider / contract mismatches). SKIP one-line nits — those are caught elsewhere.
+  return `You are a senior code reviewer AND a teaching mentor. Audit a file plus its immediate neighbors and find issues that span MULTIPLE lines (a whole function) or MULTIPLE files (usage / provider / contract mismatches). SKIP one-line nits — those are caught elsewhere.
 
 Return ONLY a JSON array. Each item is an object with:
 - "line": 1-based start line IN THE TARGET FILE
 - "endLine": 1-based end line in the target file (same as "line" for single-line; larger for block issues)
 - "severity": "warn" | "perf" | "info"
 - "scope": "block" (within the target file, spans multiple lines) OR "flow" (involves a neighbor)
-- "message": one plain-English sentence describing the issue
+- "ruleId": short kebab-case id (e.g. "provider-mismatch", "prop-drilling")
+- "label": 3–5 word tag for an inline decoration (e.g. "provider mismatch", "prop drilling")
+- "message": one concise sentence stating what's wrong
+- "teaser": one-sentence WHY this matters (≤ 100 chars), phrased differently from "message"
+- "lesson": exactly 2 sentences. What's wrong + what to do instead. No analogies, no metaphors, no preamble.
+- "voiceScript": 40–55 words plain spoken English for TTS. Direct and factual. No metaphors, no "imagine if", no "let me explain". Open with what's wrong, close with the fix.
 - "fix": OPTIONAL replacement text for the target-file range (only if you're confident)
-- "ruleId": short kebab-case id
 - "anchors": OPTIONAL array of { "file": "<relative path of a neighbor>", "line": <1-based>, "label": "<why this line matters>" } — ONLY for scope="flow"
 
 Rules:
@@ -218,6 +222,10 @@ interface RawFinding {
   message: string;
   fix?: string;
   ruleId?: string;
+  label?: string;
+  teaser?: string;
+  lesson?: string;
+  voiceScript?: string;
   anchors?: Array<{ file?: string; line?: number; label?: string }>;
 }
 
@@ -268,8 +276,11 @@ function parseFindings(
     if (Array.isArray(item.anchors)) {
       for (const a of item.anchors) {
         if (!a || typeof a.file !== "string" || typeof a.line !== "number") continue;
+        // Alias the narrowed string so the closure below doesn't re-widen
+        // `a.file` back to `string | undefined` across the function boundary.
+        const aFile: string = a.file;
         const match = neighbors.find(
-          (n) => n.relPath === a.file || n.fsPath.endsWith(a.file)
+          (n) => n.relPath === aFile || n.fsPath.endsWith(aFile)
         );
         if (!match) continue;
         anchors.push({
@@ -280,12 +291,26 @@ function parseFindings(
       }
     }
 
+    const ruleId = (item.ruleId || `save-${scope}`).trim();
+    const message = item.message.trim();
+    // Prefer model-emitted rich teaching fields; fall back to sensible
+    // defaults when the model omits them (older prompts, truncated JSON).
+    const label = item.label?.trim() || ruleId.replace(/[-_]/g, " ").toLowerCase();
+    const teaser =
+      item.teaser?.trim() ||
+      (message.length > 100 ? message.slice(0, 99) + "…" : message);
+    const lesson = item.lesson?.trim() || message;
+    const voiceScript = item.voiceScript?.trim() || message;
     const suggestion: Suggestion = {
       range: new vscode.Range(rangeStart, rangeEnd),
-      message: item.message.trim(),
+      message,
       severity: item.severity,
-      ruleId: (item.ruleId || `save-${scope}`).trim(),
+      ruleId,
       fix: item.fix?.trim() || undefined,
+      label,
+      teaser,
+      lesson,
+      voiceScript,
       scope: anchors.length > 0 ? "flow" : scope,
       anchors: anchors.length > 0 ? anchors : undefined,
       flowId: anchors.length > 0 ? makeFlowId(doc.uri, startLine) : undefined,

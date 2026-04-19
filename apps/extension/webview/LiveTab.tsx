@@ -43,7 +43,7 @@ interface LastCall {
 }
 
 const BACKEND_LABEL: Record<LastCall["backend"], string> = {
-  "on-device": "Qwen 1.5B (on-device)",
+  "on-device": "Qwen 7B (on-device)",
   haiku: "Claude Haiku 4.5",
   sonnet: "Claude Sonnet 4.5",
 };
@@ -71,6 +71,11 @@ export function LiveTab({ fileName, liveReviewOn, onToggleLiveReview, modelStatu
           ok: msg.ok,
           fallback: msg.fallback,
         });
+      } else if (msg.type === "ai/lastCallCleared") {
+        // User switched backend — drop the stale chip from the prior
+        // backend so the UI doesn't keep showing "last call: Sonnet"
+        // after the user picked On-Device.
+        setLastCall(null);
       }
     });
     return off;
@@ -106,11 +111,42 @@ export function LiveTab({ fileName, liveReviewOn, onToggleLiveReview, modelStatu
       {/* ---- AI Backend ---- */}
       <div className="live-section">
         <div className="live-section-label microcaps">AI Engine</div>
+
+        {/* Max Plan — fast A/B switch between the two backends the Max
+            tier gives you (Qwen 7B on-device + Haiku cloud). One tap to
+            flip, side by side, with the currently-active one highlighted.
+            Keeps the full engine list below for power users. */}
+        <div className="max-plan-switch">
+          <div className="max-plan-label microcaps">
+            Max Plan · quick switch
+          </div>
+          <div className="max-plan-options">
+            <button
+              className={`max-plan-option ${aiBackend === "on-device" ? "active" : ""}`}
+              onClick={() => handleBackendChange("on-device")}
+              title="Qwen 7B running locally on your machine"
+            >
+              <div className="max-plan-option-label">Qwen 7B</div>
+              <div className="max-plan-option-sub">
+                {modelReady ? "on-device · ready" : modelDownloading ? `downloading · ${downloadProgress}%` : "on-device · not loaded"}
+              </div>
+            </button>
+            <button
+              className={`max-plan-option ${aiBackend === "haiku" ? "active" : ""}`}
+              onClick={() => handleBackendChange("haiku")}
+              title="Claude Haiku 4.5 — cloud, ~$0.15/month"
+            >
+              <div className="max-plan-option-label">Haiku 4.5</div>
+              <div className="max-plan-option-sub">cloud · fast</div>
+            </button>
+          </div>
+        </div>
+
         <div className="live-ai-selector">
           <AiOption
             id="auto"
-            label="Auto"
-            description="On-device if ready, cloud fallback"
+            label="Smart Mix"
+            description="Qwen 7B for live scans · Haiku for Explain / Teach / Chat"
             active={aiBackend === "auto"}
             onClick={() => handleBackendChange("auto")}
             badge="recommended"
@@ -118,10 +154,10 @@ export function LiveTab({ fileName, liveReviewOn, onToggleLiveReview, modelStatu
           <AiOption
             id="on-device"
             label="On-Device"
-            description="Qwen 1.5B · free · instant · offline"
+            description="Qwen 7B · free · offline · ~5–10s/scan"
             active={aiBackend === "on-device"}
             onClick={() => handleBackendChange("on-device")}
-            badge={modelReady ? "ready" : modelDownloading ? "downloading" : "~1.1 GB download"}
+            badge={modelReady ? "ready" : modelDownloading ? "downloading" : "~4.7 GB download"}
           />
           <AiOption
             id="haiku"
@@ -130,20 +166,16 @@ export function LiveTab({ fileName, liveReviewOn, onToggleLiveReview, modelStatu
             active={aiBackend === "haiku"}
             onClick={() => handleBackendChange("haiku")}
           />
-          <AiOption
-            id="sonnet"
-            label="Sonnet 4.5"
-            description="Claude · best quality · cloud · ~$1.80/mo"
-            active={aiBackend === "sonnet"}
-            onClick={() => handleBackendChange("sonnet")}
-          />
+          {/* Sonnet temporarily hidden — all cloud calls route to Haiku
+              for the moment. Restore by un-commenting + reverting the
+              coercion in aiBackend.ts / chatRunner.ts. */}
         </div>
         {modelDownloading && !modelReady && (
           <div className="live-download-bar">
             <div className="live-download-label microcaps">
               {downloadProgress >= 100
                 ? "Loading model…"
-                : `Downloading Qwen 1.5B… ${downloadProgress}%`}
+                : `Downloading Qwen 7B… ${downloadProgress}%`}
             </div>
             <div className="live-download-track">
               <div

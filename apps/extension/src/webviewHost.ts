@@ -25,7 +25,9 @@ import {
   isWakeWordListening,
   collectWakeAudio,
   setStrictWakeMode,
+  setWakeSuspended,
 } from "./voiceCapture.js";
+import { getStoredWakeThreshold } from "./wakeWordCalibration.js";
 
 /**
  * Registry so outside code (analyzer, status bar) can broadcast messages
@@ -39,6 +41,16 @@ export function broadcast(msg: HostToWebview) {
       w.postMessage(msg);
     } catch {}
   }
+}
+
+/**
+ * How many Protege webviews are currently mounted (sidebar launcher + any
+ * open Protege editor tabs). Returns 0 when the user has never opened the
+ * Protege panel in this session — useful for features (like voice
+ * explain) that need at least one webview to deliver their output.
+ */
+export function mountedWebviewCount(): number {
+  return mountedWebviews.size;
 }
 
 // Forward on-device model status changes to every mounted webview so the
@@ -274,11 +286,29 @@ export function mountProtegeWebview(
         const stopErr = err instanceof Error ? err.message : String(err);
         post(webview, { type: "voice/error", error: stopErr });
       }
+    } else if (msg.type === "voice/playbackDone") {
+      // If this was a teach_step clip (has requestId), resolve the tool's
+      // awaiter so Claude can issue the next step. Otherwise it was a
+      // Ghost Lens voice explanation — pass it to the ghostMentor chip swap.
+      if (msg.requestId) {
+        const { resolvePlayback } = await import("./teachingStep.js");
+        resolvePlayback(msg.requestId, msg.reason);
+      } else {
+        const { onVoicePlaybackDone } = await import("./ghostMentor.js");
+        void onVoicePlaybackDone(msg.reason);
+      }
     } else if (msg.type === "voice/speaking") {
-      // While the bot speaks, switch wake detection to "strict" mode —
-      // a clear "Protege" will still barge in, but random noise and the
-      // bot's own voice bleeding through the mic will not.
-      setStrictWakeMode(!!msg.active);
+      // Bot starts speaking → fully suspend the wake listener. No wake
+      // events, no recordings. Bot voice bleeding back through the mic
+      // cannot self-trigger the loop ("Oh yeah you brought the book…").
+      // Bot finishes → wait 500ms for speaker decay, then un-suspend.
+      const active = !!msg.active;
+      setStrictWakeMode(active);
+      if (active) {
+        setWakeSuspended(true);
+      } else {
+        setTimeout(() => setWakeSuspended(false), 500);
+      }
     } else if (msg.type === "wake/toggle") {
       if (isWakeWordListening()) {
         stopWakeWordListener();
@@ -290,36 +320,41 @@ export function mountProtegeWebview(
           // anything. The UI renders a "Warming up wake word…" state
           // until we get WAKE:ready back via onReady.
           post(webview, { type: "wake/state", active: true, status: "loading" });
-          await startWakeWordListener(context.extensionUri.fsPath, {
-            onReady: () => {
-              post(webview, { type: "wake/state", active: true, status: "listening" });
-            },
-            onWake: () => {
-              // Wake word detected — tell webview we're recording
-              post(webview, { type: "voice/recording", active: true });
-              post(webview, { type: "wake/state", active: true, status: "recording" });
-            },
-            onRecordingDone: async () => {
-              // Silence after speech — transcribe and chat
-              try {
-                const wav = collectWakeAudio();
-                post(webview, { type: "voice/recording", active: false });
+          const threshold = getStoredWakeThreshold(context);
+          await startWakeWordListener(
+            context.extensionUri.fsPath,
+            {
+              onReady: () => {
                 post(webview, { type: "wake/state", active: true, status: "listening" });
-                if (wav.length < 1000) return;
-                const text = await transcribe(wav);
-                if (!text.trim()) return;
-                post(webview, { type: "voice/transcript", text });
-                await handleChat(webview, userId, text, "voice");
-              } catch (err) {
-                const errMsg = err instanceof Error ? err.message : String(err);
-                post(webview, { type: "voice/error", error: errMsg });
-              }
+              },
+              onWake: () => {
+                // Wake word detected — tell webview we're recording
+                post(webview, { type: "voice/recording", active: true });
+                post(webview, { type: "wake/state", active: true, status: "recording" });
+              },
+              onRecordingDone: async () => {
+                // Silence after speech — transcribe and chat
+                try {
+                  const wav = collectWakeAudio();
+                  post(webview, { type: "voice/recording", active: false });
+                  post(webview, { type: "wake/state", active: true, status: "listening" });
+                  if (wav.length < 1000) return;
+                  const text = await transcribe(wav);
+                  if (!text.trim()) return;
+                  post(webview, { type: "voice/transcript", text });
+                  await handleChat(webview, userId, text, "voice");
+                } catch (err) {
+                  const errMsg = err instanceof Error ? err.message : String(err);
+                  post(webview, { type: "voice/error", error: errMsg });
+                }
+              },
+              onError: (err) => {
+                post(webview, { type: "wake/state", active: false });
+                post(webview, { type: "voice/error", error: err });
+              },
             },
-            onError: (err) => {
-              post(webview, { type: "wake/state", active: false });
-              post(webview, { type: "voice/error", error: err });
-            },
-          });
+            threshold
+          );
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
           post(webview, { type: "voice/error", error: errMsg });
@@ -418,12 +453,27 @@ function buildEngagePrompt(
   }
 }
 
+/** Trigger phrases that promote a voice chat into "teaching mode" — Claude
+ *  responds with a sequence of teach_step calls (highlight + narration)
+ *  instead of a single prose reply. Conservative on purpose: only clear
+ *  pedagogical asks match, so casual Q&A keeps its current rhythm. */
+const TEACH_INTENT_RE =
+  /\b(teach me|walk me through|show me how|explain this|explain that|explain it|break this down|break it down|help me understand|tutor me|how does this work|step by step)\b/i;
+
 async function handleChat(
   webview: vscode.Webview,
   userId: string,
   message: string,
-  mode: "text" | "voice"
+  mode: "text" | "voice" | "teaching"
 ) {
+  // Auto-promote to teaching mode when the user asks to be taught — but
+  // only when we're already in voice mode (teaching is a voice-only UX;
+  // it requires TTS to pace the highlights).
+  let effectiveMode: "text" | "voice" | "teaching" = mode;
+  if (mode === "voice" && TEACH_INTENT_RE.test(message)) {
+    effectiveMode = "teaching";
+  }
+
   // Wipe any lingering highlight decorations from a previous turn. The
   // model may paint new ones during this run via highlight_code, but we
   // always start each turn on a fresh canvas — fixes the "highlights stay
@@ -454,7 +504,7 @@ async function handleChat(
           });
         },
       },
-      { mode }
+      { mode: effectiveMode }
     );
     const assistant: ChatMessage = {
       id: crypto.randomUUID(),
@@ -509,7 +559,11 @@ function renderHtml(
     vscode.Uri.joinPath(base, "assets", "index.css")
   );
   const nonce = getNonce();
-  const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline' https://fonts.googleapis.com; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} data: blob:; font-src ${webview.cspSource} https://fonts.gstatic.com; connect-src ${webview.cspSource} http://localhost:8787 http://127.0.0.1:8787; media-src ${webview.cspSource} blob: data: http://localhost:8787 http://127.0.0.1:8787;`;
+  // `wasm-unsafe-eval` is required for Shiki's Oniguruma grammar engine
+  // (TextMate regex compiled to WebAssembly). Without it the webview's
+  // CSP silently kills the syntax-highlight pipeline and every code block
+  // renders as monochrome plain text.
+  const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline' https://fonts.googleapis.com; script-src 'nonce-${nonce}' 'wasm-unsafe-eval'; img-src ${webview.cspSource} data: blob:; font-src ${webview.cspSource} https://fonts.gstatic.com; connect-src ${webview.cspSource} http://localhost:8787 http://127.0.0.1:8787; media-src ${webview.cspSource} blob: data: http://localhost:8787 http://127.0.0.1:8787;`;
 
   return `<!DOCTYPE html>
 <html lang="en">

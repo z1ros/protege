@@ -56,6 +56,22 @@
      background (grid, cinematic plate, gradients). */
   backdrop-filter: blur(14px) saturate(140%);
   -webkit-backdrop-filter: blur(14px) saturate(140%);
+  /* Critical for block content (code blocks, lists) inside the bubble:
+     min-width: 0 lets the flex child shrink below its content's intrinsic
+     width, max-width: 100% caps it at the parent's max-width, and the
+     overflow keeps long unbreakable tokens from forcing the bubble wider
+     than 94% of the chat panel. Without these, a wide code line stretched
+     the user bubble across the entire chat. */
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+/* Markdown wrapper resets the bubble's pre-wrap so the rendered HTML
+   (which already has structural whitespace) doesn't double up on blank
+   lines between paragraphs. Pre-wrap stays in effect for non-md content
+   and inside `<pre>` blocks (which set their own white-space). */
+.msg .content .md {
+  white-space: normal;
 }
 .msg-user .content {
   background: linear-gradient(
@@ -79,7 +95,14 @@
     0 4px 20px rgba(0, 0, 0, 0.25),
     0 1px 0 0 rgba(var(--text-rgb), 0.06) inset;
 }
-.msg .content code {
+/* Inline code pill — applies ONLY to inline `<code>` elements.
+   Block code lives inside `<pre>` and gets `.md-code-block` styling
+   below. The `:not()` is critical: without it, the block code's outer
+   `<code>` element inherits this inline-pill background, and because
+   `<code>` is `display: inline` by default, the browser paints a
+   separate pill per line-box inside the `<pre>` — what looked like
+   "syntax highlighting failed" was actually this rule leaking. */
+.msg .content code:not(.md-code-block) {
   font-family: var(--font-mono);
   font-size: 12px;
   background: rgba(0, 0, 0, 0.35);
@@ -87,6 +110,35 @@
   border-radius: 4px;
   border: 1px solid var(--glass-border);
 }
+
+/* ==========================================================
+   Code blocks INSIDE user bubbles — collapsed treatment.
+   Synthetic prompts from gutter buttons ("Fix it", "Teach me") embed
+   a code snippet inside what becomes a user message. The default
+   `.md-code-wrap` chrome (navy gradient, scanline, header with copy
+   button) looks like a foreign widget glued onto the blue bubble.
+   Override to a flat, subdued treatment that reads as "code inside a
+   message" instead of "separate panel."
+   ========================================================== */
+.msg-user .md-code-wrap {
+  background: rgba(0, 0, 0, 0.34);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  margin: 8px 0 4px;
+  box-shadow: none;
+}
+.msg-user .md-code-wrap::before { display: none; }
+.msg-user .md-code-header { display: none; }
+.msg-user .md-pre {
+  font-size: 11px;
+  padding: 9px 11px;
+  max-width: 100%;
+  overflow-x: auto;
+}
+/* Tighter paragraph rhythm in user bubbles so the bubble doesn't get
+   monstrously tall when the synthetic prompt has 3-4 paragraphs. */
+.msg-user .md-p { margin: 0 0 6px; }
+.msg-user .md-p:last-child { margin-bottom: 0; }
 
 /* Follow-up chips — real mentor flow: "want me to explain why?" */
 .followups {
@@ -789,17 +841,32 @@
   scrollbar-width: thin;
 }
 
+/* Block code container — sits inside `.md-pre`. `display: block` so it
+   renders as one continuous code area instead of a wrapping inline span
+   (otherwise `<pre>` newlines + inline `<code>` = pill-per-line). */
 .md-pre .md-code-block {
+  display: block;
   background: none;
   border: none;
   padding: 0;
   color: inherit;
+  font-family: inherit;
+  font-size: inherit;
 }
 
-/* Token colors are inlined by Shiki (see webview/syntax/orbit-theme.ts).
-   Only the default text color for unhighlighted spans lives here. */
+/* Token colors come from highlight.js's Night Owl theme (imported in
+   main.tsx). The two rules below set the *fallback* text color for
+   unhighlighted spans, so partial-grammar matches still read on the
+   navy gradient. The Night Owl theme paints a slightly off background
+   on `.hljs` elements by default — we suppress that so our existing
+   `.md-code-wrap` Orbit gradient stays the visible surface. */
 .md-code-wrap,
 .md-code-inline { color: #cbd5ea; }
+.md-code-wrap .hljs,
+.md-code-inline.hljs {
+  background: transparent;
+  padding: 0;
+}
 
 /* ==========================================================
    Live Tab — JARVIS mission control
@@ -1006,6 +1073,67 @@
   font-size: 8px;
   letter-spacing: 0.14em;
   margin-top: 8px;
+}
+
+/* ---- Max Plan quick switch ---- */
+/* Two-option side-by-side toggle for fast A/B testing between Qwen 7B
+   and Haiku. Visually distinct from the full engine list below so it
+   reads as a "tier preset" rather than just another option. */
+.max-plan-switch {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  margin-bottom: 10px;
+}
+.max-plan-label {
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.max-plan-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.max-plan-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 12px;
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  color: var(--text-dim);
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.max-plan-option:hover {
+  background: var(--glass-1);
+  color: var(--text-bright);
+}
+.max-plan-option.active {
+  background: rgba(74, 158, 255, 0.14);
+  border-color: rgba(74, 158, 255, 0.55);
+  color: var(--text-bright);
+}
+.max-plan-option-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: inherit;
+}
+.max-plan-option-sub {
+  font-size: 10px;
+  color: var(--text-faint);
+  letter-spacing: 0.02em;
 }
 
 /* ---- AI Engine selector in Live tab ---- */
@@ -1263,8 +1391,7 @@
 }
 .chat-search-clear:hover { color: var(--glow); }
 
-.chat-history-btn,
-.chat-clear-btn {
+.chat-history-btn {
   width: 28px;
   height: 28px;
   display: flex;
@@ -1278,23 +1405,40 @@
   flex-shrink: 0;
   transition: color 150ms ease, background 150ms ease, border-color 150ms ease;
 }
-.chat-history-btn svg,
-.chat-clear-btn svg {
-  width: 14px;
-  height: 14px;
-}
-.chat-history-btn:hover,
-.chat-clear-btn:hover {
+.chat-history-btn svg { width: 14px; height: 14px; }
+.chat-history-btn:hover {
   color: var(--glow);
   background: var(--glass-1);
   border-color: var(--glass-border);
 }
-.chat-history-btn.active {
-  color: var(--glow);
-  background: var(--glass-2);
-  border-color: var(--glass-border-strong);
+
+/* "+ New chat" pill — slightly more prominent than the history icon,
+   since starting a new chat is the main call-to-action up there. */
+.chat-new-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px 5px 8px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 7px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 140ms, border-color 140ms, color 140ms, transform 140ms;
 }
-.chat-clear-btn:hover { color: var(--rose); }
+.chat-new-btn svg { width: 13px; height: 13px; }
+.chat-new-btn:hover {
+  background: rgba(var(--electric-rgb), 0.14);
+  border-color: rgba(var(--electric-rgb), 0.4);
+  color: var(--electric-soft);
+  transform: translateY(-1px);
+}
+.chat-new-btn:active { transform: translateY(0); }
 
 /* Search results dropdown */
 .chat-search-results {
@@ -1372,4 +1516,224 @@
   font-size: 9px;
   color: var(--text-faint);
   letter-spacing: 0.1em;
+}
+
+/* ==========================================================
+   ChatHistoryPanel — full-height browse view, rendered in place of
+   the messages + composer when the user clicks the history icon.
+   Styled to feel like a continuation of the chat body, NOT a floating
+   card: no border, no margin, no card background — flush with whatever
+   surface the chat area uses so nothing jumps visually when the user
+   opens/closes history.
+   ========================================================== */
+.chat-history-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+  animation: chp-in 200ms cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+@keyframes chp-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Head — matches the vertical rhythm of the chat search bar above it:
+   same 22 px gutter as `.messages` uses, thin separator below. */
+.chp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 22px 12px;
+  border-bottom: 1px solid var(--glass-border);
+}
+.chp-head-main {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+.chp-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text);
+}
+.chp-meta {
+  color: var(--text-faint);
+  white-space: nowrap;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+}
+.chp-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.chp-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-faint);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 140ms, background 140ms, border-color 140ms;
+}
+.chp-action svg { width: 13px; height: 13px; }
+.chp-action:hover {
+  color: var(--glow);
+  background: var(--glass-1);
+  border-color: var(--glass-border);
+}
+.chp-action-primary {
+  background: rgba(var(--electric-rgb), 0.1);
+  border-color: rgba(var(--electric-rgb), 0.3);
+  color: var(--electric-soft);
+}
+.chp-action-primary:hover {
+  background: rgba(var(--electric-rgb), 0.18);
+  border-color: rgba(var(--electric-rgb), 0.5);
+  color: var(--electric-soft);
+}
+.chp-action-danger:hover { color: var(--rose); }
+.chp-action-close { padding: 5px 7px; }
+
+/* Body — matches `.messages` padding (22 22 12) so the history list
+   aligns left-edge with chat messages underneath when user closes. */
+.chp-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 22px 20px;
+  scrollbar-width: thin;
+}
+.chp-body::-webkit-scrollbar { width: 8px; }
+.chp-body::-webkit-scrollbar-track { background: transparent; }
+.chp-body::-webkit-scrollbar-thumb {
+  background: var(--glass-2);
+  border-radius: 10px;
+}
+
+.chp-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 48px 24px;
+  color: var(--text-faint);
+}
+.chp-empty-title {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+.chp-empty-sub {
+  margin: 0;
+  font-size: 11.5px;
+  max-width: 320px;
+  line-height: 1.5;
+}
+
+.chp-day {
+  margin-top: 22px;
+}
+.chp-day:first-child { margin-top: 0; }
+
+/* Day section header — styled like an editorial "date divider" with a
+   thin rule trailing off to the right; sticky so the current day stays
+   visible while you scroll past it. Matches microcaps tone used
+   elsewhere in the app (STREAK section subs, LAST 365 DAYS, etc). */
+.chp-day-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  margin-bottom: 4px;
+  background: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+.chp-day-head::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--glass-border);
+}
+.chp-day-label {
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.chp-day-count {
+  color: var(--text-faint);
+  letter-spacing: 0.1em;
+}
+
+.chp-day-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* Message row — flush, zero-chrome. Hover reveals a faint glass tint
+   instead of a bordered box, so the list feels like chat history, not a
+   table of rows. Role tag in microcaps matches the chat bubble's .role. */
+.chp-msg {
+  display: grid;
+  grid-template-columns: 58px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 120ms;
+}
+.chp-msg:hover { background: var(--glass-1); }
+.chp-msg-role {
+  font-size: 9px;
+  color: var(--text-faint);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+.chp-msg-user .chp-msg-role { color: var(--electric-soft); }
+.chp-msg-snippet {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.45;
+}
+.chp-msg:hover .chp-msg-snippet { color: var(--text); }
+.chp-msg-time {
+  color: var(--text-faint);
+  font-size: 10px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
 }

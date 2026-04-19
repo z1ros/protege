@@ -2,24 +2,33 @@ import React, { useState, useMemo } from "react";
 import type { ChatMessage } from "@protege/types";
 
 /**
- * Chat search bar + history browser.
+ * Chat search bar — sits above the messages area.
  *
- * Sits above the messages area. Features:
- *   - Search input that filters messages in real-time
- *   - Day grouping headers (Today, Yesterday, Apr 14...)
- *   - Result count + jump-to-message on click
- *   - Clear history button
+ * Layout (left → right):
+ *   - Search input (filters messages in real-time; dropdown shows matches)
+ *   - "+ New chat" pill (starts a fresh chat; preserves history)
+ *   - Clock icon (opens the full-height history panel)
+ *
+ * Design choice: the old inline history-browse dropdown was removed. The
+ * history button now signals up via `onOpenHistory` so the PARENT can
+ * render a full-height `ChatHistoryPanel` in place of the messages +
+ * composer — way more room to browse past conversations.
  */
 
 interface Props {
   messages: ChatMessage[];
   onJumpTo: (id: string) => void;
-  onClearHistory: () => void;
+  onOpenHistory: () => void;
+  onNewChat: () => void;
 }
 
-export function ChatSearchBar({ messages, onJumpTo, onClearHistory }: Props) {
+export function ChatSearchBar({
+  messages,
+  onJumpTo,
+  onOpenHistory,
+  onNewChat,
+}: Props) {
   const [query, setQuery] = useState("");
-  const [expanded, setExpanded] = useState(false);
 
   const results = useMemo(() => {
     if (!query.trim()) return [];
@@ -38,35 +47,6 @@ export function ChatSearchBar({ messages, onJumpTo, onClearHistory }: Props) {
       .reverse()
       .slice(0, 20);
   }, [query, messages]);
-
-  // Group messages by day for the history browser
-  const dayGroups = useMemo(() => {
-    if (!expanded || query) return [];
-    const groups = new Map<string, ChatMessage[]>();
-    for (const m of messages) {
-      const date = m.createdAt.slice(0, 10);
-      if (!groups.has(date)) groups.set(date, []);
-      groups.get(date)!.push(m);
-    }
-    const today = new Date().toISOString().slice(0, 10);
-    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-    return [...groups.entries()]
-      .sort((a, b) => b[0].localeCompare(a[0]))
-      .map(([date, msgs]) => ({
-        date,
-        label:
-          date === today
-            ? "Today"
-            : date === yesterday
-              ? "Yesterday"
-              : new Date(date + "T00:00:00").toLocaleDateString(undefined, {
-                  month: "short",
-                  day: "numeric",
-                }),
-        count: msgs.length,
-        firstId: msgs[0].id,
-      }));
-  }, [expanded, query, messages]);
 
   return (
     <div className="chat-search-wrap">
@@ -88,10 +68,7 @@ export function ChatSearchBar({ messages, onJumpTo, onClearHistory }: Props) {
             type="text"
             placeholder="Search chat history..."
             value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              if (e.target.value) setExpanded(false);
-            }}
+            onChange={(e) => setQuery(e.target.value)}
           />
           {query && (
             <button
@@ -104,30 +81,30 @@ export function ChatSearchBar({ messages, onJumpTo, onClearHistory }: Props) {
           )}
         </div>
         <button
-          className={`chat-history-btn ${expanded ? "active" : ""}`}
-          onClick={() => {
-            setExpanded(!expanded);
-            setQuery("");
-          }}
-          title={expanded ? "Close history" : "Browse history"}
+          className="chat-new-btn"
+          onClick={onNewChat}
+          title="Start a new chat"
+          aria-label="New chat"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 4v16M4 12h16" />
+          </svg>
+          <span>New chat</span>
+        </button>
+        <button
+          className="chat-history-btn"
+          onClick={onOpenHistory}
+          title="Browse chat history"
+          aria-label="Open history"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <circle cx="12" cy="12" r="10" />
             <path d="M12 6v6l4 2" />
           </svg>
         </button>
-        <button
-          className="chat-clear-btn"
-          onClick={onClearHistory}
-          title="Clear all history"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
-          </svg>
-        </button>
       </div>
 
-      {/* Search results */}
+      {/* Search results dropdown — inline, brief, jump-to-message */}
       {query && results.length > 0 && (
         <div className="chat-search-results">
           <div className="chat-search-count microcaps">
@@ -154,30 +131,6 @@ export function ChatSearchBar({ messages, onJumpTo, onClearHistory }: Props) {
       {query && results.length === 0 && (
         <div className="chat-search-results">
           <div className="chat-search-empty">No results for "{query}"</div>
-        </div>
-      )}
-
-      {/* History browser — grouped by day */}
-      {expanded && !query && dayGroups.length > 0 && (
-        <div className="chat-search-results">
-          <div className="chat-search-count microcaps">
-            {messages.length} messages across {dayGroups.length} day{dayGroups.length === 1 ? "" : "s"}
-          </div>
-          {dayGroups.map((g) => (
-            <button
-              key={g.date}
-              className="chat-history-day"
-              onClick={() => {
-                onJumpTo(g.firstId);
-                setExpanded(false);
-              }}
-            >
-              <span className="chat-history-day-label">{g.label}</span>
-              <span className="chat-history-day-count microcaps">
-                {g.count} message{g.count === 1 ? "" : "s"}
-              </span>
-            </button>
-          ))}
         </div>
       )}
     </div>

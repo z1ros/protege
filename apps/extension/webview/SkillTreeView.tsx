@@ -123,6 +123,40 @@ export function SkillTreeView({ concepts, onSwitchToMap }: Props) {
   }, [concepts, domains]);
 
   const searchLower = search.toLowerCase();
+  const filterActive = levelFilter !== "all" || !!searchLower;
+
+  // --- Unified filter helpers ---------------------------------------
+  // levelFilter acts at the skill level; search matches skill names OR
+  // any enclosing label. Higher containers hide if no descendant matches.
+
+  const skillLevelMatches = (skillName: string): boolean => {
+    if (levelFilter === "all") return true;
+    const match = effectiveConcepts.find((c) => fuzzyMatch(c, skillName));
+    if (levelFilter === "mastered") return !!match && match.mastery >= 0.7;
+    if (levelFilter === "learning") return !!match && match.mastery < 0.7;
+    if (levelFilter === "undiscovered") return !match;
+    return true;
+  };
+
+  const skillPasses = (
+    skillName: string,
+    topicLabel: string,
+    domainLabel: string
+  ): boolean => {
+    if (!skillLevelMatches(skillName)) return false;
+    if (!searchLower) return true;
+    return (
+      skillName.toLowerCase().includes(searchLower) ||
+      topicLabel.toLowerCase().includes(searchLower) ||
+      domainLabel.toLowerCase().includes(searchLower)
+    );
+  };
+
+  const topicHasMatch = (topic: TaxTopic, domainLabel: string): boolean =>
+    topic.skills.some((s) => skillPasses(s.name, topic.label, domainLabel));
+
+  const domainHasMatch = (domain: TaxDomain): boolean =>
+    domain.topics.some((t) => topicHasMatch(t, domain.label));
 
   // Pre-compute stats per domain + topic
   const stats = useMemo(() => {
@@ -244,19 +278,13 @@ export function SkillTreeView({ concepts, onSwitchToMap }: Props) {
           const specTotal = specDomains.reduce((s, d) => s + (stats.get(d.id)?.total ?? 0), 0);
           const specPct = specTotal > 0 ? (specDetected / specTotal) * 100 : 0;
 
-          // When searching, skip specialties with no matches
-          if (searchLower) {
-            const hasMatch = specDomains.some(d => d.topics.some(t =>
-              t.skills.some(s =>
-                s.name.toLowerCase().includes(searchLower) ||
-                t.label.toLowerCase().includes(searchLower) ||
-                d.label.toLowerCase().includes(searchLower)
-              )
-            ));
-            if (!hasMatch) return null;
-          }
+          // When any filter is active, hide specialties with no matching
+          // descendants so the user sees a tight filtered list instead of
+          // empty shells they'd have to expand to discover are empty.
+          if (filterActive && !specDomains.some(domainHasMatch)) return null;
 
-          const specExpanded = expandedSpecialties.has(spec.id) || !!searchLower;
+          // Filters auto-expand so matches are visible without clicking.
+          const specExpanded = expandedSpecialties.has(spec.id) || filterActive;
 
           return (
             <div key={spec.id} className="st-specialty">
@@ -284,17 +312,9 @@ export function SkillTreeView({ concepts, onSwitchToMap }: Props) {
           const dStat = stats.get(domain.id);
           if (!dStat) return null;
 
-          const hasMatch = !searchLower || domain.topics.some((t) =>
-            t.skills.some(
-              (s) =>
-                s.name.toLowerCase().includes(searchLower) ||
-                t.label.toLowerCase().includes(searchLower) ||
-                domain.label.toLowerCase().includes(searchLower)
-            )
-          );
-          if (!hasMatch) return null;
+          if (filterActive && !domainHasMatch(domain)) return null;
 
-          const expanded = expandedDomains.has(domain.id) || !!searchLower;
+          const expanded = expandedDomains.has(domain.id) || filterActive;
           const pct = dStat.total > 0 ? (dStat.detected / dStat.total) * 100 : 0;
 
           return (
@@ -328,14 +348,9 @@ export function SkillTreeView({ concepts, onSwitchToMap }: Props) {
                     const tStat = stats.get(topic.id);
                     if (!tStat) return null;
 
-                    const topicMatch = !searchLower || topic.skills.some(
-                      (s) =>
-                        s.name.toLowerCase().includes(searchLower) ||
-                        topic.label.toLowerCase().includes(searchLower)
-                    );
-                    if (!topicMatch) return null;
+                    if (filterActive && !topicHasMatch(topic, domain.label)) return null;
 
-                    const topicExpanded = expandedTopics.has(topic.id) || !!searchLower;
+                    const topicExpanded = expandedTopics.has(topic.id) || filterActive;
                     const tPct = tStat.total > 0 ? (tStat.detected / tStat.total) * 100 : 0;
 
                     return (
@@ -364,14 +379,7 @@ export function SkillTreeView({ concepts, onSwitchToMap }: Props) {
                         {topicExpanded && (
                           <div className="st-skills">
                             {topic.skills
-                              .filter((s) => {
-                                if (searchLower && !s.name.toLowerCase().includes(searchLower)) return false;
-                                const match = effectiveConcepts.find((c) => fuzzyMatch(c, s.name));
-                                if (levelFilter === "mastered" && (!match || match.mastery < 0.7)) return false;
-                                if (levelFilter === "learning" && (!match || match.mastery >= 0.7)) return false;
-                                if (levelFilter === "undiscovered" && match) return false;
-                                return true;
-                              })
+                              .filter((s) => skillPasses(s.name, topic.label, domain.label))
                               .map((skill) => {
                                 const match = effectiveConcepts.find((c) =>
                                   fuzzyMatch(c, skill.name)

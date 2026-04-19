@@ -18,20 +18,12 @@ import { executeTool, buildWorkspaceContext } from "./tools.js";
  * request functions, long after both modules have finished loading.
  */
 function resolveCloudBackend(): ChatBackend {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { getAiBackend } = require("./aiBackend.js") as {
-      getAiBackend: () => "on-device" | "haiku" | "sonnet" | "auto";
-    };
-    const choice = getAiBackend();
-    if (choice === "sonnet") return "sonnet";
-    if (choice === "haiku") return "haiku";
-    // on-device / auto both mean "no cloud preference" from the user; if
-    // we end up here, on-device wasn't available → fall through to haiku.
-    return "haiku";
-  } catch {
-    return "haiku";
-  }
+  // TEMP: Sonnet is disabled across the app — every cloud call routes to
+  // Haiku. The branching below is reduced to "always haiku" so the chat
+  // path matches `aiBackend.ts`'s coercion. To restore Sonnet: bring
+  // back the `getAiBackend()` lookup and the `if (choice === "sonnet")`
+  // branch.
+  return "haiku";
 }
 
 const MAX_TOOL_ROUNDS = 8; // safety cap
@@ -134,12 +126,21 @@ export async function runChat(
  * Used for quick inline operations (fix-it, explain, etc.) where we just need
  * a short text reply and don't want tool execution overhead.
  */
-export async function runSingleQuery(prompt: string): Promise<string> {
+export async function runSingleQuery(
+  prompt: string,
+  opts: { mode?: ChatMode; noTools?: boolean } = {}
+): Promise<string> {
   const body: ChatRunRequest = {
     messages: [],
     newUserMessage: prompt,
-    mode: "text",
+    mode: opts.mode ?? "text",
     backend: resolveCloudBackend(),
+    // Default to disabling tools for one-shot queries. Without this, Claude
+    // may respond with a tool call (e.g. read_file) instead of the JSON/
+    // string we're waiting for — and the one-shot loop can't consume tool
+    // rounds, so the caller would get "" and silently fail (see reviewEngine
+    // → "scan ran but 0 suggestions" mystery).
+    noTools: opts.noTools ?? true,
   };
 
   const res = await fetch(`${BACKEND_URL}/chat`, {

@@ -1,0 +1,58 @@
+model_name: protege
+
+target_phrases:
+  - "protezhay"
+  - "pro teh zhay"
+  - "protege"
+
+n_samples: 10000
+n_samples_val: 2000
+n_background_samples: 1500
+n_background_samples_val: 400
+tts_batch_size: 30
+
+custom_negative_phrases:
+  - "prestige"
+  - "protect"
+  - "protocol"
+  - "prodigy"
+  - "porridge"
+  - "privilege"
+  - "protein"
+  - "protest"
+  - "protegy"
+  - "pretzel"
+  - "patrol"
+  - "portage"
+
+noise_scales: [0.98]
+noise_scale_ws: [0.98]
+length_scales: [0.8, 1.0, 1.2]
+slerp_weights: [0.2, 0.35, 0.5, 0.65, 0.8]
+
+data_dir: ./data
+output_dir: ./output
+
+augmentation:
+  clip_duration: 2.0
+  batch_size: 8
+  rounds: 3
+  background_paths: [./data/backgrounds]
+  rir_paths: [./data/rirs]
+
+model:
+  model_type: conv_attention
+  model_size: small
+
+steps: 30000
+learning_rate: 0.0001
+weight_decay: 0.01
+label_smoothing: 0.05
+max_negative_weight: 2000
+target_fp_per_hour: 0.2
+
+batch_n_per_class:
+  positive: 50
+  adversarial_negative: 50
+  ACAV100M_sample: 1024
+  background_noise: 50

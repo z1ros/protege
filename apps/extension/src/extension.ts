@@ -17,6 +17,13 @@ import { registerLiveReview } from "./liveReview.js";
 import { registerStatusBarLive, updateStatusBarData } from "./statusBarLive.js";
 import { registerUnderlineWhisper } from "./underlineWhisper.js";
 import { registerGhostMentor } from "./ghostMentor.js";
+import { registerTeachingThread } from "./teachingThread.js";
+import { registerSmartFix } from "./smartFix.js";
+// Inline lesson comment surface (the big `/* PROTEGE · ... */` block) is
+// disabled — too much visual chrome stacked above the finding line.
+// Teach now shows the hover popup + plays voice instead. The module
+// stays in tree to make re-enabling a one-line change.
+// import { registerInlineLessonComment } from "./inlineLessonComment.js";
 import { registerWorkspaceIndex } from "./workspaceIndex.js";
 import { registerSaveScan } from "./saveScan.js";
 import { registerFlowScan } from "./flowScan.js";
@@ -29,6 +36,8 @@ import { registerOnDeviceModel } from "./onDeviceModel.js";
 import { initAiBackend, onBackendCall } from "./aiBackend.js";
 import { registerExerciseEngine } from "./exerciseEngine.js";
 import { initChatHistory, disposeChatHistory } from "./chatHistory.js";
+import { runWakeCalibration, hasCompletedWakeCalibration } from "./wakeWordCalibration.js";
+import { stopWakeWordListener, isWakeWordListening } from "./voiceCapture.js";
 
 let output: vscode.OutputChannel;
 
@@ -58,8 +67,12 @@ function broadcastMe(me: MeResponse) {
 }
 
 export async function activate(context: vscode.ExtensionContext) {
-  output = vscode.window.createOutputChannel("Protege");
-  output.appendLine(`[protege] activated — user ${getUserId(context)}`);
+  // Reuse the shared output channel (see ./log.ts). Previously we created a
+  // second channel with the same name here, which made the dropdown show
+  // "Protege" twice and split our logs across them.
+  const { getOutputChannel, log: logLine } = await import("./log.js");
+  output = getOutputChannel();
+  logLine("extension", `activated — user ${getUserId(context)}`);
 
   // ===== Chat history persistence =====
   initChatHistory(context);
@@ -202,6 +215,19 @@ export async function activate(context: vscode.ExtensionContext) {
   // See Architecture/ambient-coach-plan.md — Surfaces 2 + 3.
   const whisperDisposables = registerUnderlineWhisper(context);
   const ghostDisposables = registerGhostMentor(context);
+  // Teaching Thread — the "full lesson" surface. Renders a multi-line
+  // Comment Thread bubble between code lines when the user asks for depth.
+  // Wired into the hover's "Teach me more" button and the ⌘. keybinding.
+  // See Architecture/unified-teaching-surfaces-plan.md.
+  const teachingThreadDisposables = registerTeachingThread(context);
+  // Smart Fix — replaces the pre-stored `fix` string with a fresh Haiku
+  // round-trip when the user clicks Fix. Better quality, worth the ~1s
+  // and ~$0.0001 per click.
+  const smartFixDisposables = registerSmartFix(context);
+  // Inline lesson comment temporarily disabled — too much chrome
+  // stacked above the finding line per user feedback. Hover + voice
+  // carries the lesson now.
+  const lessonCommentDisposables: vscode.Disposable[] = [];
 
   // ===== Tiered scan pipeline =====
   // LIVE (2s debounce, active file) — already in liveReview.ts
@@ -228,6 +254,9 @@ export async function activate(context: vscode.ExtensionContext) {
     ...liveReviewDisposables,
     ...whisperDisposables,
     ...ghostDisposables,
+    ...teachingThreadDisposables,
+    ...smartFixDisposables,
+    ...lessonCommentDisposables,
     ...workspaceIndexDisposables,
     ...saveScanDisposables,
     ...flowScanDisposables,
@@ -288,6 +317,32 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("protege.showLogs", async () => {
       const { showLogs } = await import("./log.js");
       showLogs();
+    }),
+    vscode.commands.registerCommand("protege.toggleMaxPlanBackend", async () => {
+      // Max Plan quick switch — flips the AI backend between Qwen 7B
+      // (on-device) and Haiku cloud. For A/B testing the two engines
+      // in the Max tier without leaving the editor.
+      const { getAiBackend, setAiBackend } = await import("./aiBackend.js");
+      const current = getAiBackend();
+      const next = current === "on-device" ? "haiku" : "on-device";
+      setAiBackend(next);
+      broadcast({ type: "ai/backend", backend: next });
+      vscode.window.showInformationMessage(
+        next === "on-device"
+          ? "Protege: switched to Qwen 7B (on-device)"
+          : "Protege: switched to Haiku 4.5 (cloud)"
+      );
+    }),
+    vscode.commands.registerCommand("protege.toggleVoiceExplain", async () => {
+      const cfg = vscode.workspace.getConfiguration("protege");
+      const order = ["text", "voice", "both"] as const;
+      const current = (cfg.get<string>("explainMode", "text") as typeof order[number]) ?? "text";
+      const nextIdx = (order.indexOf(current) + 1) % order.length;
+      const next = order[nextIdx];
+      await cfg.update("explainMode", next, vscode.ConfigurationTarget.Global);
+      vscode.window.showInformationMessage(
+        `Protege Explain mode: ${next.toUpperCase()} — click the Ghost Lens "Explain" to try it.`
+      );
     }),
     vscode.commands.registerCommand("protege.toggleFlowScan", async () => {
       const cfg = vscode.workspace.getConfiguration("protege");
@@ -457,8 +512,49 @@ export async function activate(context: vscode.ExtensionContext) {
       if (next === "Quit Cursor") {
         await vscode.commands.executeCommand("workbench.action.quit");
       }
+    }),
+    vscode.commands.registerCommand("protege.calibrateWakeWord", async () => {
+      try {
+        await runWakeCalibration(context);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg === "cancelled") return;
+        vscode.window.showErrorMessage(`Wake word calibration failed: ${msg}`);
+      }
+    }),
+    vscode.commands.registerCommand("protege.restartWakeListener", async () => {
+      const wasActive = isWakeWordListening();
+      if (wasActive) stopWakeWordListener();
+      if (wasActive) {
+        // Webviews listen for `wake/toggle`; easiest way to restart with the
+        // new threshold is to let the user click the mic again. Surface a
+        // hint rather than re-plumbing the toggle from here.
+        vscode.window.showInformationMessage(
+          "Wake listener stopped. Click the mic in the Protege panel to restart with your new threshold."
+        );
+      } else {
+        vscode.window.showInformationMessage(
+          "Wake listener wasn't running — next time you start it, the new threshold will apply."
+        );
+      }
     })
   );
+
+  // First-run wake-word calibration prompt. Only shown once per user, and only
+  // if they haven't calibrated. Non-blocking — user can dismiss and calibrate
+  // later via the command palette.
+  if (!hasCompletedWakeCalibration(context)) {
+    setTimeout(async () => {
+      const choice = await vscode.window.showInformationMessage(
+        "Protege can calibrate its wake word to your voice — 30 seconds, improves detection accuracy. Want to do it now?",
+        "Calibrate",
+        "Later"
+      );
+      if (choice === "Calibrate") {
+        await vscode.commands.executeCommand("protege.calibrateWakeWord");
+      }
+    }, 3000);
+  }
 
   setTimeout(() => {
     vscode.commands.executeCommand("protege.refreshIQ");

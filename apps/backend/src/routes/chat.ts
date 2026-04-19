@@ -137,8 +137,16 @@ chatRoute.post("/", async (c) => {
   // Translate OAITurn[] → Anthropic format
   const { systemText, anthropicMessages } = toAnthropic(messages);
 
+  // One-shot callers (review engine, voice explain) pass `noTools: true`.
+  // Without this flag, Claude can respond with a tool call instead of
+  // text — which the one-shot path can't consume, so the caller sees an
+  // empty reply and the scan produces zero suggestions. The scan prompt
+  // asks for JSON-only, but Claude sometimes "prepares" by calling
+  // read_file before answering. Disabling tools forces a direct reply.
+  const useTools = body.noTools !== true;
+
   console.log(
-    `[protege] /chat provider=anthropic model=${model} requestedBackend=${body.backend ?? "default"} turns=${messages.length} lastRole=${messages.at(-1)?.role}`
+    `[protege] /chat provider=anthropic model=${model} requestedBackend=${body.backend ?? "default"} tools=${useTools ? "on" : "off"} turns=${messages.length} lastRole=${messages.at(-1)?.role}`
   );
 
   const res = await anthropic.messages.create({
@@ -152,7 +160,7 @@ chatRoute.post("/", async (c) => {
         cache_control: { type: "ephemeral" },
       },
     ],
-    tools: TOOL_DEFINITIONS,
+    ...(useTools ? { tools: TOOL_DEFINITIONS } : {}),
     messages: anthropicMessages,
   });
 

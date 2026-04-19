@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useMemo } from "react";
+import React, { useLayoutEffect, useRef, useEffect, useMemo, useState } from "react";
 
 /* ================================================================
    Types
@@ -26,8 +26,29 @@ interface Props {
   longestStreak: number;
 }
 
+/**
+ * Tooltip state stores the hovered *cell's* rectangle inside the heatmap
+ * wrap. The final tooltip position is computed by a layout-effect (see
+ * below) that measures the rendered tooltip and clamps/flips it against
+ * the wrap's edges — so the tooltip always stays visible no matter how
+ * narrow the sidebar is or which day-cell is hovered.
+ */
+interface TooltipState {
+  day: DayEntry;
+  cellLeft: number;
+  cellTop: number;
+  cellWidth: number;
+  cellHeight: number;
+}
+
+interface TooltipPosition {
+  left: number;
+  top: number;
+  flipped: boolean; // true = placed below the cell instead of above
+}
+
 /* ================================================================
-   Mock data
+   Mock data (unchanged — same deterministic seed)
    ================================================================ */
 
 const CONCEPTS = [
@@ -41,12 +62,13 @@ const CONCEPTS = [
 function generateMockData(): DayEntry[] {
   const days: DayEntry[] = [];
   const today = new Date();
-  // Seed a deterministic random so the heatmap doesn't re-shuffle on every render
   let seed = 42;
   const rand = () => { seed = (seed * 16807 + 0) % 2147483647; return (seed - 1) / 2147483646; };
 
   let streak = 0;
-  for (let i = 179; i >= 0; i--) {
+  // 365 days of activity — one full year, same scroll pattern the heatmap
+  // container already handles. (Was 180; widened per user request.)
+  for (let i = 364; i >= 0; i--) {
     const d = new Date(today);
     d.setDate(d.getDate() - i);
     const dateStr = d.toISOString().split("T")[0];
@@ -79,11 +101,14 @@ function generateMockData(): DayEntry[] {
 const MOCK_DATA = generateMockData();
 
 const STREAK_REWARDS: StreakReward[] = [
-  { days: 7,  label: "7-day streak",  reward: "Badge: First Week", unlocked: false },
-  { days: 14, label: "14-day streak", reward: "Priority voice queue", unlocked: false },
-  { days: 30, label: "30-day streak", reward: "10% off next month", unlocked: false },
-  { days: 60, label: "60-day streak", reward: "20% off next month", unlocked: false },
-  { days: 90, label: "90-day streak", reward: "Free month", unlocked: false },
+  { days: 7,   label: "First week", reward: "Badge",           unlocked: false },
+  { days: 14,  label: "Fortnight",  reward: "Priority queue",  unlocked: false },
+  { days: 30,  label: "One month",  reward: "10% off",         unlocked: false },
+  { days: 60,  label: "Two months", reward: "20% off",         unlocked: false },
+  { days: 90,  label: "Quarter",    reward: "Free month",      unlocked: false },
+  { days: 180, label: "Half year",  reward: "30% off",         unlocked: false },
+  { days: 270, label: "Three-quarter", reward: "Two free months", unlocked: false },
+  { days: 365, label: "One year",   reward: "Legend badge",    unlocked: false },
 ];
 
 /* ================================================================
@@ -91,28 +116,20 @@ const STREAK_REWARDS: StreakReward[] = [
    ================================================================ */
 
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-const DOW = ["S","M","T","W","T","F","S"];
+const DOW = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 
-function fmt(dateStr: string) {
+function fmtFull(dateStr: string) {
   const d = new Date(dateStr + "T00:00:00");
-  return `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+  return `${DOW[d.getDay()]}, ${MONTHS[d.getMonth()]} ${d.getDate()}`;
 }
 
-function fmtRelative(dateStr: string) {
-  const d = new Date(dateStr + "T00:00:00");
-  const today = new Date(); today.setHours(0,0,0,0);
-  const diff = Math.round((today.getTime() - d.getTime()) / 86400000);
-  if (diff === 0) return "Today";
-  if (diff === 1) return "Yesterday";
-  if (diff < 7) return DOW[d.getDay()] + ", " + fmt(dateStr);
-  return fmt(dateStr);
-}
-
-function intensity(iq: number) {
-  if (iq === 0) return "day-empty";
-  if (iq <= 2)  return "day-low";
-  if (iq <= 5)  return "day-med";
-  return "day-high";
+/** GitHub-style 5-level intensity scale. */
+function intensity(iq: number): number {
+  if (iq === 0) return 0;
+  if (iq <= 2) return 1;
+  if (iq <= 5) return 2;
+  if (iq <= 8) return 3;
+  return 4;
 }
 
 /* ================================================================
@@ -121,13 +138,61 @@ function intensity(iq: number) {
 
 export function StreakJournal({ currentStreak, longestStreak }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [expandedDay, setExpandedDay] = useState<string | null>(null);
+  const [tooltip, setTooltip] = useState<TooltipState | null>(null);
+  const [tooltipPos, setTooltipPos] = useState<TooltipPosition | null>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const heatmapRef = useRef<HTMLDivElement>(null);
 
+  /**
+   * After the tooltip commits with new content, measure it and place it
+   * such that it (a) prefers to sit ABOVE the cell, flipping BELOW when
+   * there's not enough room above, and (b) stays inside the heatmap
+   * wrap horizontally — clamping to the edges on tight sidebars.
+   *
+   * Runs in useLayoutEffect so positioning happens synchronously before
+   * paint, avoiding a one-frame flash of the tooltip at a stale position.
+   */
+  useLayoutEffect(() => {
+    if (!tooltip) {
+      setTooltipPos(null);
+      return;
+    }
+    const el = tooltipRef.current;
+    const wrap = heatmapRef.current;
+    if (!el || !wrap) return;
+
+    const wrapW = wrap.offsetWidth;
+    const wrapH = wrap.offsetHeight;
+    const ttW = el.offsetWidth;
+    const ttH = el.offsetHeight;
+    const PAD = 6;
+    const GAP = 8;
+
+    const cellCenterX = tooltip.cellLeft + tooltip.cellWidth / 2;
+
+    // Horizontal: center on the cell, then clamp inside the wrap
+    let left = cellCenterX - ttW / 2;
+    if (left + ttW > wrapW - PAD) left = wrapW - ttW - PAD;
+    if (left < PAD) left = PAD;
+
+    // Vertical: above by default; flip below if no room
+    let top = tooltip.cellTop - ttH - GAP;
+    let flipped = false;
+    if (top < PAD) {
+      flipped = true;
+      top = tooltip.cellTop + tooltip.cellHeight + GAP;
+      if (top + ttH > wrapH - PAD) top = wrapH - ttH - PAD;
+    }
+
+    setTooltipPos({ left, top, flipped });
+  }, [tooltip]);
+
+  // Scroll to most recent week on mount
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollLeft = scrollRef.current.scrollWidth;
   }, []);
 
-  // Weeks for heatmap
+  // Weeks + month labels for heatmap
   const { weeks, monthLabels } = useMemo(() => {
     const ws: DayEntry[][] = [];
     let cur: DayEntry[] = [];
@@ -153,12 +218,11 @@ export function StreakJournal({ currentStreak, longestStreak }: Props) {
     return { weeks: ws, monthLabels: ml };
   }, []);
 
-  const recentActive = MOCK_DATA.filter(d => d.active).slice(-10).reverse();
   const totalActive = MOCK_DATA.filter(d => d.active).length;
   const totalIq = MOCK_DATA.reduce((s, d) => s + d.iqGained, 0);
   const avgIqPerDay = totalActive > 0 ? (totalIq / totalActive).toFixed(1) : "0";
 
-  // Streak rewards — mark unlocked based on longest streak
+  // Mark rewards unlocked based on longest streak
   const rewards = STREAK_REWARDS.map(r => ({
     ...r,
     unlocked: longestStreak >= r.days,
@@ -166,69 +230,78 @@ export function StreakJournal({ currentStreak, longestStreak }: Props) {
   const nextReward = rewards.find(r => !r.unlocked);
   const nextRewardProgress = nextReward ? Math.min(1, currentStreak / nextReward.days) : 1;
 
+  // Narrative line below the hero number — single clean sentence.
+  const heroCaption = (() => {
+    if (currentStreak === 0) return "Commit a change today to start a new streak.";
+    if (currentStreak >= longestStreak && longestStreak > 0) return "New personal record";
+    if (longestStreak - currentStreak <= 3 && longestStreak > 0) {
+      const diff = longestStreak - currentStreak;
+      return `${diff} ${diff === 1 ? "day" : "days"} until a new personal best`;
+    }
+    if (nextReward) {
+      const diff = nextReward.days - currentStreak;
+      return `${diff} ${diff === 1 ? "day" : "days"} until ${nextReward.reward.toLowerCase()}`;
+    }
+    return `You've unlocked every milestone — legendary.`;
+  })();
+
   return (
     <div className="streak-journal">
-      {/* ---- Next reward banner ---- */}
-      {nextReward && (
-        <div className="sj-reward-banner">
-          <div className="sj-reward-banner-top">
-            <span className="sj-reward-banner-label">Next reward</span>
-            <span className="sj-reward-banner-target">{nextReward.label}</span>
-          </div>
-          <div className="sj-reward-banner-bar">
-            <div
-              className="sj-reward-banner-fill"
-              style={{ width: `${nextRewardProgress * 100}%` }}
-            />
-          </div>
-          <div className="sj-reward-banner-bottom">
-            <span className="sj-reward-banner-progress">
-              {currentStreak} / {nextReward.days} days
-            </span>
-            <span className="sj-reward-banner-prize">{nextReward.reward}</span>
-          </div>
+      {/* ============ HERO — giant number + flame + narrative ============ */}
+      <section className="sj-hero">
+        <div className="sj-hero-glyph">
+          <StreakGlyph />
         </div>
-      )}
+        <div className="sj-hero-number-wrap">
+          <div className="sj-hero-number">{currentStreak}</div>
+          <div className="sj-hero-unit">day streak</div>
+        </div>
+        <div className="sj-hero-caption">{heroCaption}</div>
 
-      {/* ---- Hero stats ---- */}
-      <div className="sj-hero">
-        <div className="sj-stat">
-          <span className="sj-stat-value sj-fire">{currentStreak}</span>
-          <span className="sj-stat-label">current</span>
+        {/* Mini stat row — 4 compact metrics */}
+        <div className="sj-hero-stats">
+          <div className="sj-mini-stat">
+            <div className="sj-mini-stat-value">{longestStreak}</div>
+            <div className="sj-mini-stat-label">Longest</div>
+          </div>
+          <div className="sj-mini-stat">
+            <div className="sj-mini-stat-value">{totalActive}</div>
+            <div className="sj-mini-stat-label">Active days</div>
+          </div>
+          <div className="sj-mini-stat">
+            <div className="sj-mini-stat-value">+{totalIq}</div>
+            <div className="sj-mini-stat-label">IQ earned</div>
+          </div>
+          <div className="sj-mini-stat">
+            <div className="sj-mini-stat-value">{avgIqPerDay}</div>
+            <div className="sj-mini-stat-label">Avg / day</div>
+          </div>
         </div>
-        <div className="sj-stat">
-          <span className="sj-stat-value">{longestStreak}</span>
-          <span className="sj-stat-label">longest</span>
-        </div>
-        <div className="sj-stat">
-          <span className="sj-stat-value">{totalActive}</span>
-          <span className="sj-stat-label">days</span>
-        </div>
-        <div className="sj-stat">
-          <span className="sj-stat-value">+{totalIq}</span>
-          <span className="sj-stat-label">IQ earned</span>
-        </div>
-        <div className="sj-stat">
-          <span className="sj-stat-value">{avgIqPerDay}</span>
-          <span className="sj-stat-label">avg/day</span>
-        </div>
-      </div>
+      </section>
 
-      {/* ---- Heatmap (GitHub-style, full width) ---- */}
-      <div className="sj-heatmap-full">
-        <div className="sj-heatmap-header">
-          <span className="sj-section-label" style={{ marginBottom: 0 }}>Activity</span>
-        </div>
-        <div className="sj-heatmap-body">
+      {/* ============ ACTIVITY — GitHub-grade heatmap ============ */}
+      <section className="sj-activity">
+        <header className="sj-section-head">
+          <h3>Activity</h3>
+          <span className="sj-section-sub">last 365 days</span>
+        </header>
+        <div className="sj-heatmap" ref={heatmapRef}>
           <div className="sj-day-labels">
-            {DOW.map((l, i) => (
-              <span key={i} className="sj-day-label">{i % 2 === 1 ? l : ""}</span>
-            ))}
+            <span>Mon</span>
+            <span>Wed</span>
+            <span>Fri</span>
           </div>
           <div className="sj-heatmap-scroll" ref={scrollRef}>
-            <div className="sj-month-row">
+            <div
+              className="sj-month-row"
+              style={{ gridTemplateColumns: `repeat(${weeks.length}, 13px)` }}
+            >
               {monthLabels.map((m, i) => (
-                <span key={i} className="sj-month-label" style={{ gridColumnStart: m.weekIdx + 1 }}>
+                <span
+                  key={i}
+                  className="sj-month-label"
+                  style={{ gridColumnStart: m.weekIdx + 1 }}
+                >
                   {m.label}
                 </span>
               ))}
@@ -237,30 +310,27 @@ export function StreakJournal({ currentStreak, longestStreak }: Props) {
               {weeks.map((week, wi) => (
                 <div key={wi} className="sj-week">
                   {week.map((day, di) => {
-                    const hasData = day.date && day.active;
+                    const hasData = !!day.date;
+                    const lvl = intensity(day.iqGained);
                     return (
                       <div
                         key={di}
-                        className={`sj-day ${day.date ? intensity(day.iqGained) : "day-pad"}`}
+                        className={`sj-day sj-day-lvl-${lvl} ${hasData ? "" : "sj-day-pad"}`}
                         onMouseEnter={(e) => {
-                          if (!day.date) return;
-                          const rect = e.currentTarget.getBoundingClientRect();
-                          const wrap = e.currentTarget.closest(".sj-heatmap-full");
+                          if (!hasData) return;
+                          const cell = e.currentTarget.getBoundingClientRect();
+                          const wrap = e.currentTarget.closest(".sj-heatmap");
                           if (!wrap) return;
                           const wrapRect = wrap.getBoundingClientRect();
-                          const tooltip = wrap.querySelector(".sj-heat-tooltip") as HTMLElement;
-                          if (!tooltip) return;
-                          tooltip.style.display = "block";
-                          tooltip.style.left = `${rect.left - wrapRect.left + rect.width / 2}px`;
-                          tooltip.style.top = `${rect.top - wrapRect.top - 6}px`;
-                          tooltip.innerHTML = hasData
-                            ? `<strong>${fmt(day.date)}</strong><br/>+${day.iqGained} IQ · ${day.conceptsUsed} concepts · ${day.filesEdited} files`
-                            : `<strong>${fmt(day.date)}</strong><br/>Rest day`;
+                          setTooltip({
+                            day,
+                            cellLeft: cell.left - wrapRect.left,
+                            cellTop: cell.top - wrapRect.top,
+                            cellWidth: cell.width,
+                            cellHeight: cell.height,
+                          });
                         }}
-                        onMouseLeave={() => {
-                          const wrap = document.querySelector(".sj-heat-tooltip") as HTMLElement;
-                          if (wrap) wrap.style.display = "none";
-                        }}
+                        onMouseLeave={() => setTooltip(null)}
                       />
                     );
                   })}
@@ -268,68 +338,182 @@ export function StreakJournal({ currentStreak, longestStreak }: Props) {
               ))}
             </div>
           </div>
-        </div>
-        <div className="sj-heat-tooltip" style={{ display: "none" }} />
-      </div>
-
-      {/* ---- Rewards ladder ---- */}
-      <div className="sj-section-label">Streak rewards</div>
-      <div className="sj-rewards">
-        {rewards.map((r) => (
-          <div key={r.days} className={`sj-reward-row ${r.unlocked ? "unlocked" : ""}`}>
-            <div className={`sj-reward-dot ${r.unlocked ? "done" : ""}`}>
-              {r.unlocked ? (
-                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 8.5l3 3 7-7" />
-                </svg>
+          {tooltip && (
+            <div
+              ref={tooltipRef}
+              className={`sj-heat-tooltip ${tooltipPos?.flipped ? "sj-tt-below" : ""}`}
+              style={{
+                left: tooltipPos?.left ?? 0,
+                top: tooltipPos?.top ?? 0,
+                // Hide the tooltip for the one frame between "content
+                // committed" and "layout effect measured + positioned it"
+                // so users never see it flash at a stale position.
+                visibility: tooltipPos ? "visible" : "hidden",
+              }}
+            >
+              <div className="sj-tt-date">{fmtFull(tooltip.day.date)}</div>
+              {tooltip.day.active ? (
+                <div className="sj-tt-stats">
+                  <span><strong>+{tooltip.day.iqGained}</strong> IQ</span>
+                  <span>·</span>
+                  <span>{tooltip.day.conceptsUsed} concept{tooltip.day.conceptsUsed !== 1 ? "s" : ""}</span>
+                  <span>·</span>
+                  <span>{tooltip.day.filesEdited} file{tooltip.day.filesEdited !== 1 ? "s" : ""}</span>
+                </div>
               ) : (
-                <span className="sj-reward-dot-num">{r.days}</span>
+                <div className="sj-tt-rest">Rest day</div>
+              )}
+              {tooltip.day.topConcept && (
+                <div className="sj-tt-concept">{tooltip.day.topConcept}</div>
               )}
             </div>
-            <div className="sj-reward-info">
-              <div className="sj-reward-label">{r.label}</div>
-              <div className="sj-reward-prize">{r.reward}</div>
-            </div>
-          </div>
-        ))}
-      </div>
+          )}
+        </div>
+        <footer className="sj-heat-legend">
+          <span>Less</span>
+          <span className="sj-day sj-day-lvl-0" />
+          <span className="sj-day sj-day-lvl-1" />
+          <span className="sj-day sj-day-lvl-2" />
+          <span className="sj-day sj-day-lvl-3" />
+          <span className="sj-day sj-day-lvl-4" />
+          <span>More</span>
+        </footer>
+      </section>
 
-      {/* ---- Journal list ---- */}
-      <div className="sj-section-label">Recent activity</div>
-      <div className="sj-journal">
-        {recentActive.map((day) => (
+      {/* ============ REWARDS — horizontal milestone track ============ */}
+      <section className="sj-rewards-section">
+        <header className="sj-section-head">
+          <h3>Milestones</h3>
+          {nextReward && (
+            <span className="sj-section-sub">
+              {currentStreak} / {nextReward.days} to {nextReward.label.toLowerCase()}
+            </span>
+          )}
+        </header>
+
+        {/* Progress rail — thin electric-blue line with ticked milestones.
+            Fill width uses a piecewise-linear mapping so the bar reliably
+            lands on the current tile position, not a microscopic sliver
+            from straight `streak / 365 * 100`. Each milestone tile sits at
+            its grid-cell center; fill tracks linearly between them. */}
+        <div className="sj-track">
+          <div className="sj-track-rail" />
           <div
-            key={day.date}
-            className={`sj-entry ${expandedDay === day.date ? "expanded" : ""}`}
-            onClick={() => setExpandedDay(expandedDay === day.date ? null : day.date)}
-          >
-            <div className="sj-entry-date">
-              <span className="sj-entry-day">{fmtRelative(day.date)}</span>
-              <div className="sj-entry-right">
-                <span className="sj-entry-iq">+{day.iqGained}</span>
-                {day.streak >= 3 && (
-                  <span className="sj-entry-streak">{day.streak}d</span>
-                )}
-              </div>
-            </div>
-            {expandedDay === day.date && (
-              <div className="sj-entry-detail">
-                <div className="sj-entry-stats">
-                  <span>{day.conceptsUsed} concept{day.conceptsUsed !== 1 ? "s" : ""}</span>
-                  <span className="sj-entry-dot" />
-                  <span>{day.filesEdited} file{day.filesEdited !== 1 ? "s" : ""}</span>
-                  {day.topConcept && (
-                    <>
-                      <span className="sj-entry-dot" />
-                      <span className="sj-entry-concept">{day.topConcept}</span>
-                    </>
-                  )}
-                </div>
-              </div>
-            )}
+            className="sj-track-fill"
+            style={{ width: `${computeTrackFill(currentStreak, rewards)}%` }}
+          />
+          <div className="sj-track-tiles">
+            {(() => {
+              // The "next target" is the first milestone the user has not
+              // yet hit with their current streak (and hasn't unlocked
+              // historically). It's the only tile that gets the electric
+              // accent — everything else stays in the white scale so the
+              // eye lands on what's actually next.
+              const nextTargetIdx = rewards.findIndex(
+                (r) => !r.unlocked && currentStreak < r.days
+              );
+              return rewards.map((r, i) => {
+                const reached = currentStreak >= r.days;
+                const isNext = i === nextTargetIdx;
+                return (
+                  <div
+                    key={r.days}
+                    className={[
+                      "sj-tile",
+                      r.unlocked && "unlocked",
+                      reached && "reached",
+                      isNext && "next",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                  >
+                    <div className="sj-tile-node">
+                      {r.unlocked ? (
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M3 8.5l3 3 7-7" />
+                        </svg>
+                      ) : (
+                        <span className="sj-tile-days">{r.days}</span>
+                      )}
+                    </div>
+                    <div className="sj-tile-meta">
+                      <div className="sj-tile-label">{r.label}</div>
+                      <div className="sj-tile-prize">{r.reward}</div>
+                    </div>
+                  </div>
+                );
+              });
+            })()}
           </div>
-        ))}
-      </div>
+        </div>
+      </section>
     </div>
+  );
+}
+
+/**
+ * Piecewise-linear progress-bar fill percentage that tracks the tile
+ * positions instead of the absolute 0..365 day span. Each tile sits at
+ * its grid-cell center `(i + 0.5) / N`; between tiles the fill advances
+ * proportionally to how far along `currentStreak` is within the segment.
+ */
+function computeTrackFill(currentStreak: number, rewards: StreakReward[]): number {
+  const N = rewards.length;
+  if (N === 0 || currentStreak <= 0) return 0;
+  const tilePos = (i: number) => ((i + 0.5) / N) * 100;
+
+  let lastReached = -1;
+  for (let i = 0; i < N; i++) if (currentStreak >= rewards[i].days) lastReached = i;
+
+  if (lastReached >= N - 1) return 100;
+  if (lastReached < 0) {
+    // Pre-first-milestone: ramp from 0% to tile-0 center.
+    const t = Math.min(1, currentStreak / rewards[0].days);
+    return t * tilePos(0);
+  }
+  const start = rewards[lastReached].days;
+  const end = rewards[lastReached + 1].days;
+  const t = Math.min(1, Math.max(0, (currentStreak - start) / (end - start)));
+  return tilePos(lastReached) + t * (tilePos(lastReached + 1) - tilePos(lastReached));
+}
+
+/**
+ * Streak glyph — thin lightning bolt in electric blue with a soft halo.
+ * Replaces the previous flame (too "emoji" in feel). Same slot in the
+ * hero layout; CSS animation keyframe name is unchanged so styles stay
+ * in sync. Colors match the Orbit brand: no warm tones, pure electric.
+ */
+function StreakGlyph() {
+  return (
+    <svg viewBox="0 0 64 64" width="68" height="68" aria-hidden="true">
+      <defs>
+        <linearGradient id="sj-bolt" x1="50%" y1="0%" x2="50%" y2="100%">
+          <stop offset="0%"  stopColor="#c9dcff" />
+          <stop offset="55%" stopColor="#82b7ff" />
+          <stop offset="100%" stopColor="#4a9eff" />
+        </linearGradient>
+        <radialGradient id="sj-bolt-halo" cx="50%" cy="50%" r="55%">
+          <stop offset="0%"  stopColor="#4a9eff" stopOpacity="0.28" />
+          <stop offset="70%" stopColor="#4a9eff" stopOpacity="0.06" />
+          <stop offset="100%" stopColor="#4a9eff" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+      {/* Soft electric halo behind the bolt */}
+      <circle cx="32" cy="32" r="30" fill="url(#sj-bolt-halo)" />
+      {/* Lightning bolt — classic zap silhouette, centered */}
+      <path
+        d="M36 4 L14 34 L28 34 L24 60 L50 28 L34 28 L40 4 Z"
+        fill="url(#sj-bolt)"
+      />
+      {/* Bright core stroke to give it a cut-glass edge */}
+      <path
+        d="M36 4 L14 34 L28 34 L24 60 L50 28 L34 28 L40 4 Z"
+        fill="none"
+        stroke="#ffffff"
+        strokeWidth="0.8"
+        strokeLinejoin="round"
+        opacity="0.45"
+      />
+    </svg>
   );
 }

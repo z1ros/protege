@@ -21,6 +21,7 @@ import { VoiceMode } from "./VoiceMode.js";
 import { ConceptsTab } from "./ConceptsTab.js";
 import { LiveTab } from "./LiveTab.js";
 import { ChatSearchBar } from "./ChatSearchBar.js";
+import { ChatHistoryPanel } from "./ChatHistoryPanel.js";
 import { CinematicPlate } from "./CinematicPlate.js";
 import { AssistantMarkdown } from "./AssistantMarkdown.js";
 import { Overlay } from "./Overlay.js";
@@ -36,7 +37,6 @@ const SubscriptionPage = lazy(() =>
   import("./SubscriptionPage.js").then((m) => ({ default: m.SubscriptionPage }))
 );
 import {
-  IconFlame,
   IconZap,
   IconBug,
   IconSparkles,
@@ -58,6 +58,142 @@ const QUICK_PROMPTS: Array<{ icon: React.ReactNode; label: string }> = [
   { icon: <IconSparkles size={14} />, label: "How can I improve this code?" },
   { icon: <IconBook size={14} />, label: "Teach me something new" },
 ];
+
+// ---- Voice Explain playback ----
+//
+// Persistent Audio element so browser autoplay policy keeps trust across
+// multiple clips — mirrors the pattern VoiceMode.tsx uses.
+//
+// IMPORTANT: the hover's 🎙 Explain click happens in the *editor*, not
+// inside this webview. By the time `audio.play()` runs here, the webview
+// sees no gesture context and blocks it ("user didn't gesture, can't
+// play audio"). Fix: unlock the audio element on the FIRST click anywhere
+// inside the webview (opening the Protege panel, switching tabs, etc.).
+// After that, programmatic `.play()` calls triggered by host broadcasts
+// work without further interaction.
+//
+// This mirrors VoiceMode.tsx's `unlockAudio()` but wires it globally so
+// every surface that plays a /tts clip benefits from the same grant.
+
+const EXPLAIN_BACKEND_URL =
+  // @ts-expect-error — injected at build time if set, else undefined.
+  (typeof __PROTEGE_BACKEND_URL__ !== "undefined" && __PROTEGE_BACKEND_URL__) ||
+  "http://localhost:8787";
+
+let explainAudio: HTMLAudioElement | null = null;
+let audioUnlocked = false;
+
+/**
+ * Prime the Audio element inside a user gesture so later programmatic
+ * plays (triggered by host broadcasts) aren't blocked by autoplay policy.
+ * Idempotent — safe to call on every click.
+ */
+function unlockExplainAudio(): void {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+  try {
+    // Create + play a tiny silent WAV inside the gesture. The browser
+    // "blesses" the element; future `.play()` calls on it succeed even
+    // when triggered async by a host message.
+    const silentWav =
+      "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=";
+    const persistent = new Audio(silentWav);
+    persistent.volume = 0.01;
+    explainAudio = persistent;
+    persistent.play().catch(() => {
+      // Silent clip may still reject in some environments — that's fine,
+      // the element was still created inside a gesture so it's blessed.
+    });
+  } catch {}
+}
+
+async function playExplainAudio(
+  text: string,
+  voice: "female" | "male",
+  requestId?: string
+): Promise<void> {
+  // Every exit path must tell the host what happened — otherwise the
+  // "🔊 Protege speaking…" chip hangs on the editor until the 15s safety
+  // timer clears it. Previously, TTS fetch failures and autoplay blocks
+  // just warned to console and the chip lingered silently.
+  const reportDone = (reason: "ended" | "error") => {
+    vscode.postMessage({ type: "voice/playbackDone", reason, requestId });
+  };
+
+  if (!text || !text.trim()) {
+    console.warn("[protege] voice/playExplain: empty text, nothing to speak");
+    reportDone("error");
+    return;
+  }
+
+  try {
+    const res = await fetch(`${EXPLAIN_BACKEND_URL}/tts`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text, voice }),
+    });
+    if (res.status === 503) {
+      // Backend is warming Kokoro — first /tts call can take 10–30s to
+      // load the model. VoiceMode.tsx surfaces this as "Warming up…";
+      // here we just log it and fall through to the error chip, which
+      // will prompt the user to retry.
+      console.warn("[protege] voice/playExplain: tts 503 — Kokoro warming up");
+      reportDone("error");
+      return;
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.warn(
+        `[protege] voice/playExplain: tts HTTP ${res.status} — ${body.slice(0, 200)}`
+      );
+      reportDone("error");
+      return;
+    }
+    const blob = await res.blob();
+    if (blob.size === 0) {
+      console.warn("[protege] voice/playExplain: /tts returned empty blob");
+      reportDone("error");
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+
+    if (!explainAudio) explainAudio = new Audio();
+    const audio = explainAudio;
+    const prevUrl = audio.src;
+
+    audio.src = url;
+    audio.volume = 0.9;
+    audio.onended = () => {
+      if (url.startsWith("blob:")) URL.revokeObjectURL(url);
+      reportDone("ended");
+    };
+    audio.onerror = () => {
+      console.warn("[protege] voice/playExplain: audio element error", audio.error);
+      reportDone("error");
+    };
+
+    try {
+      await audio.play();
+    } catch (playErr) {
+      // Autoplay is the usual culprit here. Webview autoplay policy needs
+      // a user gesture INSIDE the webview; a click on the editor's hover
+      // button doesn't count. If this keeps happening, opening the
+      // Protege panel and clicking anywhere inside it "unlocks" audio
+      // for the rest of the session.
+      console.warn(
+        "[protege] voice/playExplain: audio.play() rejected — likely autoplay block or missing audio codec:",
+        playErr
+      );
+      reportDone("error");
+      return;
+    }
+
+    if (prevUrl && prevUrl.startsWith("blob:")) URL.revokeObjectURL(prevUrl);
+  } catch (err) {
+    console.warn("[protege] voice/playExplain failed:", err);
+    reportDone("error");
+  }
+}
 
 export function App() {
   const [mode, setMode] = useState<Mode>("chat");
@@ -104,6 +240,7 @@ export function App() {
   const [scanning, setScanning] = useState(false);
   const [liveMode, setLiveMode] = useState(false);
   const [streakOpen, setStreakOpen] = useState(false);
+  const [chatHistoryOpen, setChatHistoryOpen] = useState(false);
   const [modelStatus, setModelStatus] = useState<{
     ready: boolean;
     loading: boolean;
@@ -188,6 +325,21 @@ export function App() {
         setMode("chat");
         setChatInputMode("text");
         sendMessage(msg.message);
+      } else if (msg.type === "voice/primeConversation") {
+        // Teaching Thread's "Ask" button. Swaps the chat into voice input
+        // mode before priming so the reply streams back in voice-tuned
+        // prose (short, no markdown) and the user can continue the
+        // conversation by just speaking again.
+        setMode("chat");
+        setChatInputMode("voice");
+        sendMessage(msg.message);
+      } else if (msg.type === "voice/playExplain") {
+        // Ghost Lens "Explain" fired in voice mode. The host has already
+        // trimmed the text; we just fetch /tts and play. Uses a single
+        // persistent Audio element so browser autoplay policy keeps trust
+        // across clips (same pattern as VoiceMode).
+        // requestId threads through so teach_step can await a specific clip.
+        void playExplainAudio(msg.text, msg.voice ?? "female", msg.requestId);
       } else if (msg.type === "liveReview/state") {
         setLiveMode(msg.active);
       } else if (msg.type === "ai/modelStatus") {
@@ -302,7 +454,16 @@ export function App() {
   const isEmpty = messages.length === 0;
 
   return (
-    <div className="app">
+    <div
+      className="app"
+      // Prime audio autoplay on the first click anywhere in the webview.
+      // Required for the hover's 🎙 Explain button to play a voice clip:
+      // that click happens in the editor (outside this webview), so the
+      // audio element needs a prior in-webview gesture to be "blessed"
+      // by the browser. Idempotent — subsequent clicks are no-ops.
+      onMouseDown={unlockExplainAudio}
+      onTouchStart={unlockExplainAudio}
+    >
       {toast && (
         <div
           className={`iq-toast toast-${toast.kind ?? "concept"}`}
@@ -346,13 +507,13 @@ export function App() {
           <div className="brand-spacer" />
           <div
             className="status-chip"
-            title={`Code IQ ${codeIq} / ${maxIq}${streak.current > 0 ? ` · ${streak.current}d streak (longest ${streak.longest}d)` : ""}`}
-            onClick={() => streak.current > 0 && setStreakOpen((o) => !o)}
-            style={{ cursor: streak.current > 0 ? "pointer" : "default" }}
+            title={`Code IQ ${codeIq} / ${maxIq}${streak.current > 0 ? ` · ${streak.current}d streak (longest ${streak.longest}d)` : ""} — click for history`}
+            onClick={() => setStreakOpen((o) => !o)}
+            style={{ cursor: "pointer" }}
           >
             {streak.current > 0 && (
               <>
-                <span className="status-flame"><IconFlame size={11} /></span>
+                <span className="status-flame"><IconZap size={11} /></span>
                 <span className="status-streak">{streak.current}d</span>
                 <span className="status-sep" aria-hidden>·</span>
               </>
@@ -484,7 +645,39 @@ export function App() {
 
       </header>
 
-      {mode === "chat" && chatInputMode === "text" ? (
+      {streakOpen ? (
+        <div className="streak-inline">
+          <StreakJournal
+            currentStreak={streak.current}
+            longestStreak={streak.longest}
+          />
+        </div>
+      ) : mode === "chat" && chatInputMode === "text" && chatHistoryOpen ? (
+        <ChatHistoryPanel
+          messages={messages}
+          onJumpTo={(id: string) => {
+            setChatHistoryOpen(false);
+            // Wait one paint for the chat body to remount, then scroll
+            requestAnimationFrame(() => {
+              const el = document.getElementById(`msg-${id}`);
+              if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+            });
+          }}
+          onClose={() => setChatHistoryOpen(false)}
+          onClearAll={() => {
+            if (confirm("Delete all chat history? This cannot be undone.")) {
+              setMessages([]);
+              vscode.postMessage({ type: "chat/clearHistory" });
+              setChatHistoryOpen(false);
+            }
+          }}
+          onNewChat={() => {
+            setMessages([]);
+            vscode.postMessage({ type: "chat/clearHistory" });
+            setChatHistoryOpen(false);
+          }}
+        />
+      ) : mode === "chat" && chatInputMode === "text" ? (
         <>
           {/* ---- Chat search bar + history toggle ---- */}
           {!isEmpty && (
@@ -494,11 +687,10 @@ export function App() {
                 const el = document.getElementById(`msg-${id}`);
                 if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
               }}
-              onClearHistory={() => {
-                if (confirm("Clear all chat history? This cannot be undone.")) {
-                  setMessages([]);
-                  vscode.postMessage({ type: "chat/clearHistory" });
-                }
+              onOpenHistory={() => setChatHistoryOpen(true)}
+              onNewChat={() => {
+                setMessages([]);
+                vscode.postMessage({ type: "chat/clearHistory" });
               }}
             />
           )}
@@ -547,11 +739,12 @@ export function App() {
                       {m.role === "user" ? "You" : "Protege"}
                     </div>
                     <div className="content">
-                      {m.role === "assistant" ? (
-                        <AssistantMarkdown content={clean} />
-                      ) : (
-                        clean
-                      )}
+                      {/* Both roles get full markdown rendering — user
+                          prompts often contain inline backticks, **bold**,
+                          and fenced code (especially when they originate
+                          from gutter buttons like "Fix it"). Rendering
+                          plain text dropped all of that to literal chars. */}
+                      <AssistantMarkdown content={clean} />
                     </div>
                     {followups.length > 0 && !loading && (
                       <div className="followups">
@@ -685,13 +878,6 @@ export function App() {
             </div>
           </footer>
         </>
-      ) : streakOpen ? (
-        <div className="streak-inline">
-          <StreakJournal
-            currentStreak={streak.current}
-            longestStreak={streak.longest}
-          />
-        </div>
       ) : mode === "concepts" ? (
         <ConceptsTab
           codeIq={codeIq}

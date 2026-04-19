@@ -20,6 +20,13 @@ import {
   lerpTransform,
   type Transform,
 } from "./constellationCamera";
+import {
+  computeRosetteOffsets,
+  topicWheelRadius,
+  convexHull,
+  expandHull,
+  type Point,
+} from "./constellationLayout";
 import { ConstellationMinimap } from "./ConstellationMinimap";
 import {
   ConstellationNodeDrawer,
@@ -328,7 +335,9 @@ export function SkillConstellation({ concepts, height: propH, onBackToTree }: Pr
   const linksRef = useRef<SkillLink[]>([]);
   const transformRef = useRef<Transform>({ x: 0, y: 0, k: 1 });
   const dragRef = useRef<{ sx: number; sy: number; tx: number; ty: number } | null>(null);
-  const simRef = useRef<ReturnType<typeof forceSimulation<SkillNode>> | null>(null);
+  // Sim runs on topic-level virtual nodes now (not skills). We only ever
+  // call .stop() on it, so typing as a minimal shape is enough.
+  const simRef = useRef<{ stop(): void } | null>(null);
   // Focused-node pulse (set by fly-to; rendered in draw()).
   const focusedIdRef = useRef<string | null>(null);
   const focusStartRef = useRef<number>(0);
@@ -385,7 +394,18 @@ export function SkillConstellation({ concepts, height: propH, onBackToTree }: Pr
     return () => ro.disconnect();
   }, []);
 
-  // Build + simulate
+  // Build + simulate.
+  //
+  // LANDMARK ORBIT LAYOUT:
+  //   1. Each topic is a **wheel** — notable at center, passives on a ring.
+  //      The wheel geometry is static (see constellationLayout.ts), so
+  //      every topic reads as a predictable shape the eye learns once.
+  //   2. The d3-force simulation runs on TOPIC-LEVEL virtual nodes (not
+  //      individual skills), deciding where each wheel lands on the map.
+  //      Cross-topic collision uses each wheel's outer ring radius.
+  //   3. On every tick we propagate topic.x/y + per-skill rosette offset
+  //      back into skill.x/y so hover-hit-testing, links, drawer, and
+  //      minimap all keep working unchanged.
   useEffect(() => {
     if (simRef.current) simRef.current.stop();
 
@@ -401,8 +421,21 @@ export function SkillConstellation({ concepts, height: propH, onBackToTree }: Pr
     nodesRef.current = nodes;
     linksRef.current = links;
 
-    // Reuse cached positions so filter changes don't reset the whole layout.
-    // Only nodes that have never been placed get circle-spread initial positions.
+    // Group skills by topic — one "topic node" per group drives the sim.
+    interface TopicSimNode extends SimulationNodeDatum {
+      id: string;
+      domain: string;
+      color: string;
+      skillCount: number;
+      radius: number;
+    }
+    const skillsByTopic = new Map<string, SkillNode[]>();
+    for (const n of nodes) {
+      const arr = skillsByTopic.get(n.topic);
+      if (arr) arr.push(n);
+      else skillsByTopic.set(n.topic, [n]);
+    }
+
     const visibleDomains = [...new Set(nodes.map((n) => n.domain))];
     const domainAngle = new Map<string, number>();
     visibleDomains.forEach((d, i) => {
@@ -411,66 +444,107 @@ export function SkillConstellation({ concepts, height: propH, onBackToTree }: Pr
     const spread = Math.min(size.w, size.h) * 0.38;
     const cache = posCache.current;
 
-    for (const n of nodes) {
-      const cached = cache.get(n.id);
-      if (cached) {
-        n.x = cached.x;
-        n.y = cached.y;
-      } else {
-        const a = domainAngle.get(n.domain) ?? 0;
-        n.x = size.w / 2 + Math.cos(a) * spread + (Math.random() - 0.5) * 40;
-        n.y = size.h / 2 + Math.sin(a) * spread + (Math.random() - 0.5) * 40;
-      }
+    // Build topic sim nodes; seed position from cache or from domain angle
+    // so filter changes don't snap the layout around.
+    const topicNodes: TopicSimNode[] = [];
+    // Per-skill rosette offsets — computed ONCE here and reused every tick.
+    const rosetteOffsets = new Map<string, { dx: number; dy: number }>();
+    for (const [topicId, skills] of skillsByTopic) {
+      const first = skills[0];
+      const offsets = computeRosetteOffsets(
+        skills.map((s) => ({ id: s.id, tier: s.tier }))
+      );
+      for (const [skillId, off] of offsets) rosetteOffsets.set(skillId, off);
+
+      const topicKey = `topic:${topicId}`;
+      const cached = cache.get(topicKey);
+      const a = domainAngle.get(first.domain) ?? 0;
+      const initX = cached?.x ?? (size.w / 2 + Math.cos(a) * spread + (Math.random() - 0.5) * 40);
+      const initY = cached?.y ?? (size.h / 2 + Math.sin(a) * spread + (Math.random() - 0.5) * 40);
+      topicNodes.push({
+        id: topicId,
+        domain: first.domain,
+        color: first.color,
+        skillCount: skills.length,
+        radius: topicWheelRadius(skills.length),
+        x: initX,
+        y: initY,
+      });
     }
 
-    const sim = forceSimulation(nodes)
+    // Cross-domain bridge links at the TOPIC level: connect first topic
+    // of each domain so the galaxies aren't isolated islands. Light pull.
+    const domainFirstTopic = new Map<string, string>();
+    for (const tn of topicNodes) {
+      if (!domainFirstTopic.has(tn.domain)) domainFirstTopic.set(tn.domain, tn.id);
+    }
+    interface TopicLink { source: string; target: string }
+    const topicLinks: TopicLink[] = [];
+    const domainIds = [...domainFirstTopic.keys()];
+    for (let i = 1; i < domainIds.length; i++) {
+      const a = domainFirstTopic.get(domainIds[i - 1]);
+      const b = domainFirstTopic.get(domainIds[i]);
+      if (a && b) topicLinks.push({ source: a, target: b });
+    }
+    if (domainIds.length > 2) {
+      const first = domainFirstTopic.get(domainIds[0]);
+      const last = domainFirstTopic.get(domainIds[domainIds.length - 1]);
+      if (first && last) topicLinks.push({ source: first, target: last });
+    }
+
+    const sim = forceSimulation(topicNodes)
       .force(
         "link",
-        forceLink<SkillNode, SkillLink>(links)
+        forceLink<TopicSimNode, SimulationLinkDatum<TopicSimNode>>(
+          topicLinks as never
+        )
           .id((d) => d.id)
-          .distance((l) => {
-            const s = l.source as SkillNode;
-            const t = l.target as SkillNode;
-            return s.topic === t.topic ? 56 : 110;
-          })
-          .strength((l) => {
-            const s = l.source as SkillNode;
-            const t = l.target as SkillNode;
-            return s.topic === t.topic ? 0.5 : 0.08;
-          })
+          .distance(200)
+          .strength(0.05)
       )
-      .force("charge", forceManyBody().strength(-220))
-      .force("center", forceCenter(size.w / 2, size.h / 2))
-      .force("collide", forceCollide<SkillNode>().radius((d) => nodeRadius(d) + 10))
+      .force("charge", forceManyBody<TopicSimNode>().strength(-360))
+      .force("center", forceCenter(size.w / 2, size.h / 2).strength(0.02))
+      .force(
+        "collide",
+        forceCollide<TopicSimNode>().radius((d) => d.radius + 6).iterations(2)
+      )
       .force(
         "domainX",
-        forceX<SkillNode>()
+        forceX<TopicSimNode>()
           .x((d) => {
             const a = domainAngle.get(d.domain) ?? 0;
             return size.w / 2 + Math.cos(a) * spread;
           })
-          .strength(0.09)
+          .strength(0.12)
       )
       .force(
         "domainY",
-        forceY<SkillNode>()
+        forceY<TopicSimNode>()
           .y((d) => {
             const a = domainAngle.get(d.domain) ?? 0;
             return size.h / 2 + Math.sin(a) * spread;
           })
-          .strength(0.09)
+          .strength(0.12)
       )
-      .alphaDecay(0.03)
+      .alphaDecay(0.035)
       .on("tick", () => {
-        // Cache positions + rebuild spatial grid on every tick
+        // Propagate topic positions → each skill's x/y via its rosette
+        // offset. This is what turns the topic sim into per-skill coords.
         const grid = new Map<string, SkillNode[]>();
-        for (const n of nodes) {
-          if (n.x != null && n.y != null) {
-            cache.set(n.id, { x: n.x!, y: n.y! });
-            const key = `${Math.floor(n.x! / GRID_CELL)},${Math.floor(n.y! / GRID_CELL)}`;
+        for (const tn of topicNodes) {
+          if (tn.x == null || tn.y == null) continue;
+          cache.set(`topic:${tn.id}`, { x: tn.x!, y: tn.y! });
+          const skills = skillsByTopic.get(tn.id) ?? [];
+          for (const s of skills) {
+            const off = rosetteOffsets.get(s.id);
+            if (!off) continue;
+            s.x = tn.x! + off.dx;
+            s.y = tn.y! + off.dy;
+            cache.set(s.id, { x: s.x, y: s.y });
+            const key = `${Math.floor(s.x / GRID_CELL)},${Math.floor(s.y / GRID_CELL)}`;
             const cell = grid.get(key);
-            if (cell) cell.push(n);
-            else grid.set(key, [n]);
+            if (cell) cell.push(s);
+            else grid.set(key, [s]);
           }
         }
         gridRef.current = grid;
@@ -590,6 +664,39 @@ export function SkillConstellation({ concepts, height: propH, onBackToTree }: Pr
         ctx.fillText(c.label, cx, cy);
       }
       ctx.restore();
+    }
+
+    // === Domain territories ===
+    // Faint convex-hull polygon behind each domain's nodes. Fills the
+    // map with a sense of "where" — you see "this region is Python,
+    // this region is React" even when zoomed in on a single wheel.
+    // Drawn BEFORE links so connections sit on top of the territory tint.
+    const pointsByDomain = new Map<string, { pts: Point[]; color: string }>();
+    for (const n of nodes) {
+      if (n.x == null || n.y == null || !n.matchesFilter) continue;
+      const entry = pointsByDomain.get(n.domain);
+      if (entry) {
+        entry.pts.push({ x: n.x, y: n.y });
+      } else {
+        pointsByDomain.set(n.domain, { pts: [{ x: n.x, y: n.y }], color: n.color });
+      }
+    }
+    for (const { pts, color } of pointsByDomain.values()) {
+      if (pts.length < 3) continue;
+      const hull = expandHull(convexHull(pts), 28);
+      if (hull.length < 3) continue;
+      const rgb = hexToRgb(color);
+      // Filled region + soft edge glow — keeps the territory readable
+      // without stealing attention from the nodes themselves.
+      ctx.beginPath();
+      ctx.moveTo(hull[0].x, hull[0].y);
+      for (let i = 1; i < hull.length; i++) ctx.lineTo(hull[i].x, hull[i].y);
+      ctx.closePath();
+      ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},0.045)`;
+      ctx.fill();
+      ctx.strokeStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},0.16)`;
+      ctx.lineWidth = 1;
+      ctx.stroke();
     }
 
     // === Links ===
@@ -884,10 +991,10 @@ export function SkillConstellation({ concepts, height: propH, onBackToTree }: Pr
             const ddx = n.x! - mx;
             const ddy = n.y! - my;
             const dist = Math.sqrt(ddx * ddx + ddy * ddy);
-            // Heroes capture within their full medallion + a tolerance;
-            // stars only capture within a small pin radius so the user
-            // doesn't grab random stars while panning through dense regions.
-            const hitR = n.tier === "hero" ? 40 : 6;
+            // Notables (wheel centers/cardinal anchors) capture within
+            // their outer ring + a small tolerance; passives need a tight
+            // pin radius so you don't snag random dust while panning.
+            const hitR = n.tier === "notable" ? 16 : 6;
             if (dist < Math.min(hitR, nearDist)) {
               nearDist = dist;
               nearest = n;
@@ -998,12 +1105,33 @@ export function SkillConstellation({ concepts, height: propH, onBackToTree }: Pr
     [draw]
   );
 
-  /** Frame every currently-matching node in the viewport with padding. */
+  /**
+   * Frame every currently-matching node in the viewport with padding.
+   * `minK: 0.2` lets truly large constellations (155 topic-wheels) zoom
+   * out far enough to actually fit — the previous 0.5 floor was why the
+   * "Home" button appeared to do nothing on fullscreen: the computed
+   * target zoom was clamped, leaving ~80% of the map off-screen.
+   */
   const handleHome = useCallback(() => {
     const visible = nodesRef.current.filter((n) => n.matchesFilter);
-    const target = computeFitAll(visible, size, { padding: 70, minK: 0.5, maxK: 1.4 });
+    const target = computeFitAll(visible, size, { padding: 50, minK: 0.2, maxK: 1.4 });
     animateCameraTo(target, 520);
   }, [animateCameraTo, size]);
+
+  /**
+   * Auto-fit the camera whenever the map boundaries meaningfully change:
+   *   • on first mount (after simulation has had a moment to settle)
+   *   • whenever the user toggles fullscreen (canvas grows 3-5×)
+   *   • on window resize (ResizeObserver bumps size.w/size.h)
+   *
+   * A 650 ms delay lets d3-force position the topic wheels before we
+   * compute the bounding box — fitting pre-settle would frame the
+   * initial circle-spread seed positions, not the final layout.
+   */
+  useEffect(() => {
+    const id = window.setTimeout(() => handleHome(), 650);
+    return () => window.clearTimeout(id);
+  }, [fullscreen, size.w, size.h, handleHome]);
 
   /**
    * Frame a specific set of domains. Deferred one paint so the filter-
@@ -1142,7 +1270,7 @@ export function SkillConstellation({ concepts, height: propH, onBackToTree }: Pr
   // Filtered counts — update live as the user applies filters
   const filteredTotal = nodesRef.current.length;
   const filteredDetected = nodesRef.current.filter((n) => n.detected).length;
-  const heroCount = nodesRef.current.filter((n) => n.tier === "hero").length;
+  const notableCount = nodesRef.current.filter((n) => n.tier === "notable").length;
 
   const canvasH = fullscreen ? "100%" : Math.max(200, (propH ?? 480) - filterH - 24);
 
@@ -1346,7 +1474,7 @@ export function SkillConstellation({ concepts, height: propH, onBackToTree }: Pr
       )}
 
       <div className="constellation-legend microcaps">
-        {heroCount} heroes · {filteredTotal - heroCount} stars ·{" "}
+        {notableCount} notables · {filteredTotal - notableCount} passives ·{" "}
         {filteredDetected} detected · zoom in to reveal names
         {fullscreen && " · ESC exits"}
       </div>

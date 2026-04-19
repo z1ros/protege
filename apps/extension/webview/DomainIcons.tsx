@@ -1,23 +1,5 @@
 import React from "react";
 import {
-  siJavascript,
-  siTypescript,
-  siReact,
-  siNextdotjs,
-  siCss,
-  siNodedotjs,
-  siPython,
-  siGo,
-  siRust,
-  siOpenjdk,
-  siSharp,
-  siKotlin,
-  siSwift,
-  siPhp,
-  siRuby,
-  type SimpleIcon,
-} from "simple-icons";
-import {
   Shield,
   FlaskConical,
   Infinity as InfinityIcon,
@@ -34,53 +16,60 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+// Per-icon imports via unplugin-icons. Each `~icons/...` path is resolved
+// by the Vite plugin into a tiny React component containing only that
+// SVG's path data — so tree-shaking works per-icon and our bundle ships
+// just the ~16 glyphs we reference instead of the full icon set.
+//
+// Devicon Plain is the primary source (monochrome-first, purpose-built
+// to read white on dark). Simple Icons covers the gaps — notably React,
+// which Devicon Plain omits.
+import IconJavaScript from "~icons/devicon-plain/javascript";
+import IconTypeScript from "~icons/devicon-plain/typescript";
+import IconReact from "~icons/simple-icons/react";
+import IconNextjs from "~icons/devicon-plain/nextjs";
+import IconCss from "~icons/devicon-plain/css3";
+import IconNodejs from "~icons/devicon-plain/nodejs";
+import IconPython from "~icons/devicon-plain/python";
+import IconGo from "~icons/devicon-plain/go";
+import IconRust from "~icons/devicon-plain/rust";
+import IconJava from "~icons/devicon-plain/java";
+import IconCsharp from "~icons/devicon-plain/csharp";
+import IconKotlin from "~icons/devicon-plain/kotlin";
+import IconSwift from "~icons/devicon-plain/swift";
+import IconPhp from "~icons/devicon-plain/php";
+import IconRuby from "~icons/devicon-plain/ruby";
+
 /**
- * Domain icons — real brand logos via simple-icons (JS, TS, React, Next.js,
- * Python, Go, Rust, etc.) and Feather-style line icons via lucide-react for
- * categorical domains (Security, Testing, DevOps, Cloud, etc.).
- *
- * Brand icons render in the brand's official hex color; categorical icons
- * inherit the taxonomy color passed in via `color`.
+ * Domain icons — Devicon Plain (monoline) for language brands, Lucide
+ * for categorical domains. All rendered uniform white via currentColor
+ * so the UI reads as an app, not a logo wall.
  */
 
 const DEFAULT_SIZE = 18;
 
-function BrandIcon({ icon, size = DEFAULT_SIZE }: { icon: SimpleIcon; size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill={`#${icon.hex}`}
-      aria-label={icon.title}
-      role="img"
-    >
-      <path d={icon.path} />
-    </svg>
-  );
-}
+type BrandGlyph = React.ComponentType<React.SVGProps<SVGSVGElement>>;
 
-// Brand domains — use the official simple-icons SVG path + brand color.
-const BRAND: Record<string, SimpleIcon> = {
-  javascript: siJavascript,
-  typescript: siTypescript,
-  react: siReact,
-  nextjs: siNextdotjs,
-  css: siCss,
-  node: siNodedotjs,
-  nodejs: siNodedotjs,
-  python: siPython,
-  go: siGo,
-  rust: siRust,
-  java: siOpenjdk,
-  csharp: siSharp,
-  kotlin: siKotlin,
-  swift: siSwift,
-  php: siPhp,
-  ruby: siRuby,
+const BRAND: Record<string, BrandGlyph> = {
+  javascript: IconJavaScript,
+  typescript: IconTypeScript,
+  react: IconReact,
+  nextjs: IconNextjs,
+  css: IconCss,
+  node: IconNodejs,
+  nodejs: IconNodejs,
+  python: IconPython,
+  go: IconGo,
+  rust: IconRust,
+  java: IconJava,
+  csharp: IconCsharp,
+  kotlin: IconKotlin,
+  swift: IconSwift,
+  php: IconPhp,
+  ruby: IconRuby,
 };
 
-// Categorical domains — use lucide line icons, tinted by taxonomy color.
+/** Categorical domains — Lucide line icons, already clean monoline. */
 const LUCIDE: Record<string, LucideIcon> = {
   sql: Database,
   "system-design": Layers,
@@ -99,33 +88,45 @@ const LUCIDE: Record<string, LucideIcon> = {
 
 export function DomainIcon({
   domainId,
-  color,
+  color: _color,
   size = DEFAULT_SIZE,
 }: {
   domainId: string;
-  color: string;
+  /** Kept for API compatibility; ignored — icons are uniform white. */
+  color?: string;
   size?: number;
 }) {
-  const brand = BRAND[domainId];
-  if (brand) {
+  const style = { color: "#fff", display: "inline-flex", lineHeight: 0 };
+
+  const Brand = BRAND[domainId];
+  if (Brand) {
     return (
-      <span className="domain-icon">
-        <BrandIcon icon={brand} size={size} />
+      <span className="domain-icon" style={style}>
+        <Brand width={size} height={size} fill="currentColor" />
       </span>
     );
   }
+
   const LucideGlyph = LUCIDE[domainId];
   if (LucideGlyph) {
     return (
-      <span className="domain-icon" style={{ color, display: "inline-flex" }}>
+      <span className="domain-icon" style={style}>
         <LucideGlyph size={size} strokeWidth={1.6} />
       </span>
     );
   }
-  // Unknown domain — minimal colored dot so layout doesn't break.
+
+  // Unknown domain — minimal circle glyph so layout never breaks.
   return (
-    <span className="domain-icon" style={{ color }}>
-      <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2">
+    <span className="domain-icon" style={style}>
+      <svg
+        width={size}
+        height={size}
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.2"
+      >
         <circle cx="8" cy="8" r="5" />
       </svg>
     </span>

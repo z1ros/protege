@@ -32,8 +32,15 @@ export async function explainSelection(): Promise<void> {
     async () => {
       try {
         const reply = await aiQuery(
-          `Explain this ${lang} code in 2-3 sentences. Be concise and practical — what does it do, why, and any gotchas:\n\n\`\`\`${lang}\n${truncated}\n\`\`\``
+          `Explain this ${lang} code in 2-3 sentences. Be concise and practical — what does it do, why, and any gotchas:\n\n\`\`\`${lang}\n${truncated}\n\`\`\``,
+          256,
+          { kind: "teach" }
         );
+
+        if (!reply) {
+          vscode.window.showWarningMessage("Protege: no response from AI backend.");
+          return;
+        }
 
         const choice = await vscode.window.showInformationMessage(
           reply.slice(0, 500),

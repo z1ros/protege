@@ -40,7 +40,8 @@ export async function aiExplainError(
 
   const result = await aiQuery(
     `You are a coding mentor. Explain this ${language} error in ONE short sentence (max 15 words). Be practical — what's wrong and how to fix it.\n\nError: ${errorMessage}`,
-    64
+    64,
+    { kind: "teach" }
   );
 
   const explanation = result?.trim() || simplifyMessage(errorMessage);
@@ -72,7 +73,8 @@ export async function aiTeachConcept(
     `You are a coding mentor. Teach "${concept}" in ${language}.${contextBlock}
 Reply in JSON (no markdown fencing):
 {"title":"name","explanation":"2-3 sentences","examples":[{"label":"name","code":"code","lang":"${language}"}],"mistakes":["mistake1"],"related":["concept1"],"tip":"tip"}`,
-    512
+    512,
+    { kind: "teach" }
   );
 
   if (!result) return null;
@@ -106,7 +108,8 @@ export async function aiGenerateTip(
 
   const result = await aiQuery(
     `You are a coding mentor. The user just wrote ${language} code using "${concept}". Give ONE practical "did you know?" tip about "${concept}" that most developers don't know. Max 2 sentences. Be surprising and useful.\n\nTheir code:\n\`\`\`${language}\n${codeSnippet.slice(0, 300)}\n\`\`\``,
-    128
+    128,
+    { kind: "teach" }
   );
 
   if (!result) return null;
@@ -129,7 +132,8 @@ export async function aiGenerateQuiz(
     `Create ONE multiple-choice question about "${concept}" in ${language}. Test a real gotcha, not trivia.
 Reply in JSON (no fencing):
 {"question":"What happens when...?","correct":"the right answer","wrong":["wrong1","wrong2"]}`,
-    256
+    256,
+    { kind: "teach" }
   );
 
   if (!result) return null;

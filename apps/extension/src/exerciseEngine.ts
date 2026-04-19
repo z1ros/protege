@@ -123,7 +123,10 @@ async function createExercise(
         after: {
           margin: "0 0 0 2em",
           fontStyle: "italic",
-          fontSize: "0.85em",
+          // VS Code's ThemableDecorationAttachmentRenderOptions has no
+          // `fontSize` field, but textDecoration is a free-form CSS string
+          // that gets inlined — so we smuggle the font-size through it.
+          textDecoration: "none; font-size: 0.85em",
         },
       });
 
@@ -184,7 +187,8 @@ Rules:
 - Tests should use console.assert() or simple comparisons
 - Make the exercise practical, not academic
 - Include at least 2 hints (vague first, specific second)`,
-    1024
+    1024,
+    { kind: "teach" }
   );
 
   if (!result) return null;
@@ -289,7 +293,8 @@ ${exercise.solution}
 
 Is their solution correct? Reply in JSON (no fencing):
 {"correct": true/false, "feedback": "one sentence — what's right or what's wrong"}`,
-    128
+    128,
+    { kind: "teach" }
   );
 
   if (!verdict) return;
