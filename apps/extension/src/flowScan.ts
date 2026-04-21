@@ -129,10 +129,18 @@ async function runOnePass(): Promise<void> {
   if (usable.length < 2) return;
 
   const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
+  // Prefix every line with its 1-based number so the model copies the
+  // digit rather than counting. Mirrors reviewEngine.ts::numberLines —
+  // kills JSON.line ↔ prose-line drift on nested syntax.
+  const numberLines = (code: string): string =>
+    code
+      .split("\n")
+      .map((l, i) => `${String(i + 1).padStart(3, " ")}  ${l}`)
+      .join("\n");
   const block = usable
     .map(
       (s) =>
-        `### FILE: ${root ? path.relative(root, s.fsPath) : s.fsPath}\n\`\`\`\n${s.head}\n\`\`\``
+        `### FILE: ${root ? path.relative(root, s.fsPath) : s.fsPath}\n\`\`\`\n${numberLines(s.head)}\n\`\`\``
     )
     .join("\n\n");
 
@@ -160,6 +168,11 @@ Rules:
 - Return at most 2 items, only if truly cross-file
 - Zero items is the right answer most of the time — don't invent findings
 - Output ONLY the JSON array
+
+Line-number contract (STRICT):
+- Every line in each file below is prefixed with its 1-based number. Your "line" / anchor "line" fields MUST be the numbers shown.
+- If your message or lesson mentions "line N", the "line" field MUST equal N.
+- Anchor to the INNER element the issue is about — never the structural parent.
 
 ${block}`;
 

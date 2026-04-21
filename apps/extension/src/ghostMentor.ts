@@ -5,6 +5,10 @@ import {
   onSuggestionsChanged,
 } from "./liveReview.js";
 import type { Suggestion } from "./reviewEngine.js";
+import {
+  hasNativeDiagnosticInRange,
+  hasNativeDiagnosticOnLine,
+} from "./nativeDiagnostics.js";
 
 /**
  * Ghost Mentor — a CodeLens that floats above the cursor line whenever
@@ -70,8 +74,48 @@ class GhostLensProvider implements vscode.CodeLensProvider {
     // keyboard shortcuts (Tab=Apply, ⌘.=Teach, Esc=Dismiss), but the
     // CodeLens itself no longer hides until the cursor lands on the line.
     const uri = doc.uri.toString();
-    const suggestions = getSuggestionsForUri(uri);
-    if (suggestions.length === 0) return [];
+    const allSuggestions = getSuggestionsForUri(uri);
+    if (allSuggestions.length === 0) return [];
+
+    // Dedup against native diagnostics: if TS / ESLint / cSpell /
+    // Cursor's agent already squiggled this line/range, skip our row.
+    // Protege's job is to surface what those tools DIDN'T catch — not
+    // to echo what's already in the editor. See nativeDiagnostics.ts.
+    const filtered = allSuggestions.filter((s) => {
+      // For block/flow findings the range can span several lines; check
+      // the whole range. Atom-scope findings just check the start line.
+      if (s.scope === "block" || s.scope === "flow") {
+        return !hasNativeDiagnosticInRange(doc.uri, s.range);
+      }
+      return !hasNativeDiagnosticOnLine(doc.uri, s.range.start.line);
+    });
+    if (filtered.length === 0) return [];
+
+    // Cap to ONE finding per line. Multiple CodeLenses on the same line
+    // are rendered horizontally by VS Code, which stretches the row off
+    // screen. If two findings compete for the same line, keep the
+    // highest-priority one (warn > perf > info; then kind watch-out >
+    // concept > praise). Dismiss on the shown one lets the next
+    // suggestion for that line pop to the top on re-render.
+    const SEV_WEIGHT = { warn: 0, perf: 1, info: 2 } as const;
+    const KIND_WEIGHT = { "watch-out": 0, concept: 1, praise: 2 } as const;
+    const topByLine = new Map<number, typeof allSuggestions[number]>();
+    for (const s of allSuggestions) {
+      const ln = Math.max(0, Math.min(doc.lineCount - 1, s.range.start.line));
+      const prev = topByLine.get(ln);
+      if (!prev) {
+        topByLine.set(ln, s);
+        continue;
+      }
+      const prevScore =
+        SEV_WEIGHT[prev.severity] * 10 +
+        (KIND_WEIGHT[prev.kind as keyof typeof KIND_WEIGHT] ?? 1);
+      const nextScore =
+        SEV_WEIGHT[s.severity] * 10 +
+        (KIND_WEIGHT[s.kind as keyof typeof KIND_WEIGHT] ?? 1);
+      if (nextScore < prevScore) topByLine.set(ln, s);
+    }
+    const suggestions = [...topByLine.values()];
 
     const lenses: vscode.CodeLens[] = [];
     for (const s of suggestions) {
@@ -82,15 +126,23 @@ class GhostLensProvider implements vscode.CodeLensProvider {
       lenses.push(
         new vscode.CodeLens(range, {
           title: buildHeadline(s),
-          command: "protege.ghostHeadlineNoop",
+          tooltip: "Peek the finding — opens the hover card",
+          command: "protege.ghostHeadlinePeek",
+          arguments: [{ uri, line: s.range.start.line }],
         })
       );
 
+      // Action labels carry small unicode glyphs as visual leaders
+      // (NOT emoji): ✔ check (U+2714), 𖤍 cherokee letter MV (U+16B8D),
+      // ✘ ballot X (U+2718). User explicitly chose these — they're
+      // typographic dingbats, render as text glyphs in VS Code's editor
+      // font, no emoji-style colored fallback. Removed the "View N
+      // related" lens entirely per user request.
       if (s.fix) {
         lenses.push(
           new vscode.CodeLens(range, {
-            title: "$(wand) Apply fix",
-            tooltip: "Apply the suggested fix",
+            title: "✔ Apply fix",
+            tooltip: "Replace this line with Protege's fix",
             command: "protege.smartFix",
             arguments: [{ uri, line: s.range.start.line }],
           })
@@ -99,29 +151,17 @@ class GhostLensProvider implements vscode.CodeLensProvider {
 
       lenses.push(
         new vscode.CodeLens(range, {
-          title: "$(book) Teach",
+          title: "✿ Teach me",
           tooltip: "Open the full lesson — popup + voice",
           command: "protege.openTeachingThread",
           arguments: [{ uri, line: s.range.start.line }],
         })
       );
 
-      const anchors = s.anchors ?? [];
-      if (anchors.length > 0) {
-        lenses.push(
-          new vscode.CodeLens(range, {
-            title: `$(references) View ${anchors.length} related`,
-            tooltip: "Jump through the related locations",
-            command: "protege.viewGhostAnchors",
-            arguments: [{ uri, line: s.range.start.line }],
-          })
-        );
-      }
-
       lenses.push(
         new vscode.CodeLens(range, {
-          title: "$(close) Dismiss",
-          tooltip: "Hide this finding",
+          title: "✘ Dismiss",
+          tooltip: "Hide this finding for the rest of the session",
           command: "protege.dismissWhisper",
           arguments: [{ uri, line: s.range.start.line }],
         })
@@ -238,11 +278,88 @@ export function registerGhostMentor(
     })
   );
 
-  // No-op for the headline lens. Registered so clicking the title doesn't
-  // error out in case a user decides to click it.
+  // Headline click = "peek" the finding. Parks the cursor on the flagged
+  // line (without stealing focus from the user's current edit flow if
+  // they're already on it) and fires VS Code's built-in hover, which
+  // lets the underlineWhisper HoverProvider render the full card with
+  // the same look the user sees when hovering the underlined token.
+  //
+  // This is the lightweight counterpart to the "Teach" button on the
+  // same CodeLens row: title = peek (read & dismiss), Teach = commit
+  // (chat or voice per explainMode), Dismiss = hide.
+  //
+  // Keep the legacy command id registered as an alias so any in-flight
+  // CodeLens rows from a prior build don't hit "command not found".
+  disposables.push(
+    vscode.commands.registerCommand(
+      "protege.ghostHeadlinePeek",
+      async (arg: { uri?: string; line?: number } | undefined) => {
+        const uri = arg?.uri;
+        const line = typeof arg?.line === "number" ? arg.line : undefined;
+        if (!uri || line === undefined) return;
+
+        // Find the editor that's showing this URI. If multiple tabs have
+        // it, pick the visible one closest to the user's current focus
+        // (the active editor when it matches, else the first visible).
+        const editors = vscode.window.visibleTextEditors;
+        const active = vscode.window.activeTextEditor;
+        const editor =
+          active && active.document.uri.toString() === uri
+            ? active
+            : editors.find((e) => e.document.uri.toString() === uri);
+        if (!editor) return;
+
+        const clampedLine = Math.max(
+          0,
+          Math.min(editor.document.lineCount - 1, Math.floor(line))
+        );
+
+        // Crucial: park the cursor INSIDE the actual underline token
+        // range, not at col 0. The hover provider only returns a Hover
+        // when the position is inside a registered range — a cursor at
+        // col 0 is typically outside the token, so `showHover` would
+        // render nothing (or only the native TS hover). Falling back to
+        // the suggestion's own range.start catches block/flow scopes
+        // where no underline whisper exists.
+        const { getWhisperRangeAtLine } = await import("./underlineWhisper.js");
+        const whisperRange = getWhisperRangeAtLine(uri, clampedLine);
+        const lineText = editor.document.lineAt(clampedLine).text;
+        const fallbackCol = Math.max(0, lineText.search(/\S/));
+        const anchor = whisperRange
+          ? whisperRange.start
+          : new vscode.Position(clampedLine, fallbackCol);
+
+        // Only move the cursor when it's not already at (or very near)
+        // the anchor — avoids a jarring jump if the user already clicked
+        // on the line.
+        const curr = editor.selection.active;
+        const needsMove =
+          curr.line !== anchor.line ||
+          Math.abs(curr.character - anchor.character) > 2;
+        if (needsMove) {
+          editor.selection = new vscode.Selection(anchor, anchor);
+          editor.revealRange(
+            new vscode.Range(anchor, anchor),
+            vscode.TextEditorRevealType.Default
+          );
+        }
+
+        // Ensure the editor is focused or showHover may be a no-op.
+        await vscode.window.showTextDocument(editor.document, {
+          viewColumn: editor.viewColumn,
+          preserveFocus: false,
+          preview: false,
+        });
+        await vscode.commands.executeCommand("editor.action.showHover");
+      }
+    )
+  );
+
+  // Legacy alias — earlier CodeLenses shipped with this command id. Safe
+  // to remove once the user reloads once post-deploy, but cheap to keep.
   disposables.push(
     vscode.commands.registerCommand("protege.ghostHeadlineNoop", () => {
-      /* intentional no-op */
+      /* intentional no-op — preserved for back-compat */
     })
   );
 
@@ -368,25 +485,15 @@ function setContext(value: boolean): void {
 // ---- Headline formatting ----
 
 function buildHeadline(s: Suggestion): string {
-  const MAX = 90;
-
+  // Title-only headline (no message). User feedback: the prior
+  // "Title — Long message text… | Apply fix | Teach | Dismiss" row was
+  // wider than most editors. The full message is one hover away (click
+  // the title → showHover) so we can drop it from the always-visible
+  // strip and recover ~70% of the row width.
   const clean = s.ruleId.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-
-  // No dot emoji, no "line N" suffix — user said both were noise. The
-  // CodeLens already sits visually above the relevant line, so the line
-  // number is redundant; the action buttons that follow this title give
-  // it identity (no need for an icon).
   const scopeBadge =
     s.scope === "flow" ? " (flow)" : s.scope === "block" ? " (block)" : "";
-
-  const head = `${clean}${scopeBadge}`;
-  const message = s.message.trim();
-
-  const full = `${head} — ${message}`;
-  if (full.length <= MAX) return full;
-
-  const room = Math.max(0, MAX - head.length - 4);
-  return `${head} — ${message.slice(0, room)}…`;
+  return `${clean}${scopeBadge}`;
 }
 
 function shortName(uri: vscode.Uri): string {

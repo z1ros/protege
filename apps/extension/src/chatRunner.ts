@@ -38,6 +38,11 @@ interface RunnerCallbacks {
 
 export interface RunChatOptions {
   mode?: ChatMode;
+  /** Prior conversation turns (user + assistant) loaded from globalState.
+   *  When passed, Claude sees the recent history and can resolve pronouns
+   *  ("yes, do that"), follow-up questions, and carry context across voice
+   *  turns where the user can't see what was just said. */
+  history?: OAITurn[];
 }
 
 /**
@@ -55,7 +60,9 @@ export async function runChat(
   const mode: ChatMode = opts.mode ?? "text";
   const workspace = await buildWorkspaceContext();
 
-  let messages: OAITurn[] = [];
+  // Seed with recent conversation history so Claude can resolve follow-up
+  // questions ("yes, do that"). Empty on first turn.
+  let messages: OAITurn[] = opts.history ? [...opts.history] : [];
   let newUserMessage: string | undefined = userMessage;
   let toolResults: ToolResult[] | undefined = undefined;
 

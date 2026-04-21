@@ -261,7 +261,7 @@ export interface ToolResult {
   error?: string;
 }
 
-export type ChatMode = "text" | "voice" | "teaching";
+export type ChatMode = "text" | "voice" | "voice-dialogue" | "teaching";
 
 /**
  * Cloud chat backend the user wants to route this request through. The
@@ -341,8 +341,10 @@ export type WebviewToHost =
   | { type: "ai/setBackend"; backend: "on-device" | "haiku" | "sonnet" | "auto" }
   | { type: "ai/downloadModel" }
   | { type: "feature/toggle"; feature: "inlineErrors" | "didYouKnow"; enabled: boolean }
+  | { type: "explainMode/set"; mode: "text" | "voice" | "both" }
   | { type: "chat/search"; query: string }
-  | { type: "chat/clearHistory" };
+  | { type: "chat/clearHistory" }
+  | { type: "debug/log"; tag: string; message: string };
 
 export type HostToWebview =
   | { type: "chat/append"; message: ChatMessage }
@@ -420,6 +422,13 @@ export type HostToWebview =
   | { type: "watcher/dismiss"; id: string }
   | { type: "voice/recording"; active: boolean }
   | { type: "voice/transcript"; text: string }
+  | {
+      /** Host → webview: play a short pre-cached filler clip ("Mm-hmm.",
+       *  etc.) right after the user stops speaking so they hear an instant
+       *  acknowledgment while STT + Claude + TTS run in the background.
+       *  Makes the 2-4s response delay feel alive instead of dead. */
+      type: "voice/fillerPlay";
+    }
   | { type: "voice/error"; error: string }
   | { type: "wake/state"; active: boolean; status?: string }
   | { type: "liveReview/state"; active: boolean }
@@ -448,6 +457,11 @@ export type HostToWebview =
    *  from persisted state (globalState) instead of defaulting to "auto" on
    *  every reload. */
   | { type: "ai/backend"; backend: "on-device" | "haiku" | "sonnet" | "auto" }
+  /** Host reports the current `protege.explainMode` so the Live tab's
+   *  3-option toggle (Text / Voice / Both) can reflect state at a glance.
+   *  Sent on activate + whenever the setting changes (via user clicking
+   *  the Live toggle OR editing settings.json directly). */
+  | { type: "explainMode/state"; mode: "text" | "voice" | "both" }
   /** Host reports which backend actually executed the most recent query.
    *  The webview shows this as a "last call" chip so the user can prove
    *  on-device is running vs. silently falling through to Claude. */

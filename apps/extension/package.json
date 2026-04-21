@@ -89,6 +89,14 @@
         "title": "Protege: What does this file do?"
       },
       {
+        "command": "protege.greetCurrentFile",
+        "title": "Protege: Replay file greeting"
+      },
+      {
+        "command": "protege.playCurrentFileOverview",
+        "title": "Protege: Play overview of current file"
+      },
+      {
         "command": "protege.weakSpots",
         "title": "Protege: Show my weak spots"
       },
@@ -155,6 +163,10 @@
       {
         "command": "protege.toggleMaxPlanBackend",
         "title": "Protege: Max Plan — switch Qwen 7B ↔ Haiku"
+      },
+      {
+        "command": "protege.toggleInsetPreview",
+        "title": "Protege: Preview inset-style finding (experimental)"
       }
     ],
     "configuration": {
@@ -268,9 +280,10 @@
     "@shikijs/langs": "^4.0.2",
     "@shikijs/themes": "^4.0.2",
     "d3-force": "^3.0.0",
-    "highlight.js": "^11.11.1",
     "lucide-react": "^1.8.0",
     "node-llama-cpp": "^3.18.1",
+    "prism-themes": "^1.9.0",
+    "prismjs": "^1.30.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "shiki": "^4.0.2",
@@ -281,6 +294,7 @@
     "@svgr/plugin-jsx": "^8.1.0",
     "@types/d3-force": "^3.0.10",
     "@types/node": "^22.0.0",
+    "@types/prismjs": "^1.26.6",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
     "@types/vscode": "^1.90.0",

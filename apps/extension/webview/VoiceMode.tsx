@@ -7,6 +7,13 @@ interface Props {
   latestReply: string;
   loading: boolean;
   error: string | null;
+  /** When true, render a compact footer variant meant to live below a
+   *  scrollable chat message list (Phase 3 unified layout). Default false
+   *  keeps the original full-screen "take over the chat tab" behavior. */
+  inline?: boolean;
+  /** Callback to flip the chat modality back to text. Only used in inline
+   *  variant (where the text/voice toggle lives inside this component). */
+  onSwitchToText?: () => void;
 }
 
 type Voice = "female" | "male";
@@ -55,14 +62,37 @@ declare global {
   }
 }
 
-export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
+export function VoiceMode({
+  onSend,
+  latestReply,
+  loading,
+  error,
+  inline = false,
+  onSwitchToText,
+}: Props) {
   const SR =
     typeof window !== "undefined"
       ? window.SpeechRecognition || window.webkitSpeechRecognition
       : undefined;
 
   const [micState, setMicState] = useState<MicState>("unknown");
-  const [voice, setVoice] = useState<Voice>("female");
+  // Voice preference persists across reloads. Reads from localStorage on
+  // first render so the user's last pick (Bella / Michael) survives
+  // window reloads, panel switches, and VS Code restarts.
+  const [voice, setVoiceRaw] = useState<Voice>(() => {
+    try {
+      const saved = localStorage.getItem("protege:voice");
+      return saved === "male" || saved === "female" ? saved : "female";
+    } catch {
+      return "female";
+    }
+  });
+  const setVoice = (v: Voice) => {
+    setVoiceRaw(v);
+    try {
+      localStorage.setItem("protege:voice", v);
+    } catch {}
+  };
   const [phase, setPhase] = useState<Phase>("idle");
   const [ttsStatus, setTtsStatus] = useState<TtsStatus>("unknown");
   const [ttsWarmupError, setTtsWarmupError] = useState<string | null>(null);
@@ -98,6 +128,11 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
 
   // Audio playback
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Pre-cached "Mm-hmm" filler blob URL. Re-fetched whenever `voice`
+  // changes so Bella's and Michael's ack stay in their own timbre.
+  const fillerUrlRef = useRef<string | null>(null);
+  const fillerAudioRef = useRef<HTMLAudioElement | null>(null);
   // Seed with the reply that exists at mount time so we don't re-speak
   // whatever's already in chat state when the voice tab first opens.
   const lastSpokenRef = useRef<string>(latestReply ?? "");
@@ -194,11 +229,16 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
     // generate, which reads as a stutter.
     setPhase("thinking");
     setStatusDetail("");
+    const t0 = performance.now();
     const res = await fetch(`${BACKEND_URL}/tts`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text, voice }),
     });
+    const tFetch = performance.now();
+    console.log(
+      `[protege-tts] Kokoro generate: ${Math.round(tFetch - t0)}ms (chars=${text.length})`
+    );
     if (res.status === 503) {
       setTtsStatus("warming");
       setPhase("warming");
@@ -223,10 +263,15 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
     audio.src = url;
     // Unlock primed the element at 0.01 — bump it back to full for real speech
     audio.volume = 1.0;
-    audio.onplay = () => {
-      // Real speech starts now — flip UI from "thinking" to "speaking",
-      // and tell the host to suppress wake detection so the bot's voice
-      // bleeding through the mic can't re-trigger itself.
+    // Fire the SPEAKING state transition on `onplaying` (actual output has
+    // started), not on `onplay` (which fires when .play() is called but
+    // before codec decode + buffer. Using onplay caused the UI to say
+    // SPEAKING for 200-500ms of silence before the user heard anything.)
+    audio.onplaying = () => {
+      const tPlay = performance.now();
+      console.log(
+        `[protege-tts] audio start: +${Math.round(tPlay - tFetch)}ms after fetch (total ${Math.round(tPlay - t0)}ms)`
+      );
       setPhase("speaking");
       vscode.postMessage({ type: "voice/speaking", active: true });
     };
@@ -329,9 +374,56 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
         setStatusDetail(msg.error);
         setPhase("idle");
         setConversation(false);
+      } else if (msg.type === "voice/fillerPlay") {
+        // Instant acknowledgment right after VAD detects end-of-speech.
+        // Uses a pre-cached "Mm-hmm" clip so there's no fetch latency
+        // here — sound starts within ~50ms of the user finishing.
+        const url = fillerUrlRef.current;
+        if (!url) return;
+        try {
+          let fa = fillerAudioRef.current;
+          if (!fa) {
+            fa = new Audio();
+            fa.volume = 0.75;
+            fillerAudioRef.current = fa;
+          }
+          fa.src = url;
+          fa.currentTime = 0;
+          fa.play().catch(() => {
+            // Autoplay block — silent failure, the main reply will play
+            // through the (user-gesture-unlocked) audioRef anyway.
+          });
+        } catch {}
       }
     });
   }, []);
+
+  /* ============ Pre-cache the "Mm-hmm" filler per voice ============
+     Fetch /tts once on mount and whenever the user swaps Bella ↔ Michael,
+     so the clip is instantly playable when VAD fires. Revoked on voice
+     change to avoid leaking blob URLs. */
+  useEffect(() => {
+    let cancelled = false;
+    const oldUrl = fillerUrlRef.current;
+    (async () => {
+      try {
+        const res = await fetch(`${BACKEND_URL}/tts`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ text: "Mm-hmm.", voice }),
+        });
+        if (!res.ok) return;
+        const blob = await res.blob();
+        if (cancelled) return;
+        const url = URL.createObjectURL(blob);
+        fillerUrlRef.current = url;
+      } catch {}
+    })();
+    return () => {
+      cancelled = true;
+      if (oldUrl) URL.revokeObjectURL(oldUrl);
+    };
+  }, [voice]);
 
   /* ============ Conversation mode (host-side recording) ============ */
 
@@ -403,6 +495,12 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
   /* ============ UI ============ */
   const showTypeUI = micState === "blocked";
 
+  // Derive the visible phase the state chip should report. Matches the
+  // logic further down in the fullscreen render path so both variants
+  // agree on what color the pill shows.
+  const chipPhase: string =
+    ttsStatus === "warming" || ttsStatus === "unknown" ? "warming" : phase;
+
   const statusLabel = () => {
     if (statusDetail) return statusDetail;
     if (ttsStatus === "error") return "Voice engine failed to load";
@@ -419,6 +517,117 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
 
   const animated =
     phase !== "idle" || ttsStatus === "warming" || ttsStatus === "error";
+
+  /* ============ Inline variant (Phase 3 unified layout) ============
+     Replaces the composer footer while voice is active. Messages live
+     ABOVE this component in App.tsx, so we show only: state chip,
+     small orb, wake toggle, voice picker, "switch to text" button.
+     ================================================================ */
+  if (inline) {
+    return (
+      <div className="voice voice-inline">
+        {/* Grid layout: orb is the hero, chip/voices sit below it, wake
+            toggle + text switch pin to the bottom corners. Order in the
+            DOM matches source order; CSS grid-area rules place them. */}
+
+        <button
+          className={`wake-word-toggle compact ${wakeWordActive ? "active" : ""} ${
+            wakeWordStatus === "loading" ? "loading" : ""
+          }`}
+          onClick={() => {
+            unlockAudio();
+            vscode.postMessage({ type: "wake/toggle" });
+          }}
+          disabled={wakeWordStatus === "loading"}
+          title={wakeWordActive ? 'Wake word ON — say "Protege"' : "Enable wake word"}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="9" y="3" width="6" height="12" rx="3" />
+            <path d="M5 11a7 7 0 0014 0" />
+            <path d="M12 18v3" />
+          </svg>
+          {wakeWordStatus === "loading"
+            ? "Loading…"
+            : wakeWordActive
+            ? '"Protege" ON'
+            : "Wake"}
+        </button>
+
+        <div
+          className={`voice-orb-wrap voice-orb-wrap-inline ${
+            phase === "listening" || phase === "speaking" ? "active" : ""
+          } ${phase === "speaking" ? "speaking" : ""} ${
+            conversation ? "conversation" : ""
+          }`}
+        >
+          <div className="ring ring-1" />
+          <div className="ring ring-2" />
+          <button
+            className={`voice-orb ${phase === "listening" ? "listening" : ""} ${
+              phase === "speaking" ? "speaking" : ""
+            } ${
+              ttsStatus !== "ready" || wakeWordStatus === "loading"
+                ? "warming"
+                : ""
+            }`}
+            onClick={toggleOrb}
+            disabled={ttsStatus !== "ready" || wakeWordStatus === "loading"}
+            aria-label={conversation ? "End conversation" : "Start conversation"}
+          />
+        </div>
+
+        {onSwitchToText ? (
+          <button
+            className="voice-inline-switch"
+            onClick={onSwitchToText}
+            title="Switch back to text input"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" />
+            </svg>
+            Text
+          </button>
+        ) : (
+          <span />
+        )}
+
+        <div className="voice-status" data-phase={chipPhase}>
+          <span className="voice-status-dot" />
+          <span className="voice-status-label">{statusLabel()}</span>
+        </div>
+
+        <div className="voice-inline-voices" role="tablist" aria-label="Voice">
+          <button
+            role="tab"
+            aria-selected={voice === "female"}
+            className={`voice-pill ${voice === "female" ? "active" : ""}`}
+            onClick={() => setVoice("female")}
+            title="Bella — warm American female"
+          >
+            <IconPersonFemale size={11} strokeWidth={2.2} />
+            <span>Bella</span>
+          </button>
+          <button
+            role="tab"
+            aria-selected={voice === "male"}
+            className={`voice-pill ${voice === "male" ? "active" : ""}`}
+            onClick={() => setVoice("male")}
+            title="Michael — American male"
+          >
+            <IconPersonMale size={11} strokeWidth={2.2} />
+            <span>Michael</span>
+          </button>
+        </div>
+
+        {liveTranscript && (
+          <div className="voice-transcript voice-transcript-inline">
+            {liveTranscript}
+          </div>
+        )}
+        {error && <div className="error">{error}</div>}
+      </div>
+    );
+  }
 
   return (
     <div className={`voice ${showTypeUI ? "voice-type-mode" : ""}`}>
@@ -518,12 +727,19 @@ export function VoiceMode({ onSend, latestReply, loading, error }: Props) {
         </div>
       )}
 
-      <div className="voice-status">
-        {animated ? (
-          <span className="pulse">{statusLabel()}…</span>
-        ) : (
-          statusLabel()
-        )}
+      {/* Loud state chip — color-coded so the user can glance-read
+          whether the system is listening, thinking, speaking, or idle.
+          Animated dot pulses during active states. */}
+      <div
+        className="voice-status"
+        data-phase={
+          ttsStatus === "warming" || ttsStatus === "unknown"
+            ? "warming"
+            : phase
+        }
+      >
+        <span className="voice-status-dot" />
+        <span className="voice-status-label">{statusLabel()}</span>
       </div>
 
       {phase === "speaking" && wakeWordActive && (
