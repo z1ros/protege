@@ -9,9 +9,10 @@ import { detectConceptsWithContext, type DetectedConcept } from "./detector.js";
  *            Detects: hooks, array methods, async patterns, TS types,
  *            classes, modules, error handling, JSX, generics, etc.
  *
- *   Layer 2: Regex fallback (instant, 41 patterns, catches non-JS langs)
- *            Detects: Python concepts, CSS patterns, anything the AST
- *            parser doesn't handle.
+ *   Layer 2: Regex runner (instant, 7 Python patterns)
+ *            Python is the only language here — AST handles JS/TS
+ *            entirely. The detector.ts entry point delegates JS/TS to
+ *            the AST layer, so this call is a no-op for those files.
  *
  *   Layer 3: On-device AI (fast, free, catches design patterns + soft concepts)
  *            Detects: SOLID principles, design patterns, architecture,

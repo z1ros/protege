@@ -144,7 +144,15 @@ export function detectFromAst(
         const method = propAccess.name.getText(sourceFile);
         if (method === "map") record("Array map", node, cb);
         if (method === "filter") record("Array filter", node, cb);
-        if (method === "reduce") record("Array reduce", node, cb + 0.2);
+        if (method === "reduce") {
+          record("Array reduce", node, cb + 0.2);
+          // Reducer pattern = accumulator initialized as an object/array
+          // literal (state-building reduction), not just a sum/product.
+          const init = node.arguments[1];
+          if (init && (ts.isObjectLiteralExpression(init) || ts.isArrayLiteralExpression(init))) {
+            record("Reducer pattern", node, cb + 0.4);
+          }
+        }
         if (method === "flatMap") record("Array flatMap", node, cb + 0.2);
         if (method === "find" || method === "findIndex") record("Array find", node, cb);
         if (method === "some" || method === "every") record("Array some/every", node, cb);

@@ -24,6 +24,13 @@ import { registerSaveRecap } from "./saveRecap.js";
 import { registerConceptTrail } from "./conceptTrail.js";
 import { dispatchTeachConcept } from "./teachConceptDispatch.js";
 import { registerInsetExperiment } from "./insetExperiment.js";
+import { registerFindingGate } from "./findingGate.js";
+import { registerProjectMap } from "./projectMap.js";
+import { registerArchitectureTour } from "./architectureTour.js";
+import { registerExplainBack } from "./explainBack.js";
+import { installChangeOriginDetector, onChangeOrigin } from "./changeOriginDetector.js";
+import { installOwnership, recordChange as recordOwnershipChange, onOwnershipChanged, getOwnership } from "./ownership.js";
+import { registerOwnershipInviter } from "./ownershipInviter.js";
 import { registerTeachingThread } from "./teachingThread.js";
 import { registerSmartFix } from "./smartFix.js";
 // Inline lesson comment surface (the big `/* PROTEGE · ... */` block) is
@@ -256,6 +263,68 @@ export async function activate(context: vscode.ExtensionContext) {
   //   • Ghost Mentor — `// 💡` comment-style ghost line under the cursor on
   //     high-confidence teachable moments. Tab applies the fix, Esc dismisses.
   // See Architecture/ambient-coach-plan.md — Surfaces 2 + 3.
+  //
+  // Register the finding gate FIRST so its listeners (document change,
+  // selection change) are wired before the surface providers subscribe
+  // to `onGateChanged`. See ~/.claude/plans/finding-gate-a1-b1.md.
+  const findingGateDisposables = registerFindingGate(context);
+  // Project Map (A1) — binds `context` so the file-summary cache can
+  // write to globalState. No listeners/commands; the webview tab
+  // requests data on demand via `map/*` messages in webviewHost.ts.
+  const projectMapDisposables = registerProjectMap(context);
+  // Architecture Tour (A2) — guided walk through 5 key files. We pass
+  // `broadcast` through so the orchestrator can push `tour/state` +
+  // `tour/narrationReady` messages without taking a dependency on
+  // webviewHost (avoids the cycle).
+  const architectureTourDisposables = registerArchitectureTour(
+    context,
+    (msg) => broadcast(msg as Parameters<typeof broadcast>[0])
+  );
+  // Explain-back (B1) — reverse teaching. User selects code, narrates,
+  // Haiku grades. Same broadcaster pattern as the tour.
+  const explainBackDisposables = registerExplainBack(context, (msg) =>
+    broadcast(msg as Parameters<typeof broadcast>[0])
+  );
+  // ===== Code Ownership (vibecoding partnership) =====
+  // changeOriginDetector  — classifies every text edit as typed /
+  //                         auto-inserted / mixed, based on burst + pace.
+  // ownership             — persistence + region merging + markExplained.
+  // ownershipInviter      — status-bar nudge at natural breaks.
+  // The three wire together: detector emits → ownership records →
+  // breakDetector fires at idle / save-clean / commit → inviter offers.
+  // Explain-back's markExplained integration raises ownership back up.
+  installOwnership(context);
+  const changeOriginDisposable = installChangeOriginDetector();
+  const isAutoTrackingEnabled = () =>
+    vscode.workspace
+      .getConfiguration("protege")
+      .get<boolean>("ownership.autoTrackingEnabled", true);
+  const changeOriginSub = onChangeOrigin((evt) => {
+    if (!isAutoTrackingEnabled()) return;
+    if (evt.origin === "typed" || evt.origin === "auto-inserted") {
+      recordOwnershipChange(evt.uri, evt.startLine, evt.endLine, evt.origin);
+    } else if (evt.origin === "mixed") {
+      // Treat mixed as auto-inserted for tracking — safer to over-prompt
+      // than miss a true paste.
+      recordOwnershipChange(evt.uri, evt.startLine, evt.endLine, "auto-inserted");
+    }
+  });
+  // Broadcast ownership changes to any mounted webview so the map tab
+  // can refresh without a full re-request.
+  const ownershipChangedSub = onOwnershipChanged((uriStr) => {
+    try {
+      const uri = vscode.Uri.parse(uriStr);
+      const summary = getOwnership(uri);
+      const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
+      const rel = root && uri.fsPath.startsWith(root)
+        ? uri.fsPath.slice(root.length + 1).split(/[\\/]/).join("/")
+        : uri.fsPath;
+      broadcast({ type: "ownership/changed", path: rel, summary });
+    } catch {
+      /* ignore */
+    }
+  });
+  const ownershipInviterDisposables = registerOwnershipInviter(context);
   const whisperDisposables = registerUnderlineWhisper(context);
   const ghostDisposables = registerGhostMentor(context);
   // File-Open Greeter — fires a 2-sentence voice overview the first time
@@ -326,6 +395,14 @@ export async function activate(context: vscode.ExtensionContext) {
     ...inlineErrorDisposables,
     ...peekTeachDisposables,
     ...liveReviewDisposables,
+    ...findingGateDisposables,
+    ...projectMapDisposables,
+    ...architectureTourDisposables,
+    ...explainBackDisposables,
+    changeOriginDisposable,
+    changeOriginSub,
+    ownershipChangedSub,
+    ...ownershipInviterDisposables,
     ...whisperDisposables,
     ...ghostDisposables,
     ...fileOpenGreeterDisposables,

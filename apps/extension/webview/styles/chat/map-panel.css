@@ -1,0 +1,574 @@
+/* ============ Project Map tab (A1) ============
+   Same visual family as .live-* (card-in-section, monochrome, tight
+   spacing). Each file row is a full-width button so the click target
+   is as wide as the sidebar. */
+
+.map-tab {
+  padding: 12px 14px 24px;
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.map-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.map-root {
+  color: var(--text-dim);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.map-refresh-btn {
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--text-dim);
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+.map-refresh-btn:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+.map-warnings {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  background: rgba(255, 180, 80, 0.06);
+  border: 1px solid rgba(255, 180, 80, 0.2);
+  border-radius: 6px;
+  color: rgba(255, 200, 120, 0.85);
+  font-size: 11.5px;
+}
+
+.map-selection {
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.03);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.map-selection-path {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text);
+  word-break: break-all;
+}
+.map-selection-meta {
+  font-size: 10px;
+  color: var(--text-faint);
+  letter-spacing: 0.06em;
+}
+.map-selection-summary {
+  color: var(--text-dim);
+  font-size: 12.5px;
+  line-height: 1.55;
+  margin-top: 4px;
+  min-height: 32px;
+}
+.map-summary-empty {
+  color: var(--text-faint);
+  font-style: italic;
+}
+.map-selection-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+.map-action-btn {
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--text);
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.map-action-btn:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.map-action-btn.primary {
+  border-color: rgba(120, 180, 255, 0.5);
+  color: rgba(180, 210, 255, 0.95);
+}
+
+.map-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.map-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding-bottom: 2px;
+}
+.map-section-title {
+  color: var(--text-dim);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+}
+.map-section-count {
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-family: var(--font-mono);
+}
+.map-section-subtitle {
+  color: var(--text-faint);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  margin-left: auto;
+}
+.map-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.map-row {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 5px 8px;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  font-family: inherit;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.map-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+}
+.map-row.active {
+  background: rgba(120, 180, 255, 0.1);
+  border-color: rgba(120, 180, 255, 0.3);
+  color: var(--text);
+}
+.map-row-dir {
+  color: var(--text-faint);
+  font-size: 10px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.map-row-name {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.map-row-edits {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: 10px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+.map-row-badge {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  padding: 1px 5px;
+  border: 1px solid rgba(120, 180, 255, 0.3);
+  color: rgba(180, 210, 255, 0.9);
+  border-radius: 3px;
+  margin-left: 4px;
+  flex-shrink: 0;
+}
+
+/* Ownership dot — the single "code you own vs. code you just accepted"
+ * signal. Green (owned) is intentionally quiet; the emphasis is on the
+ * amber/red states so the user's eye lands on files that need attention. */
+.map-row-ownership {
+  font-size: 12px;
+  line-height: 1;
+  flex-shrink: 0;
+  width: 14px;
+  text-align: center;
+}
+.map-row-ownership.ownership-owned {
+  color: rgba(120, 200, 140, 0.6);
+}
+.map-row-ownership.ownership-partial {
+  color: rgba(240, 200, 120, 0.9);
+}
+.map-row-ownership.ownership-unknown {
+  color: rgba(240, 140, 120, 0.95);
+}
+
+.map-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 40px 14px;
+  color: var(--text-dim);
+}
+.map-loading-text {
+  font-size: 12.5px;
+}
+
+.map-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 24px 14px;
+  text-align: center;
+  color: var(--text-dim);
+}
+.map-empty-title {
+  color: var(--text);
+  font-size: 13px;
+}
+.map-empty-desc {
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+
+.map-footer {
+  margin-top: 4px;
+  padding: 8px 0;
+  color: var(--text-faint);
+  font-size: 10px;
+  text-align: center;
+  letter-spacing: 0.06em;
+  border-top: 1px solid var(--glass-border);
+}
+
+.map-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.map-refresh-btn.primary {
+  color: rgba(180, 210, 255, 0.95);
+  border-color: rgba(120, 180, 255, 0.45);
+}
+.map-refresh-btn.primary:hover {
+  background: rgba(120, 180, 255, 0.08);
+  color: rgba(210, 225, 255, 1);
+}
+
+/* ============ Session Strip (Architecture Tour — A2) ============
+   Thin bar between the main header and the tab content. Appears only
+   while a tour is active; disappears cleanly when the host sends
+   tour/state = null. */
+
+.session-strip {
+  border-top: 1px solid var(--glass-border);
+  border-bottom: 1px solid var(--glass-border);
+  padding: 10px 14px 12px;
+  background: linear-gradient(
+    180deg,
+    rgba(120, 180, 255, 0.07),
+    rgba(120, 180, 255, 0.02)
+  );
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.session-strip-main {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.session-strip-label {
+  color: rgba(180, 210, 255, 0.9);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  font-weight: 600;
+}
+.session-strip-path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+.session-strip-narration {
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.55;
+  min-height: 20px;
+}
+.session-strip-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+.session-strip-btn {
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--text-dim);
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 11.5px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.session-strip-btn:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+}
+.session-strip-btn.primary {
+  border-color: rgba(120, 180, 255, 0.5);
+  color: rgba(200, 220, 255, 0.95);
+}
+.session-strip-btn.primary:hover {
+  background: rgba(120, 180, 255, 0.1);
+  color: rgba(220, 235, 255, 1);
+}
+
+/* ============ Explain-Back Panel (B1) ============
+   Absolute-positioned overlay that covers the tab content. Close
+   button returns the user to whatever tab they were on. */
+
+.eb-panel {
+  position: absolute;
+  inset: 52px 0 0 0;  /* below the main header */
+  background: var(--bg, #0a0812);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  z-index: 50;
+  overflow: hidden;
+}
+.eb-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--glass-border);
+  gap: 10px;
+}
+.eb-header-main {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+.eb-title {
+  color: rgba(180, 210, 255, 0.9);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.eb-path {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.eb-close-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-faint);
+  font-size: 20px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.eb-close-btn:hover {
+  color: var(--text);
+}
+
+.eb-code-block {
+  max-height: 200px;
+  overflow: auto;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid var(--glass-border);
+}
+.eb-code-block pre {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  white-space: pre;
+}
+.eb-code-block code {
+  background: transparent;
+  padding: 0;
+  font-family: inherit;
+}
+
+.eb-subtitle {
+  padding: 10px 14px 6px;
+  color: var(--text-dim);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.eb-history {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.eb-round {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.eb-you,
+.eb-protege {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.eb-who {
+  color: var(--text-faint);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  font-weight: 600;
+}
+.eb-said {
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.55;
+  padding: 8px 10px;
+  background: rgba(120, 180, 255, 0.06);
+  border-left: 2px solid rgba(120, 180, 255, 0.35);
+  border-radius: 4px;
+}
+.eb-grade {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.eb-grade-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.eb-grade-icon {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  flex-shrink: 0;
+  width: 12px;
+  line-height: 1;
+}
+.eb-got-right .eb-grade-icon {
+  color: rgba(130, 220, 170, 0.9);
+}
+.eb-missed .eb-grade-icon {
+  color: rgba(255, 180, 80, 0.9);
+}
+.eb-follow-up {
+  color: var(--text-dim);
+  font-style: italic;
+}
+.eb-follow-up .eb-grade-icon {
+  color: var(--text-faint);
+  font-style: normal;
+}
+
+.eb-input {
+  padding: 10px 14px 14px;
+  border-top: 1px solid var(--glass-border);
+  background: rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.eb-textarea {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.5;
+  padding: 8px 10px;
+  resize: vertical;
+  min-height: 72px;
+}
+.eb-textarea:focus {
+  outline: none;
+  border-color: rgba(120, 180, 255, 0.4);
+}
+.eb-textarea:disabled {
+  opacity: 0.6;
+}
+.eb-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.eb-hint {
+  color: var(--text-faint);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+}
+.eb-submit-btn {
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--text);
+  padding: 6px 14px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.eb-submit-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+}
+.eb-submit-btn.primary {
+  border-color: rgba(120, 180, 255, 0.45);
+  color: rgba(200, 220, 255, 0.95);
+}
+.eb-submit-btn.primary:hover:not(:disabled) {
+  background: rgba(120, 180, 255, 0.1);
+}
+.eb-submit-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.eb-footer-actions {
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--glass-border);
+  display: flex;
+  justify-content: flex-end;
+}

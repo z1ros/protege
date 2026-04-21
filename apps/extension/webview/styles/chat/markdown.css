@@ -1,0 +1,431 @@
+/* ==========================================================
+   Assistant markdown rendering — headings, lists, code, etc.
+   Applied inside .msg-assistant .content .md
+   ========================================================== */
+
+.md { font-size: 13px; line-height: 1.6; color: var(--text); }
+.md > *:first-child { margin-top: 0; }
+.md > *:last-child  { margin-bottom: 0; }
+
+.md-h1, .md-h2, .md-h3, .md-h4 {
+  font-family: var(--font-sans);
+  font-weight: 700;
+  color: var(--glow);
+  letter-spacing: -0.005em;
+  margin: 14px 0 6px;
+  line-height: 1.25;
+}
+.md-h1 { font-size: 18px; }
+.md-h2 { font-size: 16px; }
+.md-h3 { font-size: 14px; }
+.md-h4 { font-size: 13px; color: var(--text); }
+
+.md-p {
+  margin: 0 0 10px;
+  color: var(--text);
+}
+.md-p:last-child { margin-bottom: 0; }
+
+.md-strong {
+  color: var(--glow);
+  font-weight: 700;
+}
+.md-em { font-style: italic; color: var(--text); }
+
+.md-ul, .md-ol {
+  margin: 4px 0 12px;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.md-ul { list-style: none; padding-left: 16px; }
+.md-ul .md-li { position: relative; }
+.md-ul .md-li::before {
+  content: "";
+  position: absolute;
+  left: -12px;
+  top: 9px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--electric);
+  box-shadow: 0 0 6px rgba(var(--electric-rgb), 0.6);
+}
+.md-ol { list-style: decimal; }
+.md-ol .md-li::marker { color: var(--electric-soft); font-family: var(--font-mono); font-size: 11px; }
+.md-li { color: var(--text); line-height: 1.55; }
+.md-li > p { margin: 0; }
+
+.md-quote {
+  margin: 10px 0;
+  padding: 8px 12px;
+  border-left: 2px solid var(--electric);
+  background: rgba(var(--electric-rgb), 0.06);
+  border-radius: 0 6px 6px 0;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.md-link {
+  color: var(--electric-soft);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: rgba(var(--electric-rgb), 0.4);
+}
+.md-link:hover { color: var(--glow); }
+
+.md-hr {
+  margin: 14px 0;
+  border: none;
+  border-top: 1px solid var(--glass-border);
+}
+
+/* Inline code — matches block theme (Protege Orbit) with a glassier shell. */
+.md-code-inline {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  padding: 1.5px 7px;
+  border-radius: 5px;
+  background: linear-gradient(180deg, rgba(11, 19, 48, 0.82), rgba(7, 13, 31, 0.82));
+  border: 1px solid rgba(74, 158, 255, 0.16);
+  color: #cbd5ea; /* Orbit default text */
+  box-shadow: inset 0 1px 0 rgba(130, 170, 255, 0.06);
+  /* Pull inline token colors in tight — no extra weight, inherit line-height */
+  font-weight: inherit;
+  line-height: inherit;
+}
+
+/* Code block wrapper — flat neutral dark panel, with just enough
+   definition that the eye registers "this is a code slab" without any
+   color tint. One hairline border, one 1px inner highlight on top. */
+.md-code-wrap {
+  margin: 10px 0;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #1e1e1e;
+  color: #cbd5ea;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 1px 0 rgba(0, 0, 0, 0.25);
+  position: relative;
+}
+
+.md-code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 12px;
+  background: rgba(255, 255, 255, 0.025);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.md-code-lang {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(130, 170, 255, 0.55);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.md-code-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.md-code-copy,
+.md-code-wrap-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  color: var(--text-faint);
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+.md-code-copy svg,
+.md-code-wrap-toggle svg {
+  width: 12px;
+  height: 12px;
+}
+
+.md-code-copy:hover,
+.md-code-wrap-toggle:hover {
+  color: var(--glow);
+  background: var(--glass-2);
+  border-color: var(--glass-border-strong);
+}
+
+/* Active wrap state — subtle highlight so the current mode reads at a
+   glance without being louder than the Copy button. */
+.md-code-wrap-toggle.is-on {
+  color: var(--glow);
+  border-color: rgba(74, 158, 255, 0.32);
+  background: rgba(74, 158, 255, 0.08);
+}
+
+.md-pre {
+  margin: 0;
+  padding: 12px 14px;
+  background: none;
+  border: none;
+  border-radius: 0;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--glow-soft);
+  scrollbar-width: thin;
+}
+
+/* Wrap mode — default for chat code blocks. Long lines fold instead of
+   forcing horizontal scroll; unbreakable tokens break mid-word so the
+   bubble never overflows. Toggle in the header flips to scroll mode. */
+.md-pre--wrap {
+  overflow-x: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.md-pre--wrap .md-code-block {
+  white-space: inherit;
+  word-break: inherit;
+  overflow-wrap: inherit;
+}
+
+/* Gutter mode — applied only when the source had `  N[→]` line prefixes
+   (smartFix "code window" prompts). Two-column grid: numbers + arrow on
+   the left, clean code on the right. Prism tokenizes the clean code so
+   JSX tags / keywords colour correctly, and the flagged line is
+   highlighted via a subtle background row. */
+.md-pre--gutter {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 12px;
+  padding: 10px 14px 10px 10px;
+}
+.md-code-gutter {
+  display: flex;
+  flex-direction: column;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.28);
+  user-select: none;
+  padding-right: 8px;
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+}
+.md-code-gutter-row {
+  display: grid;
+  grid-template-columns: 2ch 1ch;
+  gap: 4px;
+  line-height: 1.6;
+  min-height: 1.6em;
+}
+.md-code-gutter-row.is-marked {
+  color: var(--electric-soft);
+}
+.md-code-gutter-num { text-align: right; }
+.md-code-gutter-arrow { text-align: left; }
+
+/* ==========================================================
+   Shiki transformer annotations — picked up from notation
+   comments in the source (`// [!code ++]`, `// [!code focus]`
+   etc.). Each transformer adds a `.line` class on matching
+   lines; the rules below paint them. All neutral-palette so
+   they layer cleanly on One Dark Pro.
+   ========================================================== */
+
+/* Diff lines (from `// [!code ++]` / `// [!code --]`). Full-row
+   green/red backgrounds so added/removed code jumps visually. */
+.md-code-block .line.diff.add,
+.md-code-block .line.diff.remove {
+  display: inline-block;
+  width: 100%;
+  position: relative;
+}
+.md-code-block .line.diff.add {
+  background: rgba(46, 160, 100, 0.12);
+}
+.md-code-block .line.diff.add::before {
+  content: "+";
+  position: absolute;
+  left: -10px;
+  color: rgba(80, 200, 120, 0.8);
+  font-weight: 700;
+}
+.md-code-block .line.diff.remove {
+  background: rgba(220, 60, 80, 0.12);
+}
+.md-code-block .line.diff.remove::before {
+  content: "-";
+  position: absolute;
+  left: -10px;
+  color: rgba(240, 90, 110, 0.85);
+  font-weight: 700;
+}
+
+/* Focus ranges (from `// [!code focus]`). When ANY line in the
+   block is focused, non-focused lines dim so the reviewer's eye
+   goes straight to the relevant range. Hover unlocks full view. */
+.md-code-block.has-focused .line:not(.focused) {
+  opacity: 0.38;
+  filter: blur(0.3px);
+  transition: opacity 220ms ease, filter 220ms ease;
+}
+.md-code-block.has-focused:hover .line:not(.focused) {
+  opacity: 1;
+  filter: none;
+}
+
+/* Generic highlight (from `// [!code highlight]` or meta `{1,3-5}`).
+   Full-row electric tint — reads as "look here". */
+.md-code-block .line.highlighted {
+  display: inline-block;
+  width: 100%;
+  background: rgba(74, 158, 255, 0.12);
+  box-shadow: inset 2px 0 0 rgba(74, 158, 255, 0.6);
+}
+/* Meta word-highlight (meta `/word/`) — individual tokens get a
+   faint pill behind them. */
+.md-code-block .highlighted-word {
+  background: rgba(74, 158, 255, 0.18);
+  border-radius: 3px;
+  padding: 0 2px;
+  box-shadow: 0 0 0 1px rgba(74, 158, 255, 0.3);
+}
+
+/* Error / warning lines (from `// [!code error]` / `warning`).
+   Squiggly underline like VS Code, colored by severity. */
+.md-code-block .line.highlighted.error {
+  background: rgba(240, 80, 100, 0.08);
+  text-decoration: wavy underline rgba(240, 80, 100, 0.65);
+  text-decoration-skip-ink: none;
+}
+.md-code-block .line.highlighted.warning {
+  background: rgba(240, 180, 60, 0.08);
+  text-decoration: wavy underline rgba(240, 180, 60, 0.65);
+  text-decoration-skip-ink: none;
+}
+
+/* ==========================================================
+   Twoslash — hover tooltips for TS/JS blocks. Triggers on
+   inferred-type spans (`.twoslash-hover`) and renders a popover
+   inside the block. Anchor-positioned via CSS, no JS needed.
+   ========================================================== */
+.md-code-block .twoslash-hover {
+  position: relative;
+  border-bottom: 1px dashed rgba(74, 158, 255, 0.28);
+  cursor: help;
+}
+.md-code-block .twoslash-popup-container {
+  position: absolute;
+  top: 1.5em;
+  left: 0;
+  z-index: 10;
+  display: none;
+  min-width: 240px;
+  max-width: 540px;
+  padding: 8px 11px;
+  background: #0b0f1a;
+  border: 1px solid rgba(74, 158, 255, 0.32);
+  border-radius: 7px;
+  box-shadow:
+    0 10px 28px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(0, 0, 0, 0.4);
+  color: #d4d8e4;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  pointer-events: none;
+}
+.md-code-block .twoslash-hover:hover .twoslash-popup-container,
+.md-code-block .twoslash-hover:focus .twoslash-popup-container {
+  display: block;
+}
+.md-code-block .twoslash-popup-code { color: #d4d8e4; }
+.md-code-block .twoslash-popup-docs {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.08);
+  color: rgba(212, 216, 228, 0.72);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  white-space: normal;
+}
+
+/* Inline compile errors surfaced by Twoslash — red squiggle under the
+   offending identifier, plus an expandable message below the block. */
+.md-code-block .twoslash-error {
+  background: rgba(240, 80, 100, 0.1);
+  text-decoration: wavy underline rgba(240, 80, 100, 0.75);
+  text-decoration-skip-ink: none;
+}
+.md-code-block .twoslash-error-line {
+  display: block;
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-left: 2px solid rgba(240, 80, 100, 0.8);
+  background: rgba(240, 80, 100, 0.08);
+  color: rgba(255, 200, 210, 0.9);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  border-radius: 0 4px 4px 0;
+}
+/* Inline `// ^?` query results — Twoslash renders an inline block
+   showing the inferred type at a caret position. */
+.md-code-block .twoslash-completion-cursor,
+.md-code-block .twoslash-query-presisted {
+  color: rgba(130, 170, 255, 0.9);
+}
+
+/* Block code container — sits inside `.md-pre`. `display: block` so it
+   renders as one continuous code area instead of a wrapping inline span
+   (otherwise `<pre>` newlines + inline `<code>` = pill-per-line). */
+.md-pre .md-code-block {
+  display: block;
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+/* Token colors come from Prism's Night Owl theme (imported in
+   main.tsx). The rules below set the *fallback* text color for
+   unhighlighted spans and suppress the theme's own dark background
+   on `pre[class*="language-"]` / `code[class*="language-"]`, so our
+   existing `.md-code-wrap` Orbit gradient stays the visible surface.
+   Also kill the theme's default margin/padding/border so the block
+   sits flush inside the Orbit frame. */
+.md-code-wrap,
+.md-code-inline { color: #cbd5ea; }
+.md-code-wrap pre[class*="language-"],
+.md-code-wrap code[class*="language-"],
+.md-code-inline[class*="language-"] {
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  text-shadow: none;
+  box-shadow: none;
+}
+/* Prism's Night Owl uses a distinct font by default; inherit ours so
+   code blocks match the app's mono stack. */
+.md-code-wrap code[class*="language-"],
+.md-code-inline[class*="language-"] {
+  font-family: inherit;
+}
+

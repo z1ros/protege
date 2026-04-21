@@ -7,6 +7,10 @@ import {
   hasNativeDiagnosticInRange,
   hasNativeDiagnosticOnLine,
 } from "./nativeDiagnostics.js";
+import {
+  shouldSuppress as gateShouldSuppress,
+  noteFindingShown as gateNoteFindingShown,
+} from "./findingGate.js";
 
 /**
  * Live Code Review — JARVIS Layer 4.
@@ -91,15 +95,19 @@ class ProtegeInlayProvider implements vscode.InlayHintsProvider {
     const list = suggestionsByUri.get(doc.uri.toString());
     if (!list || list.length === 0) return [];
 
-    // Skip findings whose line/range is already covered by a native
-    // diagnostic (TS / ESLint / cSpell / Cursor agent). Avoids stacking
-    // a "💡 Protege" inlay tag over an existing squiggle. See
-    // nativeDiagnostics.ts.
-    const filtered = list.filter((s) =>
-      s.scope === "block" || s.scope === "flow"
-        ? !hasNativeDiagnosticInRange(doc.uri, s.range)
-        : !hasNativeDiagnosticOnLine(doc.uri, s.range.start.line)
-    );
+    // Skip findings covered by a native diagnostic OR blocked by the
+    // finding gate (line recently edited, cursor near, ruleId on
+    // cooldown). Same two-stage filter the CodeLens + whisper use.
+    const uriKey = doc.uri.toString();
+    const filtered = list.filter((s) => {
+      const rangeHasNative =
+        s.scope === "block" || s.scope === "flow"
+          ? hasNativeDiagnosticInRange(doc.uri, s.range)
+          : hasNativeDiagnosticOnLine(doc.uri, s.range.start.line);
+      if (rangeHasNative) return false;
+      if (gateShouldSuppress(uriKey, s)) return false;
+      return true;
+    });
 
     return filtered.map((s) => {
       const line = Math.min(doc.lineCount - 1, s.range.start.line);
@@ -517,7 +525,6 @@ async function runReview(editor: vscode.TextEditor): Promise<void> {
   }
 
   isScanning = false;
-  currentSuggestions = suggestions;
 
   // Preserve higher-scope findings from SAVE / IDLE tiers — only replace
   // the atom-scope slice here. Without this, every LIVE pass wiped the
@@ -532,6 +539,14 @@ async function runReview(editor: vscode.TextEditor): Promise<void> {
   const reserved = new Set(keepers.map((s) => `${s.ruleId}@${s.range.start.line}`));
   const dismissed = dismissedByUri.get(key) ?? new Set<string>();
   const pending = pendingFixByUri.get(key);
+  // Re-read the doc NOW for the cooldown snapshot — `text` was captured
+  // at scan start (line ~447), and the AI call between then and here
+  // may have taken seconds during which the user kept typing. Using
+  // the stale length would inflate the B1 reset delta and expire
+  // cooldowns earlier than the 10% threshold actually warrants.
+  const currentFileSize = editor.document.getText().length;
+  const liveAdded: Suggestion[] = [];
+  let gateDropped = 0;
   for (const s of suggestions) {
     const k = `${s.ruleId}@${s.range.start.line}`;
     if (reserved.has(k)) continue;
@@ -540,13 +555,30 @@ async function runReview(editor: vscode.TextEditor): Promise<void> {
     // Skip findings whose fix is currently being applied (CodeLens
     // should stay clear until the fix settles or the TTL expires).
     if (pending?.has(k)) continue;
+    // Skip findings the finding gate is actively suppressing — line
+    // is mid-edit, cursor is parked on it, or ruleId is on cooldown.
+    // Dropping at ingest (not just render) stops unconfident findings
+    // from polluting the store and leaking into sidebar counts.
+    if (gateShouldSuppress(key, s)) { gateDropped++; continue; }
     merged.push(s);
+    liveAdded.push(s);
+    // B1: cooldown begins when a finding lands in the store (per spec),
+    // not when it renders — underlineWhisper/findingDiagnostics don't
+    // call noteFindingShown, so ingestion-time is the only reliable
+    // place to arm the cooldown.
+    gateNoteFindingShown(key, s, currentFileSize);
     reserved.add(k);
   }
+  // Track only what actually made it through all filters. Sidebar badge
+  // and status bar both read `currentSuggestions.length` — using the
+  // raw pre-filter count here would say "3 issues" while the store has
+  // zero, which is exactly the kind of lying-UI the gate is meant to
+  // prevent.
+  currentSuggestions = liveAdded;
   suggestionsByUri.set(key, merged);
   log(
     "liveReview",
-    `LIVE merged ${scanFile} · raw=${suggestions.length} keepers=${keepers.length} stored=${merged.length}`
+    `LIVE merged ${scanFile} · raw=${suggestions.length} keepers=${keepers.length} stored=${merged.length}${gateDropped > 0 ? ` · gate-dropped ${gateDropped}` : ""}`
   );
   // Editor UI paused — no inlay/codelens/gutter rendering. Sidebar still
   // receives suggestion state via broadcastState(). The Ambient Coach Strip
@@ -791,6 +823,14 @@ export function ingestFindings(uri: string, findings: Suggestion[]): void {
   }
   const dismissed = dismissedByUri.get(uri) ?? new Set<string>();
   const pending = pendingFixByUri.get(uri);
+  // Snapshot file size ONCE for the whole batch — calling getText() per
+  // finding is wasteful, and all findings in one ingestion correspond
+  // to the same point-in-time document state anyway.
+  const doc = vscode.workspace.textDocuments.find(
+    (d) => d.uri.toString() === uri
+  );
+  const fileSize = doc?.getText().length ?? 0;
+  let gateDropped = 0;
   for (const s of findings) {
     const key = keyOf(s);
     // Respect dismissals across tiers — if the user hid it from LIVE,
@@ -798,10 +838,24 @@ export function ingestFindings(uri: string, findings: Suggestion[]): void {
     if (dismissed.has(key)) continue;
     // Same for in-flight fixes — block block/flow re-surfacing until TTL.
     if (pending?.has(key)) continue;
+    // Finding gate (A1+B1): if the user is mid-edit on this line, the
+    // cursor is parked near it, or the ruleId is on cooldown, drop it.
+    // Same reasoning as the LIVE merge loop — don't pollute the store.
+    if (gateShouldSuppress(uri, s)) { gateDropped++; continue; }
     const prior = byKey.get(key);
     if (!prior || weight(s) >= weight(prior)) {
       byKey.set(key, s);
+      // B1 cooldown arms only when the finding is newly accepted into
+      // byKey — a lower-weight re-ingest of the same key doesn't extend
+      // the clock (noteFindingShown is idempotent within the window).
+      gateNoteFindingShown(uri, s, fileSize);
     }
+  }
+  if (gateDropped > 0) {
+    log(
+      "liveReview",
+      `ingest gate-dropped ${gateDropped} finding(s) for ${uri.split(/[\\/]/).pop() ?? uri}`
+    );
   }
   suggestionsByUri.set(uri, [...byKey.values()]);
   scanChangeEmitter.fire(uri);

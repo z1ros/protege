@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { aiQuery } from "./aiBackend.js";
 import { detectConcepts } from "./concepts/detector.js";
 import { log } from "./log.js";
+import { getOwnership } from "./ownership.js";
 
 /**
  * File-Open Greeter — OPT-IN voice overview when the user switches files.
@@ -34,6 +35,15 @@ const DEBOUNCE_MS = 1500;
 const MAX_OVERVIEW_TOKENS = 140; // "under 35 words" lives in ~80 tokens; headroom
 const OFFER_TTL_MS = 5 * 60_000; // status-bar offer lifespan
 const STORAGE_KEY = "protege.greetedFiles";
+/** Per-file cooldown for the ownership-based re-greeting — one unowned
+ *  offer per file per day. Without this, opening a red file twice in a
+ *  row would fire the greeting twice. */
+const UNOWNED_COOLDOWN_MS = 24 * 60 * 60_000;
+const UNOWNED_SEEN_KEY = "protege.unownedGreetedAt";
+/** Below this ownership ratio a file is "unknown" enough to warrant the
+ *  dedicated UNOWNED_FILE_GREETING even if the normal greeter already
+ *  fired on this URI once. */
+const UNOWNED_THRESHOLD = 0.3;
 
 const SUPPORTED_LANGS = new Set([
   "typescript",
@@ -57,6 +67,10 @@ const SUPPORTED_LANGS = new Set([
 ]);
 
 let greetedFiles = new Set<string>();
+/** Per-URI ms epoch of the last unowned-file greeting shown. Separate
+ *  from `greetedFiles` because this dedup is cooldown-based, not
+ *  lifetime. */
+let unownedGreetedAt = new Map<string, number>();
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let inFlight = false;
 
@@ -66,6 +80,10 @@ let inFlight = false;
 interface PendingOverview {
   text: string;
   expireTimer: ReturnType<typeof setTimeout>;
+  /** Which prompt generated this — drives the status-bar label so the
+   *  "review unowned code" case reads differently from the first-open
+   *  overview. */
+  variant: "overview" | "unowned";
 }
 const pending = new Map<string, PendingOverview>();
 let statusBarItem: vscode.StatusBarItem | null = null;
@@ -76,6 +94,9 @@ export function registerFileOpenGreeter(
   // Hydrate from disk so the dedup survives reloads.
   const stored = context.globalState.get<string[]>(STORAGE_KEY) ?? [];
   greetedFiles = new Set(stored);
+  const unownedStored =
+    context.globalState.get<Record<string, number>>(UNOWNED_SEEN_KEY) ?? {};
+  unownedGreetedAt = new Map(Object.entries(unownedStored));
 
   const disposables: vscode.Disposable[] = [];
 
@@ -157,10 +178,18 @@ export function registerFileOpenGreeter(
         }
         broadcast({ type: "voice/playExplain", text: entry.text });
 
+        const playedVariant = entry.variant;
         clearPending(uriKey);
-        greetedFiles.add(uriKey);
+        if (playedVariant === "overview") {
+          greetedFiles.add(uriKey);
+        } else {
+          unownedGreetedAt.set(uriKey, Date.now());
+        }
         await persist(context);
-        log("fileOpenGreeter", `user played overview for ${shortName(ed.document.uri)}`);
+        log(
+          "fileOpenGreeter",
+          `user played ${playedVariant} for ${shortName(ed.document.uri)}`
+        );
       }
     )
   );
@@ -176,7 +205,10 @@ function updateStatusBar(): void {
     statusBarItem.hide();
     return;
   }
-  statusBarItem.text = "$(circle-large-outline) Overview this file?";
+  statusBarItem.text =
+    entry.variant === "unowned"
+      ? "$(circle-large-outline) Review unowned code?"
+      : "$(circle-large-outline) Overview this file?";
   statusBarItem.show();
 }
 
@@ -202,48 +234,83 @@ async function maybeGreet(
   const doc = editor.document;
   const uriKey = doc.uri.toString();
 
-  if (!opts.force && greetedFiles.has(uriKey)) return;
   if (pending.has(uriKey)) return; // offer already live for this file
   if (!isEligible(doc)) return;
 
-  // Note: we no longer require a webview at fetch time. The fetch runs
-  // in the background; the click handler opens the panel on demand.
+  // Pick the branch. The unowned re-greeting fires EVEN if the normal
+  // first-open greeter already ran — that's the whole point of the
+  // ownership-aware path: a file you skimmed a month ago and then
+  // vibecoded into deserves a fresh "you don't own most of this"
+  // prompt. Gated by a 24h per-file cooldown to avoid re-nagging.
+  const ownership = getOwnership(doc.uri);
+  const isUnowned =
+    ownership.state === "unknown" &&
+    ownership.ownedPct < UNOWNED_THRESHOLD &&
+    ownership.totalLines >= 30; // trivial files don't need the nudge
+  const lastUnowned = unownedGreetedAt.get(uriKey) ?? 0;
+  const canFireUnowned =
+    isUnowned && Date.now() - lastUnowned >= UNOWNED_COOLDOWN_MS;
+
+  // Force path: manual replay. Use the overview variant (richer text).
+  // Normal path: overview wins on first open; unowned wins when seen
+  // but low-ownership AND cooldown elapsed.
+  const variant: "overview" | "unowned" =
+    !opts.force && greetedFiles.has(uriKey) && canFireUnowned
+      ? "unowned"
+      : "overview";
+
+  if (variant === "overview") {
+    if (!opts.force && greetedFiles.has(uriKey)) return;
+  } else if (!canFireUnowned) {
+    return;
+  }
 
   inFlight = true;
   try {
-    const reply = await runOverview(doc);
+    const reply =
+      variant === "unowned"
+        ? await runUnownedGreeting(doc, ownership)
+        : await runOverview(doc);
     if (!reply) return;
 
     const trimmed = cleanReply(reply);
     if (!trimmed || isSkipSentinel(trimmed)) {
-      log("fileOpenGreeter", `model returned SKIP for ${shortName(doc.uri)}`);
-      // Still mark as greeted — don't retry next time.
-      greetedFiles.add(uriKey);
+      log(
+        "fileOpenGreeter",
+        `model returned SKIP · ${variant} · ${shortName(doc.uri)}`
+      );
+      if (variant === "overview") {
+        greetedFiles.add(uriKey);
+      } else {
+        unownedGreetedAt.set(uriKey, Date.now());
+      }
       await persist(context);
       return;
     }
 
-    // Stash the overview as a pending offer. The status-bar item shows
-    // "◎ Overview this file?" when the active editor matches this URI.
-    // On click, `protege.playCurrentFileOverview` plays it and marks
-    // the file greeted. If the offer expires without a click, we also
-    // mark greeted — silence was an answer.
+    // Stash the offer keyed by variant. Expiry-without-click counts as
+    // "silence was an answer" for both variants, but they record into
+    // different dedup stores so re-greeting rules stay straight.
     const expireTimer = setTimeout(() => {
       if (pending.has(uriKey)) {
         log(
           "fileOpenGreeter",
-          `offer expired unclaimed · ${shortName(doc.uri)}`
+          `offer expired unclaimed · ${variant} · ${shortName(doc.uri)}`
         );
         clearPending(uriKey);
-        greetedFiles.add(uriKey);
+        if (variant === "overview") {
+          greetedFiles.add(uriKey);
+        } else {
+          unownedGreetedAt.set(uriKey, Date.now());
+        }
         void persist(context);
       }
     }, OFFER_TTL_MS);
 
-    pending.set(uriKey, { text: trimmed, expireTimer });
+    pending.set(uriKey, { text: trimmed, expireTimer, variant });
     log(
       "fileOpenGreeter",
-      `offer ready · ${shortName(doc.uri)} · ${trimmed.length}ch`
+      `offer ready · ${variant} · ${shortName(doc.uri)} · ${trimmed.length}ch`
     );
     updateStatusBar();
   } catch (err) {
@@ -252,6 +319,40 @@ async function maybeGreet(
   } finally {
     inFlight = false;
   }
+}
+
+async function runUnownedGreeting(
+  doc: vscode.TextDocument,
+  ownership: ReturnType<typeof getOwnership>
+): Promise<string | null> {
+  const lang = doc.languageId;
+  const fileName = doc.fileName.split(/[\\/]/).pop() ?? "file";
+  const lines = doc.getText().split("\n");
+  const preview = lines.slice(0, 150).join("\n");
+  const totalLines = ownership.totalLines;
+  const ownedLines = Math.round(ownership.ownedPct * totalLines);
+  const ownedPct = Math.round(ownership.ownedPct * 100);
+
+  const prompt = `The user just opened ${fileName}. Their ownership is ${ownedPct}% (they typed or explained ${ownedLines} of ${totalLines} lines).
+
+File preview (first 150 lines):
+\`\`\`${lang}
+${preview}
+\`\`\`
+
+Write a 2-sentence greeting, voice-ready style:
+
+Sentence 1: What the file does, concretely (reference actual functions / imports you see).
+Sentence 2: Specifically call out that most of it isn't yet explained — offer ONE of:
+  - "Walk me through the key parts? 3 min"
+  - "Drill you on a few pieces? 2 min"
+  - "Open the most unclear part together?"
+
+Pick the offer that matches the file's size + complexity. Short file = drill. Big file with clear entry point = walk-through. Messy file with unclear structure = open the most important function together.
+
+Under 35 words total. Contractions. No preamble. Return only the 2 sentences.`;
+
+  return aiQuery(prompt, MAX_OVERVIEW_TOKENS, { kind: "teach" });
 }
 
 async function runOverview(doc: vscode.TextDocument): Promise<string | null> {
@@ -359,6 +460,17 @@ async function persist(context: vscode.ExtensionContext): Promise<void> {
   const arr = Array.from(greetedFiles);
   const capped = arr.length > 500 ? arr.slice(arr.length - 500) : arr;
   await context.globalState.update(STORAGE_KEY, capped);
+
+  // Garbage-collect the unowned dedup map: drop entries older than 14
+  // days, since anything past that comfortably re-qualifies for a fresh
+  // greeting anyway.
+  const cutoff = Date.now() - 14 * 24 * 60 * 60_000;
+  const pruned: Record<string, number> = {};
+  for (const [key, ts] of unownedGreetedAt.entries()) {
+    if (ts >= cutoff) pruned[key] = ts;
+  }
+  unownedGreetedAt = new Map(Object.entries(pruned));
+  await context.globalState.update(UNOWNED_SEEN_KEY, pruned);
 }
 
 function shortName(uri: vscode.Uri): string {

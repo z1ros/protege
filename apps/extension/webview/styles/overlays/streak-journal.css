@@ -1,0 +1,533 @@
+/* ==========================================================
+   Streak Journal — inline view (replaces main content area)
+   ========================================================== */
+
+.streak-inline {
+  flex: 1;
+  overflow-y: auto;
+  scrollbar-width: none;
+  padding: 20px 18px 40px;
+  animation: sj-fade-in 250ms ease;
+}
+
+.streak-inline::-webkit-scrollbar { display: none; }
+
+@keyframes sj-fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ==========================================================
+   StreakJournal — modern rewrite
+   Hero: giant number + flame glyph, single caption line, mini-stats row.
+   Activity: GitHub-grade heatmap with React-state tooltip + legend.
+   Milestones: horizontal progress rail with 5 milestone tiles.
+   (Recent activity list — removed entirely.)
+   ========================================================== */
+
+.streak-journal {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  padding: 4px 2px 24px;
+}
+
+/* ---- Section heads shared across activity + milestones ---- */
+.sj-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.sj-section-head h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+.sj-section-sub {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+/* ==========================================================
+   HERO — giant streak number + animated electric-bolt glyph.
+   Uses the app's glass tokens so the card blends with every other
+   panel in Protege (no hardcoded deep navy). The only accent color
+   is `--electric-rgb` — matches the brand + logo dot.
+   ========================================================== */
+.sj-hero {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto auto;
+  grid-template-areas:
+    "glyph number"
+    "glyph caption"
+    "stats stats";
+  gap: 6px 18px;
+  padding: 24px 20px 22px;
+  border-radius: 14px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 6px 22px rgba(0, 0, 0, 0.28);
+  position: relative;
+  overflow: hidden;
+}
+
+.sj-hero::before {
+  /* Subtle electric-blue halo behind the bolt glyph — replaces the
+     old orange ember; gives the card a faint directional light source. */
+  content: "";
+  position: absolute;
+  top: -60px;
+  left: -60px;
+  width: 260px;
+  height: 260px;
+  background: radial-gradient(
+    circle,
+    rgba(var(--electric-rgb), 0.13) 0%,
+    transparent 65%
+  );
+  pointer-events: none;
+}
+
+.sj-hero-glyph {
+  grid-area: glyph;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 0 18px rgba(var(--electric-rgb), 0.4));
+  animation: sj-glyph-pulse 2.8s ease-in-out infinite;
+}
+@keyframes sj-glyph-pulse {
+  0%, 100% { transform: translateY(0) scale(1); opacity: 0.95; }
+  50%      { transform: translateY(-1px) scale(1.02); opacity: 1; }
+}
+
+.sj-hero-number-wrap {
+  grid-area: number;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.sj-hero-number {
+  font-size: 84px;
+  font-weight: 700;
+  line-height: 0.9;
+  letter-spacing: -0.03em;
+  color: var(--text);
+  /* Brand-only gradient: bright starlight → electric blue. No amber. */
+  background: linear-gradient(180deg, #ffffff 0%, rgba(var(--electric-rgb), 1) 95%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 2px 14px rgba(var(--electric-rgb), 0.3));
+}
+.sj-hero-unit {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--text-faint);
+  padding-bottom: 6px;
+}
+
+.sj-hero-caption {
+  grid-area: caption;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  letter-spacing: 0.01em;
+  padding-top: 4px;
+}
+
+.sj-hero-stats {
+  grid-area: stats;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  margin-top: 18px;
+  padding: 14px 0 4px;
+  border-top: 1px solid rgba(74, 158, 255, 0.08);
+}
+.sj-mini-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  position: relative;
+}
+.sj-mini-stat:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 20%;
+  bottom: 20%;
+  width: 1px;
+  background: rgba(74, 158, 255, 0.08);
+}
+.sj-mini-stat-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+.sj-mini-stat-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text-faint);
+}
+
+/* ==========================================================
+   ACTIVITY — GitHub-grade heatmap
+   ========================================================== */
+.sj-activity {
+  padding: 18px 18px 14px;
+  border-radius: 12px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+}
+
+.sj-heatmap {
+  display: flex;
+  gap: 6px;
+  position: relative;
+}
+
+.sj-day-labels {
+  display: grid;
+  grid-template-rows: repeat(7, 11px);
+  gap: 2px;
+  padding-top: 20px; /* align below the month row */
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-faint);
+  letter-spacing: 0.1em;
+}
+.sj-day-labels span {
+  height: 11px;
+  line-height: 11px;
+}
+.sj-day-labels span:nth-child(1) { grid-row: 2; } /* Mon */
+.sj-day-labels span:nth-child(2) { grid-row: 4; } /* Wed */
+.sj-day-labels span:nth-child(3) { grid-row: 6; } /* Fri */
+
+.sj-heatmap-scroll {
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.sj-heatmap-scroll::-webkit-scrollbar { display: none; }
+
+.sj-month-row {
+  display: grid;
+  height: 16px;
+  margin-bottom: 4px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--text-faint);
+}
+.sj-month-label {
+  grid-row: 1;
+  justify-self: start;
+}
+
+.sj-heatmap-grid {
+  display: flex;
+  gap: 2px;
+}
+.sj-week {
+  display: grid;
+  grid-template-rows: repeat(7, 11px);
+  gap: 2px;
+}
+
+.sj-day {
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  transition: transform 120ms, box-shadow 120ms;
+}
+.sj-day.sj-day-pad {
+  background: transparent;
+  cursor: default;
+}
+/* White-dominant intensity scale — matches the rest of the app's
+   "white is the primary, electric blue is the rare accent" palette.
+   Only lvl-4 (peak days, +9 IQ or higher) gets the brand splash, so
+   the most active days literally pop on the map. */
+.sj-day-lvl-0 { background: rgba(255, 255, 255, 0.04); }
+.sj-day-lvl-1 { background: rgba(255, 255, 255, 0.14); }
+.sj-day-lvl-2 { background: rgba(255, 255, 255, 0.28); }
+.sj-day-lvl-3 { background: rgba(255, 255, 255, 0.5); }
+.sj-day-lvl-4 {
+  background: rgba(var(--electric-rgb), 0.85);
+  box-shadow: 0 0 6px rgba(var(--electric-rgb), 0.4);
+}
+.sj-day:hover:not(.sj-day-pad) {
+  transform: scale(1.35);
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.7);
+  z-index: 2;
+}
+
+/* Tooltip — floating pill with date + stats.
+   Position is computed by a layout effect in StreakJournal.tsx; this
+   rule only handles appearance + the slide-in animation. `left`/`top`
+   come from inline style; no transform offsets here (the TS code has
+   already done the "above vs below" decision and the clamp). */
+.sj-heat-tooltip {
+  position: absolute;
+  pointer-events: none;
+  z-index: 10;
+  min-width: 180px;
+  max-width: calc(100% - 12px); /* never wider than the heatmap wrap */
+  padding: 9px 12px;
+  background: rgba(7, 13, 31, 0.96);
+  border: 1px solid rgba(74, 158, 255, 0.32);
+  border-radius: 8px;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.55);
+  font-size: 11px;
+  color: var(--text);
+  animation: sj-tt-in-above 140ms ease-out;
+}
+.sj-heat-tooltip.sj-tt-below {
+  animation: sj-tt-in-below 140ms ease-out;
+}
+@keyframes sj-tt-in-above {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes sj-tt-in-below {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.sj-tt-date {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  margin-bottom: 3px;
+}
+.sj-tt-stats {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.sj-tt-stats strong {
+  color: var(--electric-soft);
+  font-weight: 600;
+}
+.sj-tt-rest {
+  color: var(--text-faint);
+  font-style: italic;
+  font-size: 10.5px;
+}
+.sj-tt-concept {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+.sj-heat-legend {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  margin-top: 12px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.sj-heat-legend .sj-day {
+  cursor: default;
+}
+
+/* ==========================================================
+   MILESTONES — horizontal progress rail with tile nodes
+   ========================================================== */
+.sj-rewards-section {
+  padding: 20px 20px 22px;
+  border-radius: 12px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+}
+
+/* Milestone track — white-dominant. The rail and most tiles are pure
+   white at varying alphas; the single ELECTRIC accent appears only on
+   the "next target" tile, so the eye lands on what's still ahead.
+   Unlocked tiles are filled white (the user "owns" them), future tiles
+   are thin outlines (waiting), the next target is the brand pop. */
+.sj-track {
+  position: relative;
+  margin-top: 8px;
+  padding: 22px 0 4px;
+}
+
+.sj-track-rail {
+  position: absolute;
+  top: 34px;
+  left: 22px;
+  right: 22px;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.06);
+}
+.sj-track-fill {
+  position: absolute;
+  top: 34px;
+  left: 22px;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.32);
+  transition: width 500ms cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+.sj-track-tiles {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  position: relative;
+  z-index: 1;
+  gap: 0;
+}
+
+.sj-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+  padding: 0 4px;
+}
+
+/* Default (future) tile: thin white outline, dim white text inside.
+   Reads as "locked, waiting." */
+.sj-tile-node {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ink);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 0.42);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  transition: transform 160ms, border-color 160ms, background 160ms,
+              color 160ms, box-shadow 160ms;
+  position: relative;
+}
+
+/* Reached but not yet unlocked — user has hit this many days in a row
+   currently, but their longest is shorter. Treated like "in progress." */
+.sj-tile.reached .sj-tile-node {
+  border-color: rgba(255, 255, 255, 0.55);
+  color: rgba(255, 255, 255, 0.85);
+}
+
+/* Unlocked — solid white fill, dark text. The user owns this milestone. */
+.sj-tile.unlocked .sj-tile-node {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(255, 255, 255, 0.95);
+  color: var(--ink);
+}
+.sj-tile.unlocked .sj-tile-node svg {
+  stroke: var(--ink);
+}
+
+/* Next-target — the ONE tile to look at. Electric ring + soft glow +
+   bright white text. The only blue on the milestones row. Pulses
+   subtly to draw the eye without shouting. */
+.sj-tile.next .sj-tile-node {
+  border-color: rgba(var(--electric-rgb), 0.85);
+  color: #ffffff;
+  box-shadow:
+    0 0 0 3px rgba(var(--electric-rgb), 0.1),
+    0 0 14px rgba(var(--electric-rgb), 0.4);
+  transform: scale(1.08);
+  animation: sj-tile-next-pulse 2.4s ease-in-out infinite;
+}
+@keyframes sj-tile-next-pulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 3px rgba(var(--electric-rgb), 0.1),
+      0 0 14px rgba(var(--electric-rgb), 0.4);
+  }
+  50% {
+    box-shadow:
+      0 0 0 5px rgba(var(--electric-rgb), 0.06),
+      0 0 22px rgba(var(--electric-rgb), 0.55);
+  }
+}
+.sj-tile-node svg {
+  width: 15px;
+  height: 15px;
+}
+.sj-tile-days {
+  display: block;
+}
+
+.sj-tile-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.sj-tile-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
+  letter-spacing: 0.01em;
+}
+.sj-tile-prize {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+/* Unlocked label brightens to white; prize stays in microcaps grey so
+   the row doesn't shout. The next-target row gets a slightly brighter
+   label so the "you're working on this" tile reads top-down too. */
+.sj-tile.unlocked .sj-tile-label { color: var(--text); }
+.sj-tile.next .sj-tile-label { color: var(--text); }
+
+/* 8 milestone tiles need a lot of breathing room for their labels. Below
+   680 px we collapse to icons-only (day-number circles) so the track
+   stays legible in the typical VS Code side-bar webview width. */
+@media (max-width: 680px) {
+  .sj-tile-meta { display: none; }
+}
+
+@media (max-width: 520px) {
+  .sj-hero-number { font-size: 64px; }
+  .sj-hero {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "glyph"
+      "number"
+      "caption"
+      "stats";
+    text-align: center;
+  }
+  .sj-hero-glyph { justify-content: center; }
+  .sj-hero-number-wrap { justify-content: center; }
+}
+

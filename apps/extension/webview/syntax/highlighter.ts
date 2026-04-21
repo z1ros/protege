@@ -52,6 +52,13 @@ const LANG_ALIASES: Record<string, string> = {
   mjs: "javascript",
   cjs: "javascript",
   ts: "typescript",
+  // VS Code's languageId for .tsx / .jsx files is `typescriptreact` /
+  // `javascriptreact`. smartFix.ts embeds this id directly in the code
+  // fence, so without these aliases a .tsx window gets rendered with
+  // the plain TypeScript grammar — which has no idea about JSX tags,
+  // so `<div>` / `<input>` / attribute names stay uncolored.
+  typescriptreact: "tsx",
+  javascriptreact: "jsx",
   py: "python",
   sh: "bash",
   zsh: "bash",
@@ -119,9 +126,25 @@ export function highlightInner(code: string, lang: string): string {
     resolved = resolveLang(guessInlineLang(code));
   }
   if (!resolved || resolved === "none") return escapeHtml(code);
+  const before = resolved;
+  // Upgrade plain ts/js → tsx/jsx when the body clearly contains JSX.
+  // Pattern matches `<TagName ` / `<TagName>` / `</TagName>` — distinct
+  // from TypeScript generics like `Array<string>`. Without this, code
+  // from a `typescript` / `javascript` fence that happens to contain
+  // JSX gets tokenized without tag colors.
+  if ((resolved === "typescript" || resolved === "javascript") &&
+      /<[A-Za-z][A-Za-z0-9._-]*(\s|\/|>)/.test(code) &&
+      /<\/[A-Za-z]/.test(code)) {
+    resolved = resolved === "typescript" ? "tsx" : "jsx";
+  }
   const grammar = Prism.languages[resolved];
+  // Unconditional per-call trace. Remove once JSX highlighting is
+  // confirmed working — this is the only way to see end-to-end which
+  // lang string was actually passed and which grammar fired.
+  logToHost(
+    `call lang=${JSON.stringify(lang)} resolved=${before}${before !== resolved ? ` → ${resolved}` : ""} grammar=${grammar ? "ok" : "MISSING"} codeLen=${code.length} codePreview=${JSON.stringify(code.slice(0, 80))}`
+  );
   if (!grammar) {
-    logToHost(`missing grammar lang=${lang} resolved=${resolved}`);
     return escapeHtml(code);
   }
   try {

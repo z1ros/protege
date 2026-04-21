@@ -141,6 +141,17 @@ export function mountProtegeWebview(
         | "voice"
         | "both";
       post(webview, { type: "explainMode/state", mode });
+      // Hydrate an in-flight Architecture Tour if one's running — the
+      // session strip needs to reappear when the user re-opens the
+      // sidebar. Idempotent; `null` means no active tour.
+      const { getCurrentTour } = await import("./architectureTour.js");
+      post(webview, { type: "tour/state", state: getCurrentTour() });
+      // Same for explain-back — survives sidebar close/reopen mid-session.
+      const { getCurrentExplainBack } = await import("./explainBack.js");
+      post(webview, {
+        type: "explainBack/state",
+        state: getCurrentExplainBack(),
+      });
       const last = getLastCall();
       if (last) {
         post(webview, {
@@ -237,6 +248,36 @@ export function mountProtegeWebview(
       await vscode.workspace
         .getConfiguration("protege")
         .update("explainMode", msg.mode, vscode.ConfigurationTarget.Global);
+    } else if (msg.type === "map/request") {
+      // Project Map tab (A1) — file tree + git signals + entry points.
+      const { collectProjectMap } = await import("./projectMap.js");
+      const data = await collectProjectMap();
+      post(webview, { type: "map/data", data });
+    } else if (msg.type === "map/fileSummary") {
+      // MAP tab — fetch (or pull from cache) a 2-sentence summary.
+      const { getFileSummary } = await import("./projectMap.js");
+      const summary = await getFileSummary(msg.path);
+      post(webview, { type: "map/fileSummaryResult", path: msg.path, summary });
+    } else if (msg.type === "map/openFile") {
+      // MAP tab — "Open file" button.
+      const { openMapFile } = await import("./projectMap.js");
+      await openMapFile(msg.path);
+    } else if (msg.type === "tour/start") {
+      // Architecture Tour (A2) — kick off a codebase walkthrough.
+      const { startTour } = await import("./architectureTour.js");
+      await startTour(msg.intent);
+    } else if (msg.type === "tour/next") {
+      const { advanceTour } = await import("./architectureTour.js");
+      await advanceTour();
+    } else if (msg.type === "tour/stop") {
+      const { stopTour } = await import("./architectureTour.js");
+      await stopTour();
+    } else if (msg.type === "explainBack/submit") {
+      const { submitExplanation } = await import("./explainBack.js");
+      await submitExplanation(msg.explanation);
+    } else if (msg.type === "explainBack/stop") {
+      const { stopExplainBack } = await import("./explainBack.js");
+      await stopExplainBack();
     } else if (msg.type === "ai/downloadModel") {
       vscode.commands.executeCommand("protege.downloadOnDeviceModel");
     } else if (msg.type === "openExternal") {
@@ -541,12 +582,15 @@ async function handleChat(
     createdAt: new Date().toISOString(),
   };
 
-  // Broadcast the user message to the webview so it renders in the chat
-  // list immediately. Crucial for voice mode (Phase 3 unified layout): the
-  // transcript appears as a normal message bubble above the inline voice
-  // footer, so the user sees what was heard + can scroll the full
-  // conversation while still in voice mode.
-  post(webview, { type: "chat/append", message: userMsg });
+  // Broadcast the user message ONLY for voice turns. In text mode, the
+  // webview already appended the user's message optimistically when
+  // sendMessage() was called — broadcasting here would duplicate it.
+  // Voice transcripts originate host-side with no local append, so the
+  // webview needs this broadcast to show them.
+  const isVoiceTurn = mode === "voice" || mode === "voice-dialogue" || mode === "teaching";
+  if (isVoiceTurn) {
+    post(webview, { type: "chat/append", message: userMsg });
+  }
 
   post(webview, { type: "chat/loading", loading: true });
 

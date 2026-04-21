@@ -3,6 +3,8 @@ import type {
   ChatMessage,
   ClusterSummary,
   ConceptRow,
+  TourState,
+  ExplainBackSession,
   DailyIqPoint,
   Finding,
   GainEvent,
@@ -20,6 +22,9 @@ import { vscode, onHostMessage } from "./vscode.js";
 import { VoiceMode } from "./VoiceMode.js";
 import { ConceptsTab } from "./ConceptsTab.js";
 import { LiveTab } from "./LiveTab.js";
+import { MapTab } from "./MapTab.js";
+import { SessionStrip } from "./SessionStrip.js";
+import { ExplainBackPanel } from "./ExplainBackPanel.js";
 import { ChatSearchBar } from "./ChatSearchBar.js";
 import { ChatHistoryPanel } from "./ChatHistoryPanel.js";
 import { CinematicPlate } from "./CinematicPlate.js";
@@ -49,7 +54,7 @@ import {
 } from "./icons.js";
 import protegeLogoUrl from "./protege-logo.svg";
 
-type Mode = "chat" | "concepts" | "live";
+type Mode = "chat" | "concepts" | "live" | "map";
 type ChatInputMode = "text" | "voice";
 
 const QUICK_PROMPTS: Array<{ icon: React.ReactNode; label: string }> = [
@@ -243,6 +248,16 @@ export function App() {
   // to the default. Hydrated via `explainMode/state` on every mount + any
   // config change. Passed down to LiveTab as a controlled prop.
   const [explainMode, setExplainMode] = useState<"text" | "voice" | "both">("text");
+  // Architecture Tour (A2) session state. Hoisted here so the strip
+  // survives tab switches. Host is the source of truth — we mirror
+  // whatever `tour/state` comes in, and partial updates via
+  // `tour/narrationReady` mutate the steps array in place.
+  const [tour, setTour] = useState<TourState | null>(null);
+  // Explain-back (B1) session. Same pattern as `tour` — host owns
+  // truth, we mirror. `null` means no session active.
+  const [explainBack, setExplainBack] = useState<ExplainBackSession | null>(
+    null
+  );
   const [streakOpen, setStreakOpen] = useState(false);
   const [chatHistoryOpen, setChatHistoryOpen] = useState(false);
   const [modelStatus, setModelStatus] = useState<{
@@ -375,6 +390,21 @@ export function App() {
         // same as above — no-op
       } else if (msg.type === "explainMode/state") {
         setExplainMode(msg.mode);
+      } else if (msg.type === "tour/state") {
+        setTour(msg.state);
+      } else if (msg.type === "tour/narrationReady") {
+        // Patch the narration into the current tour without losing
+        // position / other already-landed narrations.
+        setTour((prev) => {
+          if (!prev) return prev;
+          if (msg.index < 0 || msg.index >= prev.steps.length) return prev;
+          const steps = prev.steps.map((s, i) =>
+            i === msg.index ? { ...s, narration: msg.narration } : s
+          );
+          return { ...prev, steps };
+        });
+      } else if (msg.type === "explainBack/state") {
+        setExplainBack(msg.state);
       }
     });
     vscode.postMessage({ type: "ready" });
@@ -640,9 +670,37 @@ export function App() {
             {mode === "live" && !overlay && !streakOpen && <span className="tab-dot" />}
             Live
           </button>
+          <button
+            className={`tab ${mode === "map" && !overlay && !streakOpen ? "active" : ""}`}
+            onClick={() => {
+              setMode("map");
+              setOverlay(null);
+              setStreakOpen(false);
+            }}
+            title="Project Map — what matters in this codebase"
+          >
+            {mode === "map" && !overlay && !streakOpen && <span className="tab-dot" />}
+            Map
+          </button>
         </div>
 
       </header>
+
+      {/* Architecture-tour session strip. Renders between header and
+          tab content, visible on every tab so the user can switch to
+          Chat to ask a question mid-tour without losing the session. */}
+      <SessionStrip tour={tour} />
+
+      {/* Explain-back (B1) overlay — takes over the sidebar content
+          while active. Host is the single source of truth; closing
+          posts `explainBack/stop` which clears session server-side and
+          broadcasts `explainBack/state: null`, unmounting this panel. */}
+      {explainBack && (
+        <ExplainBackPanel
+          session={explainBack}
+          onClose={() => vscode.postMessage({ type: "explainBack/stop" })}
+        />
+      )}
 
       {streakOpen ? (
         <div className="streak-inline">
@@ -928,6 +986,8 @@ export function App() {
             vscode.postMessage({ type: "explainMode/set", mode });
           }}
         />
+      ) : mode === "map" ? (
+        <MapTab />
       ) : null}
 
       {/* Single persistent overlay — the backdrop stays mounted across panel

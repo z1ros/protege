@@ -1,7 +1,17 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { guessInlineLang, highlightInner } from "./syntax/highlighter";
+import {
+  canonicalLang,
+  ensureShiki,
+  ensureLang,
+  guessInlineLang,
+  highlightToHtml,
+  escapeHtml,
+} from "./syntax/shikiHighlighter";
+import { ensureTwoslash } from "./syntax/twoslashLoader";
+
+const TWOSLASH_LANGS = new Set(["typescript", "tsx", "javascript", "jsx"]);
 
 export function AssistantMarkdown({ content }: { content: string }) {
   return (
@@ -64,10 +74,23 @@ function extractText(node: React.ReactNode): string {
 }
 
 function InlineCode({ text, lang }: { text: string; lang: string }) {
-  // highlight.js is fully synchronous — no useEffect, no Promise, no
-  // fallback flash. Memoize per (text, lang) so identical inline pills
-  // (used a lot in chat) don't re-tokenize on every render.
-  const html = useMemo(() => highlightInner(text, lang), [text, lang]);
+  // Shiki init is async. First render shows plain-escaped text so the
+  // pill appears instantly; once the highlighter resolves (or the grammar
+  // lazy-loads), the effect below swaps in coloured HTML. Memoized per
+  // (text, lang) to avoid re-tokenizing identical inline pills.
+  const [html, setHtml] = useState<string>(() => escapeHtml(text));
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      await ensureShiki();
+      const canonical = canonicalLang(lang);
+      if (canonical) await ensureLang(canonical);
+      if (cancelled) return;
+      const out = highlightToHtml(text, lang);
+      if (out != null) setHtml(out);
+    })();
+    return () => { cancelled = true; };
+  }, [text, lang]);
   return (
     <code
       className={`md-code-inline language-${lang}`}
@@ -90,10 +113,33 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
     () => stripLineNumberGutter(trimmed),
     [trimmed]
   );
-  const html = useMemo(
-    () => highlightInner(codeForHighlight, lang || "text"),
-    [codeForHighlight, lang]
-  );
+  // Shiki async-init path: show plain text instantly, swap to coloured
+  // HTML once the highlighter + grammar are ready. Effect is keyed on
+  // the clean code + lang so the Wrap toggle doesn't re-trigger a load.
+  const [html, setHtml] = useState<string>(() => escapeHtml(codeForHighlight));
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      await ensureShiki();
+      const canonical = canonicalLang(lang || "text");
+      if (canonical) await ensureLang(canonical);
+      if (cancelled) return;
+      // First paint — plain Shiki (fast, always works).
+      const firstPass = highlightToHtml(codeForHighlight, lang || "text");
+      if (firstPass != null) setHtml(firstPass);
+      // Second paint — if the lang is TS/JS, kick off Twoslash and
+      // re-highlight once the transformer is cached. Block becomes
+      // "hover-aware" with real type tooltips + inline errors. No-op
+      // for every other language.
+      if (canonical && TWOSLASH_LANGS.has(canonical)) {
+        const ts = await ensureTwoslash();
+        if (cancelled || !ts) return;
+        const enriched = highlightToHtml(codeForHighlight, lang || "text");
+        if (enriched != null && enriched !== firstPass) setHtml(enriched);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [codeForHighlight, lang]);
 
   const handleCopy = useCallback(() => {
     navigator.clipboard

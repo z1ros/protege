@@ -344,6 +344,14 @@ export type WebviewToHost =
   | { type: "explainMode/set"; mode: "text" | "voice" | "both" }
   | { type: "chat/search"; query: string }
   | { type: "chat/clearHistory" }
+  | { type: "map/request" }
+  | { type: "map/fileSummary"; path: string }
+  | { type: "map/openFile"; path: string }
+  | { type: "tour/start"; intent: "codebase" }
+  | { type: "tour/next" }
+  | { type: "tour/stop" }
+  | { type: "explainBack/submit"; explanation: string }
+  | { type: "explainBack/stop" }
   | { type: "debug/log"; tag: string; message: string };
 
 export type HostToWebview =
@@ -486,4 +494,172 @@ export type HostToWebview =
         email: string | null;
         avatarUrl: string | null;
       } | null;
-    };
+    }
+  | { type: "map/data"; data: ProjectMapData }
+  | { type: "map/fileSummaryResult"; path: string; summary: string | null }
+  | { type: "tour/state"; state: TourState | null }
+  | { type: "tour/narrationReady"; index: number; narration: string }
+  | { type: "explainBack/state"; state: ExplainBackSession | null }
+  | { type: "ownership/changed"; path: string; summary: OwnershipSummary };
+
+/* ========== Project Map (A1) ========== */
+
+export interface ProjectMapFile {
+  /** Relative path from workspace root, forward slashes. */
+  path: string;
+  /** Total edits across all authors in the last 7 days (from git log). */
+  editsTotal: number;
+  /** Edits by the current user (matched by `git config user.email`). */
+  editsByMe: number;
+  /** True when the heuristic believes this is a project entry point
+   *  (from package.json main/bin, activate() for VS Code ext, app.listen
+   *  for servers, etc.). */
+  isEntryPoint: boolean;
+  /** Optional ownership summary — present once the ownership system has
+   *  seen any activity on the file. Omitted means `untracked`. */
+  ownership?: OwnershipSummary;
+}
+
+export interface ProjectMapData {
+  /** Workspace root, displayed as the header. `null` if no workspace. */
+  root: string | null;
+  /** All source files considered interesting (skip node_modules, dist,
+   *  generated, binary). Sorted by `editsTotal` descending. */
+  files: ProjectMapFile[];
+  /** Top-N most-edited files for the sidebar "hot files" list. */
+  hotFiles: ProjectMapFile[];
+  /** Files marked as entry points. */
+  entryPoints: ProjectMapFile[];
+  /** Files the user hasn't edited — "untouched by me". */
+  untouchedByMe: ProjectMapFile[];
+  /** When this data was computed, ms epoch. */
+  computedAt: number;
+  /** Warnings surfaced during collection (e.g. "git not available"). */
+  warnings: string[];
+}
+
+/* ========== Architecture Tour (A2) ========== */
+
+export interface TourStep {
+  /** Relative path from workspace root. */
+  path: string;
+  /** 0-based line number to scroll to + anchor the highlight on. */
+  focusLine: number;
+  /** Short label describing the focal point (e.g. "activate()",
+   *  "default export", "top-level class"). May be empty. */
+  focusLabel: string;
+  /** 2–3 sentence narration, filled in as the Haiku call returns.
+   *  `null` while the call is in flight; the webview shows a typing
+   *  indicator until the `tour/narrationReady` message lands. */
+  narration: string | null;
+}
+
+export interface TourState {
+  /** The user's intent string — currently only "codebase" is shipped,
+   *  but the type is forward-compatible with "auth-flow" / "around file". */
+  intent: string;
+  /** Ordered list of 3–7 steps. Narrations arrive asynchronously via
+   *  `tour/narrationReady`. */
+  steps: TourStep[];
+  /** Current step index (0-based). */
+  currentIndex: number;
+  /** ms epoch when the tour started. */
+  startedAt: number;
+}
+
+/* ========== Explain-back Session (B1) ========== */
+
+export interface ExplainBackRound {
+  /** What the user said, verbatim. */
+  explanation: string;
+  /** Parsed grade from Haiku. `null` while the grading call is in flight. */
+  grade: ExplainBackGrade | null;
+  /** ms epoch when the user submitted this round. */
+  submittedAt: number;
+}
+
+export interface ExplainBackGrade {
+  /** One-sentence "what the user nailed". */
+  got_right: string;
+  /** One specific thing they missed — null when solid. */
+  missed: string | null;
+  /** Pointed follow-up question OR "you got this" when solid. */
+  follow_up: string;
+  /** Whether Protege thinks the explanation is complete enough to stop. */
+  done: boolean;
+}
+
+export interface ExplainBackSession {
+  /** Relative path of the file the selection came from. */
+  path: string;
+  /** The user's selected code. */
+  code: string;
+  /** Language id for syntax highlighting. */
+  language: string;
+  /** Rounds of explanation + grading (append-only during the session). */
+  rounds: ExplainBackRound[];
+  /** True when the most recent round is awaiting a grade. */
+  grading: boolean;
+  /** Soft cap — when rounds.length ≥ this, we encourage wrapping up. */
+  maxRounds: number;
+  /** ms epoch when the session started. */
+  startedAt: number;
+  /** 0-based line range of the original selection — used by ownership.markExplained. */
+  startLine?: number;
+  endLine?: number;
+}
+
+/* ========== Code Ownership (Vibecoding Partnership) ========== */
+
+/** Single tracked region of a file — created on an auto-insert burst, and
+ *  stamped with `explainedAt` when the user passes an explain-back round
+ *  or drill that covers it. Typed regions are recorded too but implicitly
+ *  count as owned without explanation. */
+export interface OwnershipRegion {
+  /** 0-based inclusive start line at the moment of capture. */
+  startLine: number;
+  /** 0-based inclusive end line at the moment of capture. */
+  endLine: number;
+  /** How the lines came to exist. */
+  origin: "typed" | "auto-inserted";
+  /** ms epoch when the user successfully explained / drilled this range,
+   *  or null if still unreviewed. Typed regions may have `explainedAt`
+   *  null — they still count as owned. */
+  explainedAt: number | null;
+}
+
+export interface FileOwnership {
+  /** Schema version, for migrations later. */
+  version: 1;
+  /** Regions of the file, roughly non-overlapping. Adjacent same-origin
+   *  regions are merged on insert; at most ~200 per file (coarsened if
+   *  the cap is exceeded). */
+  regions: OwnershipRegion[];
+  /** ms epoch of the last time we recomputed `totalLinesAtLastScan`. */
+  lastScanAt: number;
+  /** Total line count of the file at last scan; used as denominator for
+   *  the ownership percentage. */
+  totalLinesAtLastScan: number;
+}
+
+/** Summary state used by every UI surface (map dots, greeter, inviter). */
+export type OwnershipState = "untracked" | "owned" | "partial" | "unknown";
+
+export interface OwnershipSummary {
+  /** Coarse bucket: `untracked` when no regions recorded; `owned` > 0.8;
+   *  `partial` 0.3–0.8; `unknown` < 0.3. */
+  state: OwnershipState;
+  /** (typed-lines + explained-auto-lines) / total, clamped 0..1. */
+  ownedPct: number;
+  /** (typed-lines + all-auto-lines) / total — upper bound if every auto
+   *  region were explained. */
+  knownPct: number;
+  /** Lines the user has not yet typed OR explained. */
+  unknownLines: number;
+  /** Total file lines at last scan. */
+  totalLines: number;
+  /** The single largest contiguous unreviewed range — used by nudges and
+   *  the "open the most unclear part together" flow. Null when there's
+   *  no unreviewed range. */
+  topUnknownRange: { startLine: number; endLine: number } | null;
+}
