@@ -3,6 +3,10 @@ import type { HostToWebview } from "@protege/types";
 import { reviewDocument, type Suggestion } from "./reviewEngine.js";
 import { renderProtegeHover, type HoverKind } from "./hoverTemplate.js";
 import { log } from "./log.js";
+import {
+  hasNativeDiagnosticInRange,
+  hasNativeDiagnosticOnLine,
+} from "./nativeDiagnostics.js";
 
 /**
  * Live Code Review — JARVIS Layer 4.
@@ -49,6 +53,25 @@ let isScanning = false;
 // Per-URI cache so the InlayHintsProvider can respond to VS Code's pulls
 const suggestionsByUri = new Map<string, Suggestion[]>();
 
+// Session-scoped dismiss log. Keyed by `${uri}` → Set<`${ruleId}@${line}`>.
+// When the user clicks "✕ Dismiss" on a finding, we remember its key so
+// the NEXT scan (which will almost certainly re-detect the same rule at
+// the same line) doesn't re-surface it. Clears on window reload.
+const dismissedByUri = new Map<string, Set<string>>();
+
+// Short-lived "fix in progress" set. On Apply-fix click, we remove the
+// finding from the store immediately (so the CodeLens clears, feels
+// responsive) and add its key here for ~60s. During that window,
+// re-ingestion (LIVE rescan, SAVE/FLOW merge) also skips the key so the
+// finding doesn't flicker back while Claude is still mid-edit_file.
+// After the window expires, normal behavior resumes — if the fix didn't
+// actually resolve the issue, the next scan will legitimately re-add it.
+const pendingFixByUri = new Map<
+  string,
+  Map<string, ReturnType<typeof setTimeout>>
+>();
+const PENDING_FIX_TTL_MS = 60_000;
+
 const DEBOUNCE_MS = 3_000;
 const MIN_CHANGE_CHARS = 4;
 const HEALTH_CHECK_MS = 60_000;
@@ -68,7 +91,17 @@ class ProtegeInlayProvider implements vscode.InlayHintsProvider {
     const list = suggestionsByUri.get(doc.uri.toString());
     if (!list || list.length === 0) return [];
 
-    return list.map((s) => {
+    // Skip findings whose line/range is already covered by a native
+    // diagnostic (TS / ESLint / cSpell / Cursor agent). Avoids stacking
+    // a "💡 Protege" inlay tag over an existing squiggle. See
+    // nativeDiagnostics.ts.
+    const filtered = list.filter((s) =>
+      s.scope === "block" || s.scope === "flow"
+        ? !hasNativeDiagnosticInRange(doc.uri, s.range)
+        : !hasNativeDiagnosticOnLine(doc.uri, s.range.start.line)
+    );
+
+    return filtered.map((s) => {
       const line = Math.min(doc.lineCount - 1, s.range.start.line);
       const lineText = doc.lineAt(line).text;
       const position = new vscode.Position(line, lineText.length);
@@ -497,12 +530,18 @@ async function runReview(editor: vscode.TextEditor): Promise<void> {
   );
   const merged = [...keepers];
   const reserved = new Set(keepers.map((s) => `${s.ruleId}@${s.range.start.line}`));
+  const dismissed = dismissedByUri.get(key) ?? new Set<string>();
+  const pending = pendingFixByUri.get(key);
   for (const s of suggestions) {
     const k = `${s.ruleId}@${s.range.start.line}`;
-    if (!reserved.has(k)) {
-      merged.push(s);
-      reserved.add(k);
-    }
+    if (reserved.has(k)) continue;
+    // Skip anything the user has already dismissed this session.
+    if (dismissed.has(k)) continue;
+    // Skip findings whose fix is currently being applied (CodeLens
+    // should stay clear until the fix settles or the TTL expires).
+    if (pending?.has(k)) continue;
+    merged.push(s);
+    reserved.add(k);
   }
   suggestionsByUri.set(key, merged);
   log(
@@ -628,6 +667,101 @@ export function findSuggestionAtLine(
 }
 
 /**
+ * Dismiss a suggestion by URI + line. Removes the matching finding from
+ * the shared store and fires the change event so every subscribed
+ * surface (Ghost CodeLens, Underline Whisper, Inlay hint) rerenders
+ * without it. Called from the CodeLens "Dismiss" button.
+ *
+ * Returns true if anything was actually removed. A future tier can
+ * persist the dismissal as a session-level snooze so the next scan
+ * doesn't immediately re-surface the same (ruleId, line).
+ */
+/**
+ * Mark a finding as "fix in progress" — removes it from the store
+ * immediately and blocks re-ingestion for PENDING_FIX_TTL_MS. Called
+ * when the user clicks Apply fix so the CodeLens disappears instantly
+ * and doesn't flicker back while Claude is still running its tool loop.
+ *
+ * Unlike `dismissSuggestionAtLine`, this is TIME-BOUNDED: after the
+ * TTL, the block lifts. If the fix actually worked, the scan won't
+ * re-add the finding (nothing to add). If the fix didn't work, the
+ * finding comes back — which is the honest signal that the fix failed.
+ */
+export function markFixPending(uri: string, line: number): boolean {
+  const list = suggestionsByUri.get(uri);
+  if (!list || list.length === 0) return false;
+
+  const removed: Suggestion[] = [];
+  const next = list.filter((s) => {
+    const match =
+      s.scope === "block" || s.scope === "flow"
+        ? s.range.start.line <= line && line <= s.range.end.line
+        : s.range.start.line === line;
+    if (match) {
+      removed.push(s);
+      return false;
+    }
+    return true;
+  });
+  if (removed.length === 0) return false;
+
+  const pending = pendingFixByUri.get(uri) ?? new Map();
+  for (const s of removed) {
+    const key = keyOf(s);
+    // If a timer is already running for this key, reset it.
+    const existing = pending.get(key);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      const cur = pendingFixByUri.get(uri);
+      if (cur) {
+        cur.delete(key);
+        if (cur.size === 0) pendingFixByUri.delete(uri);
+      }
+      // Nothing else to do — next scan will legitimately re-add the
+      // finding if the issue still exists. No forced refresh here to
+      // avoid a surprise re-appearance when the user isn't looking.
+    }, PENDING_FIX_TTL_MS);
+    pending.set(key, timer);
+  }
+  pendingFixByUri.set(uri, pending);
+
+  if (next.length === 0) suggestionsByUri.delete(uri);
+  else suggestionsByUri.set(uri, next);
+  scanChangeEmitter.fire(uri);
+  return true;
+}
+
+export function dismissSuggestionAtLine(uri: string, line: number): boolean {
+  const list = suggestionsByUri.get(uri);
+  if (!list || list.length === 0) return false;
+
+  const removed: Suggestion[] = [];
+  const next = list.filter((s) => {
+    const match =
+      s.scope === "block" || s.scope === "flow"
+        ? s.range.start.line <= line && line <= s.range.end.line
+        : s.range.start.line === line;
+    if (match) {
+      removed.push(s);
+      return false;
+    }
+    return true;
+  });
+  if (removed.length === 0) return false;
+
+  // Record the dismissed keys so the next re-ingestion (LIVE rescan or
+  // SAVE/IDLE merge) filters them back out instead of re-surfacing.
+  const dismissed = dismissedByUri.get(uri) ?? new Set<string>();
+  for (const s of removed) dismissed.add(keyOf(s));
+  dismissedByUri.set(uri, dismissed);
+
+  if (next.length === 0) suggestionsByUri.delete(uri);
+  else suggestionsByUri.set(uri, next);
+  scanChangeEmitter.fire(uri);
+  return true;
+}
+
+/**
  * Merge findings from a higher-tier scanner (SAVE / IDLE) into the same
  * store the Ghost + Whisper read from. Higher-tier findings dedup by
  * `(uri, ruleId, line)` so a SAVE block-scope finding doesn't collide with
@@ -655,8 +789,15 @@ export function ingestFindings(uri: string, findings: Suggestion[]): void {
   for (const s of existing) {
     byKey.set(keyOf(s), s);
   }
+  const dismissed = dismissedByUri.get(uri) ?? new Set<string>();
+  const pending = pendingFixByUri.get(uri);
   for (const s of findings) {
     const key = keyOf(s);
+    // Respect dismissals across tiers — if the user hid it from LIVE,
+    // SAVE/IDLE shouldn't smuggle it back in under a block/flow scope.
+    if (dismissed.has(key)) continue;
+    // Same for in-flight fixes — block block/flow re-surfacing until TTL.
+    if (pending?.has(key)) continue;
     const prior = byKey.get(key);
     if (!prior || weight(s) >= weight(prior)) {
       byKey.set(key, s);

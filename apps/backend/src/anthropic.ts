@@ -4,7 +4,10 @@ export const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY ?? "",
 });
 
-export const MODEL = process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-6";
+// Default to Haiku — Sonnet is disabled across the app for cost reasons
+// (see resolveModel in routes/chat.ts). Override via env if a single test
+// needs Sonnet.
+export const MODEL = process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5";
 
 // The real prompt now lives in prompts/persona.ts and is composed
 // per-request based on channel (text vs voice). MENTOR_SYSTEM_PROMPT is kept

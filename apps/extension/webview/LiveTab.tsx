@@ -21,6 +21,9 @@ interface Props {
   liveReviewOn: boolean;
   onToggleLiveReview: () => void;
   modelStatus: ModelStatus;
+  /** Teach-click delivery mode. Hoisted to App so tab switches don't lose it. */
+  explainMode: "text" | "voice" | "both";
+  onExplainModeChange: (mode: "text" | "voice" | "both") => void;
 }
 
 interface AnalysisItem {
@@ -48,7 +51,16 @@ const BACKEND_LABEL: Record<LastCall["backend"], string> = {
   sonnet: "Claude Sonnet 4.5",
 };
 
-export function LiveTab({ fileName, liveReviewOn, onToggleLiveReview, modelStatus }: Props) {
+type ExplainMode = "text" | "voice" | "both";
+
+export function LiveTab({
+  fileName,
+  liveReviewOn,
+  onToggleLiveReview,
+  modelStatus,
+  explainMode,
+  onExplainModeChange,
+}: Props) {
   const [inlineErrors, setInlineErrors] = useState(true);
   const [didYouKnow, setDidYouKnow] = useState(true);
   // "Teaching Annotations" toggle removed — feature not yet implemented.
@@ -77,6 +89,8 @@ export function LiveTab({ fileName, liveReviewOn, onToggleLiveReview, modelStatu
         // after the user picked On-Device.
         setLastCall(null);
       }
+      // `explainMode/state` is handled in App.tsx — hoisted so tab
+      // switches don't lose hydration. LiveTab just reads the prop.
     });
     return off;
   }, []);
@@ -104,6 +118,11 @@ export function LiveTab({ fileName, liveReviewOn, onToggleLiveReview, modelStatu
     if ((backend === "on-device" || backend === "auto") && !modelReady && !modelStatus.loading) {
       vscode.postMessage({ type: "ai/downloadModel" });
     }
+  };
+
+  // Mode change bubbles up to App (which owns the state) + posts to host.
+  const handleExplainModeChange = (mode: ExplainMode) => {
+    onExplainModeChange(mode);
   };
 
   return (
@@ -290,51 +309,42 @@ export function LiveTab({ fileName, liveReviewOn, onToggleLiveReview, modelStatu
         </div>
       </div>
 
-      {/* ---- Quick Actions ---- */}
+      {/* ---- Explain mode (voice / text / both) ----
+          Moved OUT of VS Code Settings so the user can flip it without
+          digging into settings.json. Writes to `protege.explainMode`;
+          the host rebroadcasts `explainMode/state` to every panel. */}
       <div className="live-section">
-        <div className="live-section-label microcaps">Quick Actions</div>
-        <div className="live-actions">
-          <ActionButton
-            icon="$(book)"
-            label="Teach symbol at cursor"
-            shortcut="Cmd+K T"
-            command="protege.teachThis"
-          />
-          <ActionButton
-            icon="$(search)"
-            label="Explain selection"
-            shortcut="Cmd+K E"
-            command="protege.explainSelection"
-          />
-          <ActionButton
-            icon="$(warning)"
-            label="Show weak spots"
-            shortcut="Cmd+K W"
-            command="protege.weakSpots"
-          />
-          <ActionButton
-            icon="$(beaker)"
-            label="Quiz me"
-            shortcut="Cmd+K Q"
-            command="protege.quizMe"
-          />
-          <ActionButton
-            icon="$(file)"
-            label="Summarize this file"
-            command="protege.summarizeFile"
-          />
-        </div>
-      </div>
-
-      {/* ---- Keyboard shortcuts ---- */}
-      <div className="live-section">
-        <div className="live-section-label microcaps">Keyboard Shortcuts</div>
-        <div className="live-shortcuts">
-          <ShortcutRow keys="Cmd+K T" action="Teach symbol at cursor" />
-          <ShortcutRow keys="Cmd+K E" action="Explain selected code" />
-          <ShortcutRow keys="Cmd+K W" action="Show weak spots" />
-          <ShortcutRow keys="Cmd+K Q" action="Quiz me on this file" />
-          <ShortcutRow keys="Cmd+Shift+L" action="Toggle Protege panel" />
+        <div className="live-section-label microcaps">Teach delivery</div>
+        <div className="max-plan-switch">
+          <div className="max-plan-label microcaps">
+            When you click Teach
+          </div>
+          <div className="max-plan-options">
+            <button
+              className={`max-plan-option ${explainMode === "text" ? "active" : ""}`}
+              onClick={() => handleExplainModeChange("text")}
+              title="Open the sidebar and send a chat request (~150 words)"
+            >
+              <div className="max-plan-option-label">Text</div>
+              <div className="max-plan-option-sub">chat reply</div>
+            </button>
+            <button
+              className={`max-plan-option ${explainMode === "voice" ? "active" : ""}`}
+              onClick={() => handleExplainModeChange("voice")}
+              title="Protege speaks a short explanation — no chat message"
+            >
+              <div className="max-plan-option-label">Voice</div>
+              <div className="max-plan-option-sub">~8s spoken</div>
+            </button>
+            <button
+              className={`max-plan-option ${explainMode === "both" ? "active" : ""}`}
+              onClick={() => handleExplainModeChange("both")}
+              title="Speak AND send the chat reply"
+            >
+              <div className="max-plan-option-label">Both</div>
+              <div className="max-plan-option-sub">voice + chat</div>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -371,47 +381,6 @@ function ControlRow({
       >
         <span className="live-toggle-thumb" />
       </button>
-    </div>
-  );
-}
-
-function ActionButton({
-  icon,
-  label,
-  shortcut,
-  command,
-  onClick,
-}: {
-  icon: string;
-  label: string;
-  shortcut?: string;
-  command?: string;
-  onClick?: () => void;
-}) {
-  const handleClick = () => {
-    if (onClick) {
-      onClick();
-    }
-    // We can't directly call vscode.commands from webview,
-    // but we can send a message to the host to execute it
-    if (command) {
-      vscode.postMessage({ type: "openExternal", url: `command:${command}` });
-    }
-  };
-
-  return (
-    <button className="live-action-btn" onClick={handleClick}>
-      <span className="live-action-label">{label}</span>
-      {shortcut && <span className="live-action-shortcut microcaps">{shortcut}</span>}
-    </button>
-  );
-}
-
-function ShortcutRow({ keys, action }: { keys: string; action: string }) {
-  return (
-    <div className="live-shortcut-row">
-      <kbd className="live-kbd">{keys}</kbd>
-      <span className="live-shortcut-action">{action}</span>
     </div>
   );
 }

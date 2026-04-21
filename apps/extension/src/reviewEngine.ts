@@ -68,6 +68,14 @@ export interface Suggestion {
    * and by telemetry/debug to trace where a suggestion came from.
    */
   tier?: "live" | "save" | "idle";
+  /**
+   * Teaching framing for the LEARN cloud scan path:
+   *   "praise"    → they did something well, worth understanding why
+   *   "concept"   → a pattern they're using — explain it so they own it
+   *   "watch-out" → a real risk — framed as "next time, watch for this"
+   * Absent on older SAVE/FLOW findings and on-device scans.
+   */
+  kind?: "praise" | "concept" | "watch-out";
 }
 
 interface AiIssue {
@@ -80,10 +88,12 @@ interface AiIssue {
   teaser?: string;
   lesson?: string;
   voiceScript?: string;
+  kind?: "praise" | "concept" | "watch-out";
 }
 
 const MAX_FILE_LINES = 400;
-const MAX_ISSUES = 5;
+const MAX_ISSUES = 5;          // on-device + SAVE/FLOW tiers
+const MAX_CLOUD_ISSUES = 2;    // cloud LIVE (LEARN mode) — silence > noise
 
 interface PromptOptions {
   /** All lines of the document (before truncation). Used for focus window. */
@@ -164,11 +174,23 @@ function ruleHintsFor(languageId: string, fileName: string): string {
   return [...base, ...extras].map((r) => `  - ${r}`).join("\n");
 }
 
+// Prefix every line with its 1-based number. Used by ALL scan prompts so
+// the model copies the digit instead of counting lines itself — the
+// primary defense against JSON.line ≠ prose-line drift. JSX nesting and
+// other multi-line syntax reliably trips unnumbered prompts; numbered
+// prompts are near-immune.
+function numberLines(code: string): string {
+  const lines = code.split("\n");
+  return lines
+    .map((l, i) => `${String(i + 1).padStart(3, " ")}  ${l}`)
+    .join("\n");
+}
+
 // Build a focus-window view of the code: the full file, but with a
 // CURSOR marker at the active line and the ±N line window labeled as
 // the "focus region". Qwen then knows where the user is actively
 // editing and concentrates attention there. When no cursor is provided
-// (SAVE / FLOW), we just return the plain code block.
+// (SAVE / FLOW), we just return the plain code block (still numbered).
 function buildFocusedCode(
   code: string,
   lang: string,
@@ -176,7 +198,7 @@ function buildFocusedCode(
   activeLine: number | undefined
 ): string {
   if (activeLine === undefined || !allLines || allLines.length === 0) {
-    return `\`\`\`${lang}\n${code}\n\`\`\``;
+    return `\`\`\`${lang}\n${numberLines(code)}\n\`\`\``;
   }
   const start = Math.max(0, activeLine - FOCUS_WINDOW_LINES);
   const end = Math.min(allLines.length - 1, activeLine + FOCUS_WINDOW_LINES);
@@ -268,32 +290,54 @@ ${focused}
 Now review the file above and return the JSON array.`;
   }
 
-  // Rich prompt — cloud backends (Haiku / Sonnet).
-  return `You are a senior code reviewer AND a teaching mentor. Review the code below and return ONLY a JSON array of the most important issues (bugs, perf problems, clear anti-patterns). No prose, no markdown, no code fences — just the JSON array.
+  // Learning-first cloud prompt (Haiku / Sonnet).
+  //
+  // Framing: you are watching a developer write code, not auditing it.
+  // Goal: help them UNDERSTAND what they just wrote — build confidence,
+  // not catalogue defects. Silence is a valid answer (return []).
+  //
+  // Each item carries a `kind`: "praise" (concrete good choice worth
+  // explaining), "concept" (pattern they used — unpack it so they own
+  // it), or "watch-out" (real risk, framed as "next time, watch for this").
+  // Cap is intentionally low (${MAX_CLOUD_ISSUES}) — two teaching moments
+  // per file, not five findings. Most files should return 0 or 1.
+  return `You are watching a developer write code in their editor. You are their mentor — not a code reviewer. Your job is to help them UNDERSTAND what they just wrote, not catch every issue.
 
-Each issue must be an object with exactly these fields:
-- "line": 1-based line number where the issue is
-- "severity": one of "warn" (real bug / risky), "perf" (performance), "info" (style / minor)
-- "ruleId": short kebab-case id (e.g. "missing-await", "off-by-one", "index-as-key")
-- "label": 3–5 word tag suitable for an inline editor annotation (e.g. "array index key", "unused await", "missing cleanup"). No punctuation, no verbs, just the concept.
-- "message": one concise sentence stating what's wrong, plain English, specific
-- "teaser": one-sentence WHY this matters (≤ 100 chars) — a punchy preview that invites the reader to dig deeper. Different phrasing from "message".
-- "lesson": exactly 2 sentences. Sentence 1 = what's wrong and why it bites in concrete terms (not metaphors). Sentence 2 = what to do instead. No analogies, no "imagine if…", no preamble.
-- "voiceScript": 40–55 words, plain spoken English. Direct and factual. NO metaphors, NO analogies, NO "let me explain…", NO "think of it like…". Open with the rule and what's wrong. Close with the fix. That's it. Will be read aloud by TTS.
-- "fix": optional replacement for the entire line, only if you're confident
+Review the code below and return ONLY a JSON array with at most ${MAX_CLOUD_ISSUES} items. Most files should return 0 or 1. If the code is clean and the user is clearly solid on what they're doing, return [] — silence is a valid answer. No prose, no markdown, no code fences — just the JSON array.
+
+Each item is a teaching moment, not a defect. Fields:
+- "line": 1-based line number
+- "kind": one of "praise" | "concept" | "watch-out"
+    • "praise" = they did something well + worth understanding why
+    • "concept" = a pattern they used — explain it so they own it
+    • "watch-out" = a real risk — frame as "next time, watch for this"
+- "severity": MUST match kind — "info" for praise/concept, "warn" or "perf" for watch-out
+- "ruleId": short kebab-case concept name (e.g. "use-state-derived", "index-as-key", "promise-all-parallelism")
+- "label": 3–5 word tag suitable for an inline annotation (e.g. "clean setter pattern", "array index key"). No punctuation, no verbs, just the concept.
+- "message": one sentence — what's interesting/good/risky, plain English, specific to THIS code
+- "teaser": one-sentence WHY this matters (≤ 100 chars) — punchy preview, different phrasing from "message"
+- "lesson": exactly 2 sentences. Sentence 1 = what the concept is (not metaphors). Sentence 2 = why it matters HERE. No analogies, no "imagine if…", no preamble.
+- "voiceScript": 35–50 words, plain spoken English. Start with the fact. End with the action or invitation. NO preamble, NO metaphors, NO "let me explain…". Read aloud by TTS.
+- "fix": OPTIONAL one-line replacement — ONLY for "watch-out" and ONLY if you're confident
 
 Rules:
-- Return at most ${MAX_ISSUES} issues, highest-value first
-- Skip trivial style nits that a linter would catch
-- Skip issues in commented-out code
-- If the code looks fine, return []
-- Output ONLY the JSON array — nothing else
+- At most ${MAX_CLOUD_ISSUES} items. Zero is often right.
+- If the user did something well, SAY so — use "praise". Confidence is the goal of this product.
+- Never open "message" with "You should" / "This is wrong" / "Bug:" / "Issue:". Mentor voice, not critique voice.
+- Skip issues in commented-out code.
+- Skip trivial style nits a linter would catch.
+- Output ONLY the JSON array.
+
+Line-number contract (STRICT):
+- Every line below is prefixed with its 1-based number (e.g. "020  <header>"). Your "line" field MUST be the number of the line where the ACTUAL issue token lives.
+- If your message or lesson mentions "line N", the "line" field MUST equal N. They must agree.
+- For nested syntax (JSX, decorators, chained calls), anchor to the INNER element the issue is about — never the structural parent. The tag the issue names is the line.
 
 File: ${fileName}
 Language: ${languageId}
 
 \`\`\`${languageId}
-${code}
+${numberLines(code)}
 \`\`\``;
 }
 
@@ -392,6 +436,14 @@ function tryParse(raw: string): AiIssue[] | null {
   try {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return null;
+    // Synthesize severity from kind if the LEARN cloud prompt omits it.
+    // praise/concept → info, watch-out → warn. Keeps downstream rendering
+    // (color, gutter icon) working without special-casing kind everywhere.
+    for (const x of parsed) {
+      if (x && typeof x === "object" && !x.severity && typeof x.kind === "string") {
+        x.severity = x.kind === "watch-out" ? "warn" : "info";
+      }
+    }
     return parsed.filter(
       (x): x is AiIssue =>
         x &&
@@ -415,6 +467,145 @@ function tryParse(raw: string): AiIssue[] | null {
  * scale for it and catch cross-function issues the focus window misses.
  */
 const FOCUS_WINDOW_LINES = 40;
+
+// ---- Line-anchor reconciliation ----
+// Models occasionally disagree with themselves: JSON.line points at the
+// parent JSX element while the prose says "on line 20" about the inner
+// tag. Clamping to bounds hides this silently and renders findings on
+// the wrong line. Instead we run four layers:
+//   1. Prevention via numbered-line prompt (see numberLines / buildPrompt).
+//   2. Prose reconciliation: if message/lesson mentions "line N" and
+//      N ≠ issue.line, trust the prose.
+//   3. Token validation: the "key token" from the message (e.g. <header>)
+//      should actually appear on the anchored line. If not, search ±5
+//      lines for it and re-anchor.
+//   4. Drop-if-unsafe: if nothing validates, we drop the finding instead
+//      of rendering on a wrong line (better silence than misinformation).
+
+const PROSE_LINE_REGEX = /\b(?:on|at)\s+line\s+(\d+)\b/gi;
+
+/**
+ * Pull the "subject" of an issue message — the specific token it's about.
+ * Priority: angle-bracketed tag → backtick-quoted identifier → first
+ * identifier-looking word. Used to validate that the anchored line
+ * actually contains what the issue is talking about.
+ */
+function extractKeyToken(message: string): string | null {
+  const tag = message.match(/<\/?([a-zA-Z][\w-]*)\b/);
+  if (tag && tag[1]) return `<${tag[1]}`;
+  const quoted = message.match(/`([^`\s][^`]{0,40})`/);
+  if (quoted && quoted[1]) return quoted[1];
+  const ident = message.match(/\b([a-zA-Z_$][a-zA-Z0-9_$]{2,})\b/);
+  if (ident && ident[1]) {
+    const stopwords = new Set([
+      "The", "This", "That", "Using", "Adding", "Missing", "Unused", "Empty",
+      "When", "Which", "You", "your", "should", "could", "would", "will",
+      "does", "array", "object", "value", "state", "element", "line",
+    ]);
+    if (!stopwords.has(ident[1])) return ident[1];
+  }
+  return null;
+}
+
+/**
+ * Search ±`window` lines around `hint` for a line containing `token`.
+ * Returns the best-matching 0-based line index, or null if nowhere.
+ * Prefers the nearest line to the hint on ties.
+ */
+function findTokenNearLine(
+  lines: string[],
+  token: string,
+  hint: number,
+  window = 5
+): number | null {
+  const needle = token.toLowerCase();
+  for (let d = 0; d <= window; d++) {
+    const candidates = d === 0 ? [hint] : [hint - d, hint + d];
+    for (const i of candidates) {
+      if (i < 0 || i >= lines.length) continue;
+      if (lines[i]!.toLowerCase().includes(needle)) return i;
+    }
+  }
+  return null;
+}
+
+/**
+ * Returns a trusted 0-based line index for this issue, or null if we
+ * can't produce a confident anchor (in which case the caller should
+ * drop the finding). Applies Layers 2-4 of the line-anchor fix.
+ */
+function reconcileIssueLine(
+  issue: AiIssue,
+  doc: vscode.TextDocument,
+  fileName: string
+): number | null {
+  const lineCount = doc.lineCount;
+  if (lineCount === 0) return null;
+
+  // Start with the JSON line, 1→0 indexed.
+  let anchor = Math.floor(issue.line) - 1;
+
+  // Layer 2 — prose reconciliation. Scan message + lesson for any "on line N"
+  // references. If there's exactly one unique number and it disagrees
+  // with the JSON, trust the prose.
+  const proseBlob = `${issue.message ?? ""} ${issue.lesson ?? ""}`;
+  const proseMatches = new Set<number>();
+  let m: RegExpExecArray | null;
+  PROSE_LINE_REGEX.lastIndex = 0;
+  while ((m = PROSE_LINE_REGEX.exec(proseBlob)) !== null) {
+    const n = Number(m[1]);
+    if (Number.isFinite(n) && n >= 1 && n <= lineCount) proseMatches.add(n);
+  }
+  if (proseMatches.size === 1) {
+    const [proseLine] = [...proseMatches];
+    const proseIdx = proseLine! - 1;
+    if (proseIdx !== anchor) {
+      log(
+        "reviewEngine",
+        `line-mismatch ${fileName} · prose=${proseLine} json=${issue.line} ruleId=${issue.ruleId ?? "?"} → trusting prose`
+      );
+      anchor = proseIdx;
+    }
+  }
+
+  // Bounds guard. If the anchor is out of range and prose didn't save us,
+  // it's already unconfident — don't silently clamp to EOF.
+  if (anchor < 0 || anchor >= lineCount) {
+    log(
+      "reviewEngine",
+      `anchor-dropped ${fileName} · line=${issue.line} out of bounds (file has ${lineCount} lines) · ruleId=${issue.ruleId ?? "?"}`
+    );
+    return null;
+  }
+
+  // Layer 3 — token validation. Pull the key token from the message and
+  // check the anchored line actually contains it. If not, search ±5 lines.
+  const token = extractKeyToken(issue.message ?? "");
+  if (token) {
+    const anchorText = doc.lineAt(anchor).text.toLowerCase();
+    if (!anchorText.includes(token.toLowerCase())) {
+      const lines = Array.from({ length: lineCount }, (_, i) => doc.lineAt(i).text);
+      const found = findTokenNearLine(lines, token, anchor, 5);
+      if (found !== null) {
+        log(
+          "reviewEngine",
+          `anchor-retargeted ${fileName} · token="${token}" was at line ${found + 1}, not ${anchor + 1} · ruleId=${issue.ruleId ?? "?"}`
+        );
+        anchor = found;
+      } else {
+        // Layer 4 — drop. Token doesn't exist anywhere near the reported
+        // line; the finding is too unreliable to render.
+        log(
+          "reviewEngine",
+          `anchor-dropped ${fileName} · token="${token}" not found within 5 lines of ${anchor + 1} · ruleId=${issue.ruleId ?? "?"}`
+        );
+        return null;
+      }
+    }
+  }
+
+  return anchor;
+}
 
 export async function reviewDocument(
   document: vscode.TextDocument,
@@ -493,11 +684,15 @@ export async function reviewDocument(
 
   log("reviewEngine", `parsed ${issues.length} issue${issues.length === 1 ? "" : "s"}`);
 
-  const maxLine = document.lineCount;
   const suggestions: Suggestion[] = [];
+  let dropped = 0;
 
   for (const issue of issues) {
-    const lineIdx = Math.max(0, Math.min(maxLine - 1, Math.floor(issue.line) - 1));
+    const lineIdx = reconcileIssueLine(issue, document, fileName);
+    if (lineIdx === null) {
+      dropped++;
+      continue;
+    }
     const lineText = document.lineAt(lineIdx).text;
     const startCol = lineText.search(/\S/);
     const start = new vscode.Position(lineIdx, startCol === -1 ? 0 : startCol);
@@ -515,7 +710,12 @@ export async function reviewDocument(
       voiceScript: deriveVoiceScript(issue),
       scope: "atom",
       tier: "live",
+      kind: issue.kind,
     });
+  }
+
+  if (dropped > 0) {
+    log("reviewEngine", `dropped ${dropped} unconfident issue${dropped === 1 ? "" : "s"} (line mismatch or token not found)`);
   }
 
   const order = { warn: 0, perf: 1, info: 2 };
@@ -523,12 +723,18 @@ export async function reviewDocument(
     (a, b) => order[a.severity] - order[b.severity] || a.range.start.line - b.range.start.line
   );
 
+  // Cloud (LEARN) caps tighter than on-device: two teaching moments per
+  // file beats five findings for confidence-first framing.
+  const backend = getAiBackend();
+  const isCloud = backend !== "on-device";
+  const cap = isCloud ? MAX_CLOUD_ISSUES : MAX_ISSUES;
+
   log(
     "reviewEngine",
-    `scan done · ${suggestions.length} final suggestion${suggestions.length === 1 ? "" : "s"} after cap (${MAX_ISSUES})`
+    `scan done · ${suggestions.length} final suggestion${suggestions.length === 1 ? "" : "s"} after cap (${cap})`
   );
 
-  return suggestions.slice(0, MAX_ISSUES);
+  return suggestions.slice(0, cap);
 }
 
 function fileNameOf(doc: vscode.TextDocument): string {

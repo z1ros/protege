@@ -17,6 +17,13 @@ import { registerLiveReview } from "./liveReview.js";
 import { registerStatusBarLive, updateStatusBarData } from "./statusBarLive.js";
 import { registerUnderlineWhisper } from "./underlineWhisper.js";
 import { registerGhostMentor } from "./ghostMentor.js";
+import { registerFileOpenGreeter } from "./fileOpenGreeter.js";
+import { registerPatternSpotter } from "./patternSpotter.js";
+import { registerStruggleChip, showStruggleChip } from "./struggleChip.js";
+import { registerSaveRecap } from "./saveRecap.js";
+import { registerConceptTrail } from "./conceptTrail.js";
+import { dispatchTeachConcept } from "./teachConceptDispatch.js";
+import { registerInsetExperiment } from "./insetExperiment.js";
 import { registerTeachingThread } from "./teachingThread.js";
 import { registerSmartFix } from "./smartFix.js";
 // Inline lesson comment surface (the big `/* PROTEGE · ... */` block) is
@@ -100,6 +107,25 @@ export async function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(new vscode.Disposable(aiCallSub));
 
+  // Broadcast the current `protege.explainMode` so the Live tab's 3-option
+  // toggle (Text / Voice / Both) hydrates with the authoritative value
+  // instead of guessing. Re-broadcast on any config change so a tweak in
+  // settings.json (or via the toggle itself) reflects across every mounted
+  // panel within one keystroke.
+  const readExplainMode = () => {
+    const v = vscode.workspace
+      .getConfiguration("protege")
+      .get<string>("explainMode", "text");
+    return (v === "voice" || v === "both" ? v : "text") as "text" | "voice" | "both";
+  };
+  broadcast({ type: "explainMode/state", mode: readExplainMode() });
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration("protege.explainMode")) return;
+      broadcast({ type: "explainMode/state", mode: readExplainMode() });
+    })
+  );
+
   // ===== Status bar (context-aware, JARVIS Layer 4) =====
   const statusBarDisposables = registerStatusBarLive(context);
 
@@ -153,25 +179,42 @@ export async function activate(context: vscode.ExtensionContext) {
   // stare pauses, build fail loops, wins, flow state, late night,
   // risky edits, concept breakthroughs. Dispatches nudges to the webview.
   const watcher = startWatcher(context, output, (nudge: DispatchedNudge) => {
-    openProtegePanel(context);
-    broadcast({
-      type: "watcher/nudge",
-      nudge: {
-        id: nudge.id,
-        triggerId: nudge.triggerId as import("@protege/types").UnpromptedTriggerId,
-        severity: nudge.severity,
-        text: nudge.text,
-        canEscalate: nudge.canEscalate,
-        context: {
-          filePath: nudge.context.filePath,
-          errorMessage: nudge.context.error?.message,
-          errorLine: nudge.context.error?.line,
-          concept: nudge.context.concept,
-          note: nudge.context.note,
-        },
-        createdAt: nudge.createdAt,
+    const shared: import("@protege/types").UnpromptedNudge = {
+      id: nudge.id,
+      triggerId: nudge.triggerId as import("@protege/types").UnpromptedTriggerId,
+      severity: nudge.severity,
+      text: nudge.text,
+      canEscalate: nudge.canEscalate,
+      context: {
+        filePath: nudge.context.filePath,
+        errorMessage: nudge.context.error?.message,
+        errorLine: nudge.context.error?.line,
+        concept: nudge.context.concept,
+        note: nudge.context.note,
       },
-    });
+      createdAt: nudge.createdAt,
+    };
+
+    // In-flow first: if the nudge has a file + line anchor, show the
+    // Struggle Chip above that line instead of yanking the user into
+    // the sidebar. Sidebar opens ONLY when the user clicks "Learn more"
+    // on the chip's hint. This is the #1 learn-in-flow fix — see
+    // ~/.claude/plans/learn-in-flow-audit.md Move 1.
+    const anchored = showStruggleChip(shared);
+
+    // Broadcast to the webview so the sidebar Live tab / chat history
+    // still reflects the nudge if it's open. Crucially we NO LONGER
+    // call openProtegePanel() — the sidebar only opens on explicit
+    // user action (chip "Learn more" click, or legacy `engage` path).
+    broadcast({ type: "watcher/nudge", nudge: shared });
+
+    if (!anchored) {
+      // Unanchored nudges (no file+line) can't get a chip. They stay
+      // passive in the sidebar state for now — we still don't force it
+      // open. If that hurts discoverability for triggers like
+      // `late_night` or `flow_state`, we'll revisit with a status-bar
+      // surface or ambient chip.
+    }
   });
 
   // ===== Launcher (activity bar) =====
@@ -215,6 +258,37 @@ export async function activate(context: vscode.ExtensionContext) {
   // See Architecture/ambient-coach-plan.md — Surfaces 2 + 3.
   const whisperDisposables = registerUnderlineWhisper(context);
   const ghostDisposables = registerGhostMentor(context);
+  // File-Open Greeter — fires a 2-sentence voice overview the first time
+  // the user opens each file. Silence is fine; `SKIP` is a valid reply.
+  // See Architecture plan in ~/.claude/plans/also-chekc-our-wondrous-blum.md.
+  const fileOpenGreeterDisposables = registerFileOpenGreeter(context);
+  // Proactive Pattern Spotter — after long activity + a pause, surfaces
+  // ONE learning-moment pitch as a native notification. Silence-biased;
+  // 15min cooldown, 24h per-concept dedup.
+  const patternSpotterDisposables = registerPatternSpotter(context);
+  // Struggle Chip — watcher nudges now render as a CodeLens row above
+  // the friction line instead of force-opening the sidebar. The
+  // registered command fetches a 2-sentence hint; "Learn more" is the
+  // ONLY path to the sidebar. See ~/.claude/plans/learn-in-flow-audit.md.
+  const struggleChipDisposables = registerStruggleChip(context, () => {
+    openProtegePanel(context);
+  });
+  // Save-time retrospective recap — on each save, render a 4s status-bar
+  // toast summarizing concepts newly appearing since last save. Positive
+  // reinforcement at a natural break, no interrupt. Move 2 of
+  // ~/.claude/plans/learn-in-flow-audit.md.
+  const saveRecapDisposables = registerSaveRecap(context);
+  // Concept Trail — subtle blue gutter dot on the first line where a
+  // new-this-session concept appears. Purely peripheral, no voice, no
+  // popup. Hover → a small Markdown card with a "Teach me" link.
+  // Move 4 of ~/.claude/plans/learn-in-flow-audit.md.
+  const conceptTrailDisposables = registerConceptTrail(context);
+  // Inset Preview — EXPERIMENTAL alternative to the Ghost Mentor
+  // CodeLens. Opt-in via command "Protege: Preview inset-style finding
+  // (experimental)". Does NOT replace the CodeLens; both surfaces
+  // coexist so the user can A/B them. Uses the `editorInsets` proposed
+  // API (already enabled in package.json).
+  const insetExperimentDisposables = registerInsetExperiment(context);
   // Teaching Thread — the "full lesson" surface. Renders a multi-line
   // Comment Thread bubble between code lines when the user asks for depth.
   // Wired into the hover's "Teach me more" button and the ⌘. keybinding.
@@ -254,6 +328,12 @@ export async function activate(context: vscode.ExtensionContext) {
     ...liveReviewDisposables,
     ...whisperDisposables,
     ...ghostDisposables,
+    ...fileOpenGreeterDisposables,
+    ...patternSpotterDisposables,
+    ...struggleChipDisposables,
+    ...saveRecapDisposables,
+    ...conceptTrailDisposables,
+    ...insetExperimentDisposables,
     ...teachingThreadDisposables,
     ...smartFixDisposables,
     ...lessonCommentDisposables,
@@ -288,18 +368,11 @@ export async function activate(context: vscode.ExtensionContext) {
     // a teaching question so the user sees a reply in chat.
     vscode.commands.registerCommand(
       "protege.teachConcept",
+      // Route based on `protege.explainMode` — voice plays a short
+      // spoken explanation (no big chat reply), text sends a full chat
+      // request, "both" does both. See teachConceptDispatch.ts.
       async (concept: unknown) => {
-        const conceptName =
-          typeof concept === "string" && concept.trim() ? concept.trim() : null;
-        await openProtegePanel(context);
-        if (!conceptName) return;
-        // Give the webview a beat to mount before broadcasting.
-        setTimeout(() => {
-          broadcast({
-            type: "chat/autoSend",
-            message: `Teach me about \`${conceptName}\` in the context of the file I have open. One paragraph on why it matters, one tiny snippet, and one probing question. Keep it under 150 words.`,
-          });
-        }, 250);
+        await dispatchTeachConcept(concept, context);
       }
     ),
     vscode.commands.registerCommand("protege.toggleAutoAcceptEdits", async () => {

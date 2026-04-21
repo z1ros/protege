@@ -11,7 +11,7 @@
  * workspace context) is appended by routes/chat.ts.
  */
 
-export type ChatMode = "text" | "voice" | "teaching";
+export type ChatMode = "text" | "voice" | "voice-dialogue" | "teaching";
 
 export const CORE_PERSONA = `You are Protege — a senior engineer mentoring one specific person inside their editor. Your job isn't to answer questions. It's to make them a better engineer over time. Everything you say and do should serve that goal.
 
@@ -140,6 +140,32 @@ Defaulting to "ask the user" is LAZY. It makes you feel safe but wastes their ti
 
 Think of it like explaining to a friend on a phone call while both of you look at the screen.`;
 
+export const VOICE_DIALOGUE_MODE = `
+## Channel: VOICE DIALOGUE (live back-and-forth with the user)
+
+You are in a voice conversation. The user can INTERRUPT you between beats — mic opens for 3 seconds after each of your sentences. They might say:
+ - "slower" / "again" → repeat the last beat in simpler words, ONE idea only
+ - "example" → show concrete code with a tool call BEFORE speaking
+ - "why" / "what do you mean" → one-sentence mental model, no depth yet
+ - "got it" / "next" / "yeah" → advance to the next beat
+ - "what about X" → pause lesson, answer X in 1–2 sentences, then offer to resume
+
+If you hear silence, advance naturally. Don't ask "does that make sense?" — just move.
+
+Rules that inherit from VOICE_MODE (short sentences, no markdown, no poetry) still apply. Plus:
+ - Each of your spoken turns is ONE idea. Not two. One.
+ - After each turn, stop. Let the user respond or stay silent.
+ - Never stack three questions in a row.
+ - If the user sounds confused twice in a row, ZOOM OUT — re-state the big picture in one sentence, then try a different angle.
+ - If they sound bored or say "get to the point", skip ahead to the fix or the answer.
+
+Teaching posture:
+ - First turn: the 1-sentence big picture, then a tool call (highlight_code or show_code) to anchor.
+ - Middle turns: one line of code, one insight each.
+ - Last turn: a closing question that invites them to try something, or a concrete next step.
+
+You are talking to a person, not reading a lecture. Pace matters more than completeness. Leave stuff out rather than rush.`;
+
 export const TEACHING_HINT = `
 ## Teaching posture (soft — not a script)
 For genuine "teach me" / "explain this" / "show me how" requests, walk through these beats in spirit:
@@ -177,12 +203,152 @@ Rules:
 
 The user cannot interrupt mid-narration (mic is muted while you speak). They'll respond between steps if they have something to say.`;
 
+export const CONFIDENCE_FIRST_FRAMING = `
+## Framing rule (hard)
+
+When the user's code is clean, SAY that first. "You've got a solid pattern here." / "Clean setter usage." / "Nothing to flag." Confidence is the goal of this product — never open with what's wrong.
+
+When there IS a real risk, frame it as a learning moment, not a verdict:
+ - BAD: "This is a bug." / "You should not do this."
+ - GOOD: "Watch out for X next time — here's why it bites." / "This works, but there's a subtle case..."
+
+Never stack three "watch-out"s in a row. If you've said "next time, watch for X" once, the next thing should be neutral or positive.
+
+If you genuinely have nothing interesting to say, say nothing.`;
+
+/**
+ * Input for the USER_LEVEL_INJECTION block. Values come from memory /
+ * mastery data assembled by the caller (routes/chat.ts). Any field may
+ * be omitted; the block degrades gracefully.
+ */
+export interface LearnerContext {
+  userName?: string;
+  /** Plain strings pulled from MemoryRow.content where type === "profile". */
+  profileNotes?: string[];
+  /** Plain strings from MemoryRow.content where type === "struggle". */
+  recentStruggles?: string[];
+  /** Concepts with mastery > 0.6 — if the system tracks them yet. */
+  ownedConcepts?: string[];
+  /** Concepts with mastery 0.3–0.6, not practiced in > 5 days. */
+  decayingConcepts?: string[];
+  /** Concepts with mastery < 0.3 (first encounters). */
+  newConcepts?: string[];
+}
+
+/**
+ * Produce the "About this learner" preamble described by the plan's
+ * USER_LEVEL_INJECTION template. Returns empty string when there is no
+ * useful signal — we don't want to waste tokens on "everything is
+ * unknown" boilerplate.
+ *
+ * Level inference is deliberately simple: scan profile notes for a few
+ * obvious keywords. Anything not clearly "senior" or "new-to-language"
+ * defaults to "comfortable" — a safe middle ground for the model.
+ */
+export function buildLearnerBlock(ctx: LearnerContext): string {
+  const hasAnySignal =
+    !!ctx.userName ||
+    (ctx.profileNotes && ctx.profileNotes.length > 0) ||
+    (ctx.recentStruggles && ctx.recentStruggles.length > 0) ||
+    (ctx.ownedConcepts && ctx.ownedConcepts.length > 0) ||
+    (ctx.decayingConcepts && ctx.decayingConcepts.length > 0) ||
+    (ctx.newConcepts && ctx.newConcepts.length > 0);
+  if (!hasAnySignal) return "";
+
+  const level = inferLevel(ctx.profileNotes ?? []);
+
+  const lines: string[] = ["## About this learner"];
+  if (ctx.userName) lines.push(`Name: ${ctx.userName}`);
+  lines.push(`Level: ${level}  // new-to-language | comfortable | senior`);
+
+  if (ctx.recentStruggles && ctx.recentStruggles.length > 0) {
+    lines.push(
+      `Recent struggles: ${ctx.recentStruggles.slice(0, 3).join(" · ")}`
+    );
+  }
+  if (ctx.ownedConcepts && ctx.ownedConcepts.length > 0) {
+    lines.push(
+      `Concepts owned (mastery > 0.6): ${ctx.ownedConcepts.join(", ")}`
+    );
+  }
+  if (ctx.decayingConcepts && ctx.decayingConcepts.length > 0) {
+    lines.push(
+      `Concepts in decay (0.3–0.6, not practiced in > 5d): ${ctx.decayingConcepts.join(", ")}`
+    );
+  }
+  if (ctx.newConcepts && ctx.newConcepts.length > 0) {
+    lines.push(`Concepts new (< 0.3): ${ctx.newConcepts.join(", ")}`);
+  }
+  if (ctx.profileNotes && ctx.profileNotes.length > 0) {
+    // Don't dump all profile memories — memory block already carries them.
+    // Just a short hint for the model to notice the level signal.
+    lines.push(`Profile hints: ${ctx.profileNotes.slice(0, 2).join(" · ")}`);
+  }
+
+  lines.push("");
+  lines.push("Adapt your explanations:");
+  lines.push(
+    '- For "new-to-language": use the most basic framing. One idea per sentence. Avoid jargon unless you define it.'
+  );
+  lines.push(
+    '- For "comfortable": assume they know the fundamentals. Focus on WHY and trade-offs.'
+  );
+  lines.push(
+    '- For "senior": skip basics entirely. Point at the subtle gotcha or the architectural trade-off. Don\'t explain things they know.'
+  );
+  lines.push("");
+  lines.push(
+    'When referencing a concept from "owned", treat it as known — don\'t define it. When referencing "decaying", gently remind before using. When referencing "new", explain first.'
+  );
+
+  return lines.join("\n");
+}
+
+function inferLevel(profileNotes: string[]): "new-to-language" | "comfortable" | "senior" {
+  const blob = profileNotes.join(" ").toLowerCase();
+  if (
+    /\b(senior|staff|principal|architect|\d{2,}\s*(?:\+\s*)?years?)\b/.test(blob) ||
+    /\b(years of experience|lead engineer)\b/.test(blob)
+  ) {
+    return "senior";
+  }
+  if (
+    /\b(new to|beginner|learning|just started|first time|picked up|bootcamp)\b/.test(blob)
+  ) {
+    return "new-to-language";
+  }
+  return "comfortable";
+}
+
 /**
  * Compose the full system prompt for a given channel.
  * Memory / session / workspace blocks are appended by routes/chat.ts.
+ *
+ * @param learnerBlock — optional "About this learner" preamble from
+ *   buildLearnerBlock(); inserted right after CORE_PERSONA so the model
+ *   reads it before applying channel rules.
  */
-export function buildSystemPrompt(mode: ChatMode): string {
-  if (mode === "teaching") return [CORE_PERSONA, TEACHING_MODE].join("\n\n");
-  const channel = mode === "voice" ? VOICE_MODE : TEXT_MODE;
-  return [CORE_PERSONA, channel, TEACHING_HINT].join("\n\n");
+export function buildSystemPrompt(mode: ChatMode, learnerBlock?: string): string {
+  const learner = learnerBlock && learnerBlock.trim() ? learnerBlock : "";
+  const head = learner ? [CORE_PERSONA, learner] : [CORE_PERSONA];
+
+  if (mode === "teaching") {
+    return [...head, TEACHING_MODE, CONFIDENCE_FIRST_FRAMING].join("\n\n");
+  }
+  if (mode === "voice-dialogue") {
+    // Inherits VOICE_MODE rules (short sentences, no markdown, no poetry)
+    // then layers dialogue-specific behavior: one-idea turns, user-interrupt
+    // handling, pacing. TEACHING_HINT's 5-phase arc doesn't apply in
+    // dialogue — the user drives pacing, not a fixed script.
+    return [...head, VOICE_MODE, VOICE_DIALOGUE_MODE, CONFIDENCE_FIRST_FRAMING].join("\n\n");
+  }
+  // Voice mode skips TEACHING_HINT — that block's 5-phase arc is meant for
+  // longer text lessons and bloats the prompt for short voice Q&A. The
+  // dedicated "teaching" mode still gets its full TEACHING_MODE block
+  // when the user actually asks to be taught. Trim shaves ~400 tokens
+  // per voice turn → slightly faster Claude first-token generation.
+  if (mode === "voice") {
+    return [...head, VOICE_MODE, CONFIDENCE_FIRST_FRAMING].join("\n\n");
+  }
+  return [...head, TEXT_MODE, TEACHING_HINT, CONFIDENCE_FIRST_FRAMING].join("\n\n");
 }

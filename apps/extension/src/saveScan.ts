@@ -154,6 +154,16 @@ async function collectNeighborContext(
 
 // ---- Prompt ----
 
+// Prefix every line with its 1-based number so the model copies the
+// digit rather than counting. Prevents JSON.line ↔ prose-line drift
+// that tripped us on JSX nesting. Mirrors reviewEngine.ts::numberLines.
+function numberLines(code: string): string {
+  return code
+    .split("\n")
+    .map((l, i) => `${String(i + 1).padStart(3, " ")}  ${l}`)
+    .join("\n");
+}
+
 function buildPrompt(
   doc: vscode.TextDocument,
   targetText: string,
@@ -169,7 +179,7 @@ function buildPrompt(
       : neighbors
           .map(
             (n) =>
-              `### NEIGHBOR: ${n.relPath}\n\`\`\`\n${n.head}\n\`\`\``
+              `### NEIGHBOR: ${n.relPath}\n\`\`\`\n${numberLines(n.head)}\n\`\`\``
           )
           .join("\n\n");
 
@@ -196,11 +206,16 @@ Rules:
 - If nothing cross-line or cross-file is wrong, return []
 - Output ONLY the JSON array — no prose, no markdown, no code fences
 
+Line-number contract (STRICT):
+- Every line in the target file below is prefixed with its 1-based number. Your "line" / "endLine" fields MUST be the numbers shown. Neighbor lines are also numbered.
+- If your message or lesson mentions "line N", the "line" field MUST equal N.
+- For nested syntax (JSX, decorators), anchor to the INNER element the issue is about — never the structural parent.
+
 TARGET FILE: ${fileName}
 LANGUAGE: ${lang}
 
 \`\`\`${lang}
-${truncated}
+${numberLines(truncated)}
 \`\`\`
 
 ${neighborBlock}`;

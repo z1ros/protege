@@ -240,23 +240,215 @@
   transition: height 60ms linear;
 }
 
+/* ================================================================
+   Phase state chip — Listening / Thinking / Speaking / Idle
+   Loud colored pill so the user always knows what the system is
+   doing. Replaces the previous italic status line.
+   ================================================================ */
 .voice-status {
-  font-family: var(--font-serif);
-  font-style: italic;
-  font-size: 22px;
-  color: var(--glow);
-  letter-spacing: -0.015em;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 20px;
+  border-radius: 999px;
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, sans-serif);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  min-height: 34px;
+  border: 1px solid transparent;
+  transition: background 180ms ease, color 180ms ease, border-color 180ms ease,
+    box-shadow 180ms ease;
+}
+.voice-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.voice-status-label {
+  white-space: nowrap;
+}
+
+/* Animated dot only when in an "active" state (listening/thinking/speaking). */
+.voice-status[data-phase="listening"] .voice-status-dot,
+.voice-status[data-phase="thinking"] .voice-status-dot,
+.voice-status[data-phase="speaking"] .voice-status-dot {
+  animation: chip-pulse 1.6s infinite ease-in-out;
+}
+
+@keyframes chip-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.7; }
+  50%      { transform: scale(1.35); opacity: 1; }
+}
+
+/* State colors — high-contrast so glance-reads are instant. */
+.voice-status[data-phase="idle"] {
+  background: rgba(148, 163, 184, 0.1);
+  color: rgba(148, 163, 184, 0.8);
+  border-color: rgba(148, 163, 184, 0.2);
+}
+.voice-status[data-phase="listening"] {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60A5FA;
+  border-color: rgba(59, 130, 246, 0.4);
+  box-shadow: 0 0 24px rgba(59, 130, 246, 0.25);
+}
+.voice-status[data-phase="thinking"] {
+  background: rgba(245, 158, 11, 0.15);
+  color: #FBBF24;
+  border-color: rgba(245, 158, 11, 0.4);
+  box-shadow: 0 0 24px rgba(245, 158, 11, 0.25);
+}
+.voice-status[data-phase="speaking"] {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34D399;
+  border-color: rgba(16, 185, 129, 0.4);
+  box-shadow: 0 0 24px rgba(16, 185, 129, 0.3);
+}
+.voice-status[data-phase="warming"] {
+  background: rgba(139, 92, 246, 0.12);
+  color: #A78BFA;
+  border-color: rgba(139, 92, 246, 0.3);
+}
+
+/* ================================================================
+   Inline voice footer (Phase 3 unified layout)
+   Lives below the chat message list. Orb is the visual hero;
+   everything else (state chip, voice picker, wake toggle) is
+   smaller chrome arranged around it.
+   ================================================================ */
+.voice-inline {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas:
+    "wake     orb    switch"
+    "chip     chip   chip"
+    "voices   voices voices";
+  align-items: center;
+  gap: 6px 10px;
+  padding: 14px 16px 12px;
+  border-top: 1px solid rgba(148, 163, 184, 0.1);
+  background: linear-gradient(
+    180deg,
+    rgba(15, 23, 42, 0) 0%,
+    rgba(15, 23, 42, 0.22) 100%
+  );
+}
+
+/* Hero orb — centered column, dominant element. */
+.voice-orb-wrap-inline {
+  grid-area: orb;
+  justify-self: center;
+  width: 110px;
+  height: 110px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.voice-orb-wrap-inline .voice-orb {
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+}
+.voice-orb-wrap-inline .ring {
+  position: absolute;
+  border-radius: 50%;
+}
+.voice-orb-wrap-inline .ring-1 { width: 86px;  height: 86px;  }
+.voice-orb-wrap-inline .ring-2 { width: 110px; height: 110px; }
+
+/* State chip — small, centered UNDER the orb. Override the loud
+   voice.css defaults so it doesn't eat the whole row. */
+.voice-inline .voice-status {
+  grid-area: chip;
+  justify-self: center;
+  padding: 4px 12px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  min-height: 22px;
+  border-width: 1px;
+  gap: 7px;
+  box-shadow: none; /* keep the glow only on the orb */
+}
+.voice-inline .voice-status-dot { width: 6px; height: 6px; }
+
+/* Voice picker — tight row below the state chip. */
+.voice-inline-voices {
+  grid-area: voices;
+  justify-self: center;
+  display: inline-flex;
+  gap: 4px;
+  padding-top: 2px;
+}
+.voice-inline-voices .voice-pill {
+  padding: 3px 10px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  gap: 4px;
+}
+
+/* Wake toggle — bottom-left corner of the grid. */
+.voice-inline .wake-word-toggle {
+  grid-area: wake;
+  justify-self: start;
+}
+.wake-word-toggle.compact {
+  padding: 5px 11px;
+  font-size: 10px;
+  gap: 5px;
+  letter-spacing: 0.04em;
+}
+.wake-word-toggle.compact svg {
+  width: 11px;
+  height: 11px;
+}
+
+/* "Text" switch — bottom-right corner. */
+.voice-inline-switch {
+  grid-area: switch;
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: rgba(148, 163, 184, 0.06);
+  color: var(--text-dim);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+.voice-inline-switch:hover {
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--text-bright, #fff);
+  border-color: rgba(148, 163, 184, 0.3);
+}
+.voice-inline-switch svg {
+  width: 11px;
+  height: 11px;
+}
+
+/* Live transcript sits between orb and chip; hide when empty. */
+.voice-transcript-inline {
+  grid-column: 1 / -1;
   text-align: center;
-  min-height: 30px;
+  font-size: 12px;
+  max-width: 100%;
+  margin: 0;
+  padding: 0 8px;
+  color: var(--text-dim);
+  font-style: italic;
 }
-.voice-status .pulse {
-  display: inline-block;
-  color: var(--electric);
-  animation: textpulse 1.6s infinite ease-in-out;
-}
-@keyframes textpulse {
-  0%, 100% { opacity: 0.5; }
-  50% { opacity: 1; }
+.voice-transcript-inline:empty {
+  display: none;
 }
 
 .voice-transcript {

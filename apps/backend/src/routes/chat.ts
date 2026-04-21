@@ -12,7 +12,7 @@ import {
   MENTOR_SYSTEM_PROMPT,
   TOOL_DEFINITIONS,
 } from "../anthropic.js";
-import { buildSystemPrompt } from "../prompts/persona.js";
+import { buildSystemPrompt, buildLearnerBlock } from "../prompts/persona.js";
 import { sanitizeForVoice } from "../voicePostProcess.js";
 import {
   addMemory,
@@ -39,36 +39,57 @@ export const chatRoute = new Hono();
  */
 /**
  * Map the client-side backend preference to a concrete Anthropic model id.
- * When no preference is supplied, fall back to the server's default MODEL.
- * This is what finally made the Live-tab backend toggle *actually* change
- * the model — previously the server used MODEL unconditionally and the
- * client's choice was purely cosmetic.
+ *
+ * TEMP (2026-04-18): Sonnet is disabled server-side for cost reasons. Every
+ * cloud call — regardless of the client's stated preference — routes to
+ * Haiku. To restore Sonnet, bring back the original branch on `backend ===
+ * "sonnet"` and re-enable `ANTHROPIC_SONNET_MODEL` in env.
  */
-function resolveModel(backend: ChatRunRequest["backend"]): string {
-  if (backend === "haiku") {
-    return process.env.ANTHROPIC_HAIKU_MODEL ?? "claude-haiku-4-5";
-  }
-  if (backend === "sonnet") {
-    return process.env.ANTHROPIC_SONNET_MODEL ?? "claude-sonnet-4-6";
-  }
-  return MODEL;
+function resolveModel(_backend: ChatRunRequest["backend"]): string {
+  return process.env.ANTHROPIC_HAIKU_MODEL ?? "claude-haiku-4-5";
 }
 
 chatRoute.post("/", async (c) => {
   const body = (await c.req.json()) as ChatRunRequest;
   const userId = body.userId ?? c.req.header("x-user-id") ?? "local-dev";
   const mode = body.mode ?? "text";
-  const basePersona = buildSystemPrompt(mode);
   const model = resolveModel(body.backend);
 
   let messages: OAITurn[] = body.messages ?? [];
 
-  // First turn: build the full context block = memory + session + workspace
-  if (messages.length === 0 && body.newUserMessage) {
+  // "Fresh turn" detection: frontend passes a newUserMessage with no system
+  // message in the history. That means this is the start of a new user
+  // turn — build the full system prompt + context block, then append any
+  // prior user/assistant history between the system message and the new
+  // user message. Without this, passing prior conversation history would
+  // SKIP the system prompt entirely and strip Claude of persona/workspace.
+  const hasSystemMessage = messages.some((m) => m.role === "system");
+  const isFreshTurn = !hasSystemMessage && !!body.newUserMessage;
+
+  if (isFreshTurn) {
     const [memories, sessionInfo] = await Promise.all([
       getMemorySnapshot(userId, 12),
       openSession(userId),
     ]);
+
+    // Derive a learner block from the memory snapshot — profile memories
+    // drive level inference, recent struggles flag concepts to tread
+    // carefully on. Empty-string when there's no signal yet; the prompt
+    // degrades gracefully without it.
+    const profileNotes = memories
+      .filter((m) => m.type === "profile")
+      .map((m) => m.content);
+    const recentStruggles = memories
+      .filter((m) => m.type === "struggle")
+      .map((m) => m.content);
+    const learnerBlock = buildLearnerBlock({
+      profileNotes,
+      recentStruggles,
+      // Mastery fields (owned/decaying/new) are not yet wired from a
+      // mastery store on the backend side. When that exists, populate
+      // them here and the prompt will automatically adapt.
+    });
+    const basePersona = buildSystemPrompt(mode, learnerBlock);
 
     // === Memory block ===
     let memoryBlock = "";
@@ -114,12 +135,24 @@ chatRoute.post("/", async (c) => {
       touchSessionFile(userId, body.workspace.activeFile.path).catch(() => {});
     }
 
+    // Delimiter lets toAnthropic() split the system prompt into a GLOBALLY
+    // CACHEABLE prefix (basePersona — identical bytes for every user) and a
+    // per-user tail (memory, session, workspace). The prefix gets a long
+    // cache TTL shared across users; the tail stays uncached.
+    const systemMessage: OAITurn = {
+      role: "system",
+      content:
+        basePersona +
+        CACHE_SPLIT_MARKER +
+        (memoryBlock + sessionBlock + wsBlock),
+    };
+    // Prior user/assistant turns (history) stay between system + new user,
+    // so Claude sees: [system, ...history, new user message].
+    const priorHistory = messages;
     messages = [
-      {
-        role: "system",
-        content: basePersona + memoryBlock + sessionBlock + wsBlock,
-      },
-      { role: "user", content: body.newUserMessage },
+      systemMessage,
+      ...priorHistory,
+      { role: "user", content: body.newUserMessage! },
     ];
   } else if (body.toolResults && body.toolResults.length > 0) {
     for (const tr of body.toolResults) {
@@ -135,7 +168,7 @@ chatRoute.post("/", async (c) => {
   }
 
   // Translate OAITurn[] → Anthropic format
-  const { systemText, anthropicMessages } = toAnthropic(messages);
+  const { systemStable, systemDynamic, anthropicMessages } = toAnthropic(messages);
 
   // One-shot callers (review engine, voice explain) pass `noTools: true`.
   // Without this flag, Claude can respond with a tool call instead of
@@ -149,17 +182,28 @@ chatRoute.post("/", async (c) => {
     `[protege] /chat provider=anthropic model=${model} requestedBackend=${body.backend ?? "default"} tools=${useTools ? "on" : "off"} turns=${messages.length} lastRole=${messages.at(-1)?.role}`
   );
 
+  // Two-block system with selective caching:
+  //   [0] stable persona — identical bytes for every user of Protege,
+  //       so the cache entry is shared globally. At any scale >1 call per
+  //       5 min, this is essentially always warm → 90% off on ~3000 tokens.
+  //   [1] dynamic tail — memory + session + workspace, varies per user.
+  //       Not cached (would only help within a single user's session and
+  //       adds write-cost overhead).
+  const systemBlocks: Anthropic.Messages.TextBlockParam[] = [
+    {
+      type: "text",
+      text: systemStable,
+      cache_control: { type: "ephemeral" },
+    },
+  ];
+  if (systemDynamic) {
+    systemBlocks.push({ type: "text", text: systemDynamic });
+  }
+
   const res = await anthropic.messages.create({
     model,
     max_tokens: 4096,
-    // Prompt caching on the (stable) system prompt — saves ~90% on repeat tokens.
-    system: [
-      {
-        type: "text",
-        text: systemText,
-        cache_control: { type: "ephemeral" },
-      },
-    ],
+    system: systemBlocks,
     ...(useTools ? { tools: TOOL_DEFINITIONS } : {}),
     messages: anthropicMessages,
   });
@@ -256,11 +300,16 @@ chatRoute.post("/", async (c) => {
     // Pure server-tool round — synthesize a continuation by calling Claude
     // again with the tool results appended. This keeps the UX instant
     // (no extra client roundtrip) when Claude is just updating memory.
-    const { systemText: st2, anthropicMessages: am2 } = toAnthropic(messages);
+    const { systemStable: ss2, systemDynamic: sd2, anthropicMessages: am2 } =
+      toAnthropic(messages);
+    const sysBlocks2: Anthropic.Messages.TextBlockParam[] = [
+      { type: "text", text: ss2, cache_control: { type: "ephemeral" } },
+    ];
+    if (sd2) sysBlocks2.push({ type: "text", text: sd2 });
     const res2 = await anthropic.messages.create({
       model,
       max_tokens: 4096,
-      system: [{ type: "text", text: st2, cache_control: { type: "ephemeral" } }],
+      system: sysBlocks2,
       tools: TOOL_DEFINITIONS,
       messages: am2,
     });
@@ -305,7 +354,7 @@ chatRoute.post("/", async (c) => {
     }
 
     return c.json<ChatRunResponse>({
-      reply: mode === "voice" ? sanitizeForVoice(text2) : text2,
+      reply: mode === "voice" || mode === "voice-dialogue" ? sanitizeForVoice(text2) : text2,
       messages,
     });
   }
@@ -325,7 +374,7 @@ chatRoute.post("/", async (c) => {
 
   // Terminal: final text reply
   return c.json<ChatRunResponse>({
-    reply: mode === "voice" ? sanitizeForVoice(assistantText) : assistantText,
+    reply: mode === "voice" || mode === "voice-dialogue" ? sanitizeForVoice(assistantText) : assistantText,
     messages,
   });
 });
@@ -335,8 +384,14 @@ chatRoute.post("/", async (c) => {
  * Tool results must be embedded as `tool_result` content blocks on
  * a user message in Anthropic's model (not a separate role).
  */
+/** Marker inserted between the stable persona and the per-user dynamic
+ *  context so toAnthropic() can split them into two separate cache blocks.
+ *  Never user-facing — stripped before the prompt reaches Claude. */
+const CACHE_SPLIT_MARKER = "\n<<<PROTEGE_SYSTEM_SPLIT>>>\n";
+
 function toAnthropic(turns: OAITurn[]): {
-  systemText: string;
+  systemStable: string;
+  systemDynamic: string;
   anthropicMessages: Anthropic.Messages.MessageParam[];
 } {
   let systemText = MENTOR_SYSTEM_PROMPT;
@@ -404,5 +459,16 @@ function toAnthropic(turns: OAITurn[]): {
     }
   }
 
-  return { systemText, anthropicMessages: out };
+  // Split into stable (cacheable globally) + dynamic (per-user) halves.
+  // If no marker is present (legacy / fallback path) the whole prompt is
+  // treated as stable.
+  const splitIdx = systemText.indexOf(CACHE_SPLIT_MARKER);
+  const systemStable =
+    splitIdx === -1 ? systemText : systemText.slice(0, splitIdx);
+  const systemDynamic =
+    splitIdx === -1
+      ? ""
+      : systemText.slice(splitIdx + CACHE_SPLIT_MARKER.length);
+
+  return { systemStable, systemDynamic, anthropicMessages: out };
 }
