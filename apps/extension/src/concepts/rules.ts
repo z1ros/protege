@@ -1,11 +1,17 @@
 /**
- * Concept detection rules with difficulty weights and cluster grouping.
+ * Concept metadata + regex detection rules.
  *
  * weight:  0.3 trivial · 1.0 core · 2.0 advanced · 3.0 expert
  * cluster: used by the Concepts tab to group related skills
  *
- * The total weight sum across all rules defines the IQ ceiling calibration
- * (see store.ts — K is computed so max reachable IQ = 1000).
+ * Responsibility split:
+ *   - JS/TS concepts: detected by the AST layer (astDetector.ts). The
+ *     entries below still carry weight + cluster metadata so callers like
+ *     weakSpots and IQ scoring can look them up by name, but their
+ *     `languages` arrays are empty so the regex runner skips them.
+ *   - Python concepts: detected by the regex runner here (detector.ts) —
+ *     AST doesn't cover Python. Python regexes are hand-tuned; the rest
+ *     are metadata-only.
  */
 
 export type Cluster =
@@ -19,120 +25,84 @@ export type Cluster =
 
 export interface Rule {
   name: string;
+  /** Languages the regex should run against. Empty = metadata-only (AST handles it). */
   languages: string[];
   patterns: RegExp[];
   weight: number;
   cluster: Cluster;
 }
 
-const JS_TS = ["javascript", "typescript", "javascriptreact", "typescriptreact"];
-const JS_TS_JSX = ["javascriptreact", "typescriptreact"];
-const TS = ["typescript", "typescriptreact"];
 const PY = ["python"];
 
 export const RULES: Rule[] = [
-  // ===== React =====
-  { name: "React useState",      languages: JS_TS_JSX, weight: 1.2, cluster: "react",
-    patterns: [/\buseState\s*\(/] },
-  { name: "React useEffect",     languages: JS_TS_JSX, weight: 1.5, cluster: "react",
-    patterns: [/\buseEffect\s*\(/] },
-  // Multiline: useEffect whose body returns a cleanup function.
-  { name: "React useEffect cleanup", languages: JS_TS_JSX, weight: 2.2, cluster: "react",
-    patterns: [/useEffect\s*\(\s*\(\s*\)\s*=>\s*\{[\s\S]*?return\s+(\(\s*\)\s*=>|function\s*\()/] },
-  { name: "React useMemo",       languages: JS_TS_JSX, weight: 2.0, cluster: "react",
-    patterns: [/\buseMemo\s*\(/] },
-  { name: "React useCallback",   languages: JS_TS_JSX, weight: 2.0, cluster: "react",
-    patterns: [/\buseCallback\s*\(/] },
-  { name: "React useRef",        languages: JS_TS_JSX, weight: 1.5, cluster: "react",
-    patterns: [/\buseRef\s*\(/] },
-  { name: "React useReducer",    languages: JS_TS_JSX, weight: 2.5, cluster: "react",
-    patterns: [/\buseReducer\s*\(/] },
-  // Custom hook = function named use[A-Z] whose body calls another hook.
-  { name: "React custom hook",   languages: JS_TS_JSX, weight: 2.8, cluster: "react",
-    patterns: [/function\s+use[A-Z]\w*[^{]*\{[\s\S]*?\buse[A-Z]\w*\s*\(/, /const\s+use[A-Z]\w*\s*=\s*[^=]*=>\s*\{[\s\S]*?\buse[A-Z]\w*\s*\(/] },
-  { name: "React component",     languages: JS_TS_JSX, weight: 1.0, cluster: "react",
-    patterns: [/export\s+(default\s+)?function\s+[A-Z]\w*/, /const\s+[A-Z]\w*\s*[:=][^=]*=>/] },
+  // ===== React (metadata-only — AST detects these) =====
+  { name: "React useState",      languages: [], weight: 1.2, cluster: "react", patterns: [] },
+  { name: "React useEffect",     languages: [], weight: 1.5, cluster: "react", patterns: [] },
+  { name: "React useEffect cleanup", languages: [], weight: 2.2, cluster: "react", patterns: [] },
+  { name: "React useMemo",       languages: [], weight: 2.0, cluster: "react", patterns: [] },
+  { name: "React useCallback",   languages: [], weight: 2.0, cluster: "react", patterns: [] },
+  { name: "React useRef",        languages: [], weight: 1.5, cluster: "react", patterns: [] },
+  { name: "React useReducer",    languages: [], weight: 2.5, cluster: "react", patterns: [] },
+  { name: "React custom hook",   languages: [], weight: 2.8, cluster: "react", patterns: [] },
+  { name: "React component",     languages: [], weight: 1.0, cluster: "react", patterns: [] },
 
-  // ===== Async =====
-  { name: "async/await",         languages: JS_TS, weight: 1.5, cluster: "async",
-    patterns: [/\basync\s+(function|\()/, /\basync\s*\(/, /\bawait\s+/] },
-  { name: "Promises",            languages: JS_TS, weight: 1.5, cluster: "async",
-    patterns: [/\bnew\s+Promise\s*\(/, /\bPromise\.(all|race|allSettled|any)\s*\(/] },
-  { name: "Promise.all concurrency", languages: JS_TS, weight: 2.0, cluster: "async",
-    patterns: [/\bPromise\.(all|allSettled|any|race)\s*\(/] },
-  { name: "Async iteration",     languages: JS_TS, weight: 2.2, cluster: "async",
-    patterns: [/\bfor\s+await\s*\(/] },
-  { name: "Fetch API",           languages: JS_TS, weight: 0.8, cluster: "async",
-    patterns: [/\bfetch\s*\(/] },
+  // ===== Async (metadata-only — AST detects these) =====
+  { name: "async/await",         languages: [], weight: 1.5, cluster: "async", patterns: [] },
+  { name: "Promises",            languages: [], weight: 1.5, cluster: "async", patterns: [] },
+  { name: "Promise.all concurrency", languages: [], weight: 2.0, cluster: "async", patterns: [] },
+  { name: "Async iteration",     languages: [], weight: 2.2, cluster: "async", patterns: [] },
+  { name: "Fetch API",           languages: [], weight: 0.8, cluster: "async", patterns: [] },
 
-  // ===== Error handling =====
-  { name: "Error handling",      languages: JS_TS, weight: 1.2, cluster: "error-handling",
-    patterns: [/\btry\s*\{[\s\S]*?\}\s*catch\b/, /\.catch\s*\(/] },
+  // ===== Error handling (metadata-only — AST detects the JS/TS try/catch) =====
+  { name: "Error handling",      languages: [], weight: 1.2, cluster: "error-handling", patterns: [] },
 
-  // ===== Functional =====
-  { name: "Array map",           languages: JS_TS, weight: 0.6, cluster: "functional",
-    patterns: [/\.map\s*\(\s*[\(\w]/] },
-  { name: "Array filter",        languages: JS_TS, weight: 0.6, cluster: "functional",
-    patterns: [/\.filter\s*\(\s*[\(\w]/] },
-  { name: "Array reduce",        languages: JS_TS, weight: 1.8, cluster: "functional",
-    patterns: [/\.reduce\s*\(\s*[\(\w]/] },
-  // Reducer pattern = reduce whose accumulator is an object/array literal
-  // (state-building reduction, not just .reduce((a,b)=>a+b)).
-  { name: "Reducer pattern",     languages: JS_TS, weight: 2.5, cluster: "functional",
-    patterns: [/\.reduce\s*\(\s*\([^)]*\)\s*=>\s*\(?\{[\s\S]*?\}\s*\)?\s*,\s*\{/, /\.reduce\s*\(\s*\([^)]*\)\s*=>\s*\[[\s\S]*?\]\s*,\s*\[/] },
-  // Higher-order function = parameter list includes a function-typed param,
-  // or a function that returns another function expression.
-  { name: "Higher-order function", languages: JS_TS, weight: 2.3, cluster: "functional",
-    patterns: [/\(\s*\w+\s*:\s*\([^)]*\)\s*=>\s*[^,)]+\s*[,)]/, /=>\s*\(?\s*\([^)]*\)\s*=>/] },
-  { name: "Destructuring",       languages: JS_TS, weight: 0.5, cluster: "functional",
-    patterns: [/const\s*\{[^}]+\}\s*=/, /const\s*\[[^\]]+\]\s*=/] },
-  { name: "Spread / rest",       languages: JS_TS, weight: 0.5, cluster: "functional",
-    patterns: [/\.\.\.[a-zA-Z_]/] },
-  { name: "Arrow functions",     languages: JS_TS, weight: 0.3, cluster: "functional",
-    patterns: [/\([^)]*\)\s*=>/, /[a-zA-Z_]+\s*=>/] },
+  // ===== Functional (metadata-only — AST detects these) =====
+  { name: "Array map",           languages: [], weight: 0.6, cluster: "functional", patterns: [] },
+  { name: "Array filter",        languages: [], weight: 0.6, cluster: "functional", patterns: [] },
+  { name: "Array reduce",        languages: [], weight: 1.8, cluster: "functional", patterns: [] },
+  { name: "Reducer pattern",     languages: [], weight: 2.5, cluster: "functional", patterns: [] },
+  { name: "Higher-order function", languages: [], weight: 2.3, cluster: "functional", patterns: [] },
+  { name: "Destructuring",       languages: [], weight: 0.5, cluster: "functional", patterns: [] },
+  { name: "Spread / rest",       languages: [], weight: 0.5, cluster: "functional", patterns: [] },
+  { name: "Arrow functions",     languages: [], weight: 0.3, cluster: "functional", patterns: [] },
 
-  // ===== Language core =====
-  { name: "Classes",             languages: JS_TS, weight: 1.0, cluster: "language-core",
-    patterns: [/\bclass\s+\w+/] },
-  { name: "Template literals",   languages: JS_TS, weight: 0.3, cluster: "language-core",
-    patterns: [/`[^`]*\$\{[^}]+\}[^`]*`/] },
-  { name: "Optional chaining",   languages: JS_TS, weight: 0.4, cluster: "language-core",
-    patterns: [/\?\./] },
-  { name: "Nullish coalescing",  languages: JS_TS, weight: 0.4, cluster: "language-core",
-    patterns: [/\?\?/] },
-  { name: "ES modules",          languages: JS_TS, weight: 0.4, cluster: "language-core",
-    patterns: [/^import\s.+\sfrom\s/m, /^export\s+(default\s+|const\s+|function\s+|class\s+)/m] },
+  // ===== Language core (metadata-only — AST detects these) =====
+  { name: "Classes",             languages: [], weight: 1.0, cluster: "language-core", patterns: [] },
+  { name: "Template literals",   languages: [], weight: 0.3, cluster: "language-core", patterns: [] },
+  { name: "Optional chaining",   languages: [], weight: 0.4, cluster: "language-core", patterns: [] },
+  { name: "Nullish coalescing",  languages: [], weight: 0.4, cluster: "language-core", patterns: [] },
+  { name: "ES modules",          languages: [], weight: 0.4, cluster: "language-core", patterns: [] },
 
-  // ===== TypeScript types =====
-  { name: "TypeScript interface", languages: TS, weight: 1.0, cluster: "types",
-    patterns: [/\binterface\s+\w+/] },
-  { name: "TypeScript type alias", languages: TS, weight: 1.0, cluster: "types",
-    patterns: [/\btype\s+\w+\s*=/] },
-  { name: "TypeScript generics", languages: TS, weight: 2.0, cluster: "types",
-    patterns: [/<[A-Z]\w*(\s*,\s*[A-Z]\w*)*>/] },
-  { name: "Generic constraints", languages: TS, weight: 2.5, cluster: "types",
-    patterns: [/<[A-Z]\w*\s+extends\s+\w/] },
-  { name: "Conditional types",   languages: TS, weight: 3.0, cluster: "types",
-    patterns: [/type\s+\w+\s*<[^>]*>\s*=\s*[^;]*\bextends\b[^;]*\?[^;]*:/] },
-  // Discriminated union = union type where members share a literal "kind" / "type" field.
-  { name: "Discriminated unions", languages: TS, weight: 2.8, cluster: "types",
-    patterns: [/\|\s*\{\s*(kind|type|tag)\s*:\s*["'][^"']+["']/] },
+  // ===== TypeScript types (metadata-only — AST detects these) =====
+  { name: "TypeScript interface", languages: [], weight: 1.0, cluster: "types", patterns: [] },
+  { name: "TypeScript type alias", languages: [], weight: 1.0, cluster: "types", patterns: [] },
+  { name: "TypeScript generics", languages: [], weight: 2.0, cluster: "types", patterns: [] },
+  { name: "Generic constraints", languages: [], weight: 2.5, cluster: "types", patterns: [] },
+  { name: "Conditional types",   languages: [], weight: 3.0, cluster: "types", patterns: [] },
+  { name: "Discriminated unions", languages: [], weight: 2.8, cluster: "types", patterns: [] },
 
-  // ===== Python =====
+  // ===== Python (regex-detected — AST doesn't cover Python) =====
   { name: "Python list comprehension", languages: PY, weight: 1.2, cluster: "python",
     patterns: [/\[[^\]]*\bfor\b[^\]]*\]/] },
+  // Dotted decorators like @functools.wraps and @app.route.
   { name: "Python decorators",   languages: PY, weight: 2.0, cluster: "python",
-    patterns: [/^@\w+/m] },
+    patterns: [/^@[\w.]+/m] },
+  // Non-greedy so it doesn't cross unrelated code between `with` and `as`.
   { name: "Python with-statement", languages: PY, weight: 1.0, cluster: "python",
-    patterns: [/\bwith\s+.+\s+as\s+\w+\s*:/] },
+    patterns: [/\bwith\s+.+?\s+as\s+\w+\s*:/] },
   { name: "Python try/except",   languages: PY, weight: 1.2, cluster: "error-handling",
     patterns: [/\btry\s*:[\s\S]*?\bexcept\b/] },
+  // Inner bracket class `[^{}]+` excludes nested braces in format specs like `f"{x:{w}}"`.
   { name: "Python f-string",     languages: PY, weight: 0.4, cluster: "python",
-    patterns: [/f["'][^"']*\{[^}]+\}/] },
+    patterns: [/f["'][^"']*\{[^{}]+\}/] },
   { name: "Python async/await",  languages: PY, weight: 1.8, cluster: "async",
     patterns: [/\basync\s+def\b/, /\bawait\s+/] },
+  // Single-line arg annotation OR return-type annotation (catches multi-line signatures).
   { name: "Python type hints",   languages: PY, weight: 1.2, cluster: "types",
-    patterns: [/def\s+\w+\([^)]*:\s*\w+/] },
+    patterns: [
+      /def\s+\w+\s*\([^)]*:\s*\w+/,
+      /def\s+\w+\s*\([\s\S]{0,200}?\)\s*->\s*[\w\[\], ]+\s*:/,
+    ] },
 ];
 
 /** Sum of all rule weights — the theoretical maximum before calibration. */

@@ -1,0 +1,294 @@
+/* ==========================================================
+   Composer (text mode)
+   ========================================================== */
+
+/* Cursor-style composer: a bordered box that grows with its content.
+   Flex column — textarea on top, action row (hint + send) at the bottom.
+   The textarea auto-resizes via a useEffect in App.tsx that watches the
+   value and sets height = min(max, scrollHeight). */
+.composer {
+  flex: 0 0 auto;
+  margin: 10px 14px 14px;
+  padding: 10px 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+.composer:focus-within {
+  border-color: rgba(var(--electric-rgb), 0.45);
+  background: var(--glass-2);
+  box-shadow: 0 0 0 3px rgba(var(--electric-rgb), 0.1);
+}
+.composer-input {
+  width: 100%;
+  resize: none;
+  min-height: 22px;
+  max-height: 220px;
+  overflow-y: auto;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 2px 0;
+  background: transparent;
+  color: var(--text);
+  border: none;
+  outline: none !important;
+  box-shadow: none !important;
+  scrollbar-width: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.composer-input:focus,
+.composer-input:focus-visible,
+.composer-input:active {
+  outline: none !important;
+  box-shadow: none !important;
+  border: none !important;
+}
+.composer-input::-webkit-scrollbar { display: none; }
+.composer-input::placeholder { color: var(--text-faint); }
+
+.composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 4px;
+}
+.composer-actions-left {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.composer-hint {
+  color: var(--text-faint);
+  letter-spacing: 0.14em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Row above the textarea that hosts the live state chip (Thinking…). */
+.composer-state-row {
+  display: flex;
+  justify-content: flex-start;
+  padding: 0 0 8px 0;
+}
+
+/* Dim the textarea while disabled so its state matches the chip. */
+.composer-input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Mic toggle inside the composer — flips the whole chat surface into voice mode */
+.composer-mode-btn {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 150ms ease, background 150ms ease, border-color 150ms ease;
+}
+.composer-mode-btn svg { width: 13px; height: 13px; }
+.composer-mode-btn:hover {
+  color: var(--electric-soft);
+  background: rgba(var(--electric-rgb), 0.1);
+  border-color: rgba(var(--electric-rgb), 0.35);
+}
+
+.send-btn {
+  height: 26px;
+  width: 26px;
+  flex: 0 0 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--electric);
+  color: var(--ink);
+  border: none;
+  border-radius: 6px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 150ms ease, transform 100ms ease, box-shadow 150ms ease;
+  box-shadow: 0 2px 10px rgba(var(--electric-rgb), 0.28);
+}
+.send-btn svg { width: 12px; height: 12px; }
+.send-btn:hover:not(:disabled) {
+  background: var(--electric-soft);
+  box-shadow: 0 4px 14px rgba(var(--electric-rgb), 0.4);
+}
+.send-btn:active:not(:disabled) { transform: translateY(1px); }
+.send-btn:disabled {
+  background: var(--glass-2);
+  color: var(--text-faint);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+/* ==========================================================
+   Proactive watcher nudges — "Protege, unprompted:"
+   ========================================================== */
+
+.nudge {
+  align-self: flex-start;
+  max-width: 94%;
+  padding: 12px 14px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(var(--electric-rgb), 0.25);
+  border-left: 3px solid var(--electric);
+  background: linear-gradient(
+    135deg,
+    rgba(var(--electric-rgb), 0.08),
+    rgba(var(--electric-rgb), 0.02)
+  );
+  box-shadow: 0 4px 24px rgba(var(--electric-rgb), 0.08);
+  animation: nudge-in 420ms cubic-bezier(0.16, 1, 0.3, 1);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.nudge.nudge-high {
+  border-color: rgba(var(--rose-rgb), 0.35);
+  border-left-color: var(--rose);
+  background: linear-gradient(135deg, rgba(var(--rose-rgb), 0.06), rgba(var(--rose-rgb), 0.02));
+}
+.nudge.nudge-low {
+  border-color: rgba(var(--text-rgb), 0.12);
+  border-left-color: var(--text-dim);
+}
+@keyframes nudge-in {
+  from { opacity: 0; transform: translateX(-6px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.nudge-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--electric-soft);
+  font-weight: 500;
+}
+.nudge.nudge-high .nudge-label { color: var(--rose); }
+.nudge-text { font-size: 13px; line-height: 1.5; color: var(--text); }
+.nudge-actions { display: flex; gap: 6px; margin-top: 2px; }
+.nudge-btn {
+  padding: 6px 12px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 150ms, border-color 150ms, color 150ms, transform 120ms;
+}
+.nudge-btn:hover { background: var(--glass-2); color: var(--glow); transform: translateY(-1px); }
+.nudge-btn.nudge-engage {
+  background: rgba(var(--electric-rgb), 0.15);
+  border-color: rgba(var(--electric-rgb), 0.4);
+  color: var(--electric-soft);
+}
+.nudge-btn.nudge-engage:hover { background: rgba(var(--electric-rgb), 0.25); color: var(--glow); }
+
+
+/* ==========================================================
+   Chat modality switcher — sits under the Chat/Concepts tabs
+   when Chat is active. Flips the chat surface between full
+   text mode and full voice mode. Big, centered, glass pill.
+   ========================================================== */
+
+.mode-switcher {
+  align-self: center;
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  box-shadow: inset 0 1px 0 rgba(var(--text-rgb), 0.04);
+}
+.mode-opt {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+.mode-opt svg { width: 13px; height: 13px; }
+.mode-opt:hover { color: var(--text); }
+.mode-opt.active {
+  background: linear-gradient(135deg, rgba(var(--electric-rgb), 0.35), rgba(var(--electric-deep-rgb), 0.15));
+  color: var(--glow);
+  box-shadow:
+    inset 0 1px 0 rgba(var(--text-rgb), 0.12),
+    0 0 0 1px rgba(var(--electric-rgb), 0.45),
+    0 4px 18px rgba(var(--electric-rgb), 0.3);
+}
+.mode-opt.active svg {
+  filter: drop-shadow(0 0 6px rgba(var(--electric-rgb), 0.6));
+}
+
+/* Mini text/voice switcher in the composer bar */
+.mode-mini {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+}
+.mode-mini-opt {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: transparent;
+  color: var(--text-dim);
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+.mode-mini-opt svg { width: 13px; height: 13px; }
+.mode-mini-opt:hover {
+  color: var(--text);
+}
+.mode-mini-opt.active {
+  background: var(--glass-3);
+  color: var(--glow);
+  box-shadow: 0 1px 0 0 var(--glass-border-strong) inset;
+}
+
+/* Voice-mode footer wrapping the mini switcher */
+.voice-mode-footer {
+  display: flex;
+  justify-content: center;
+  padding: 10px 0 14px;
+}
+

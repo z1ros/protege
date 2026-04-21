@@ -1,0 +1,247 @@
+/* ==========================================================
+   Settings page
+   ========================================================== */
+
+.settings-hero-over {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 22px 24px 22px;
+  text-align: center;
+}
+.settings-headline {
+  font-size: 30px;
+  font-style: italic;
+  color: var(--glow);
+  text-shadow: 0 2px 20px rgba(0, 0, 0, 0.85);
+}
+.settings-headline .accent { color: var(--electric-soft); font-style: italic; }
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.section-card {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 14px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+}
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--glass-border);
+}
+.setting-row:last-child { border-bottom: none; }
+.setting-row-label { font-size: 12px; color: var(--glow); }
+.setting-row-value { display: flex; align-items: center; gap: 6px; }
+.row-value { color: var(--text-dim); }
+
+.toggle {
+  width: 36px;
+  height: 20px;
+  background: var(--glass-2);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  position: relative;
+  cursor: pointer;
+  transition: background 180ms ease, border-color 180ms ease;
+}
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: var(--text-dim);
+  border-radius: 50%;
+  transition: left 220ms cubic-bezier(0.16, 1, 0.3, 1), background 180ms ease;
+}
+.toggle.on {
+  background: rgba(var(--electric-rgb), 0.25);
+  border-color: rgba(var(--electric-rgb), 0.5);
+}
+.toggle.on .toggle-thumb {
+  left: 18px;
+  background: var(--electric-soft);
+  box-shadow: 0 0 10px rgba(var(--electric-rgb), 0.6);
+}
+
+.segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--glass-2);
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+}
+.segmented-btn {
+  padding: 5px 10px;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 150ms ease, color 150ms ease;
+}
+.segmented-btn:hover { color: var(--glow); }
+.segmented-btn.active {
+  background: var(--glass-3);
+  color: var(--glow);
+}
+
+.select {
+  padding: 7px 28px 7px 12px;
+  background: var(--glass-2);
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  color: var(--glow);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  outline: none;
+  /* Custom chevron — replaces the ugly default dropdown arrow */
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='rgba(245,246,250,0.5)' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 10px 6px;
+  transition: border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
+}
+.select:hover {
+  border-color: var(--glass-border-strong);
+  background-color: var(--glass-3);
+}
+.select:focus {
+  border-color: rgba(var(--electric-rgb), 0.5);
+  box-shadow: 0 0 0 2px rgba(var(--electric-rgb), 0.15);
+}
+/* Style the dropdown options (Chromium only) */
+.select option {
+  background: var(--ink-2);
+  color: var(--text);
+  padding: 8px;
+}
+
+/* Range slider — filled electric track + glowing orb thumb.
+   Uses --fill (0–100%) set inline from the component value. */
+.slider {
+  --fill: 50%;
+  -webkit-appearance: none;
+  appearance: none;
+  width: 180px;
+  height: 22px;
+  background: transparent;
+  outline: none !important;
+  border: none !important;
+  box-shadow: none;
+  cursor: pointer;
+  margin: 0;
+  padding: 0;
+}
+/* Kill every possible focus indicator Chromium/Electron might add */
+.slider:focus,
+.slider:focus-visible,
+.slider:focus-within {
+  outline: none !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+/* Chromium track */
+.slider::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background:
+    linear-gradient(
+      to right,
+      var(--electric) 0%,
+      var(--electric) var(--fill),
+      rgba(var(--text-rgb), 0.08) var(--fill),
+      rgba(var(--text-rgb), 0.08) 100%
+    );
+  border: 1px solid rgba(var(--text-rgb), 0.06);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+/* Chromium thumb */
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, var(--glow-soft) 0%, var(--electric) 55%, var(--electric-deep) 100%);
+  border: 1px solid rgba(var(--text-rgb), 0.35);
+  margin-top: -7px;
+  box-shadow:
+    0 0 0 3px rgba(var(--electric-rgb), 0.18),
+    0 0 14px rgba(var(--electric-rgb), 0.6),
+    0 2px 6px rgba(0, 0, 0, 0.45);
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+.slider:hover::-webkit-slider-thumb {
+  transform: scale(1.1);
+  box-shadow:
+    0 0 0 5px rgba(var(--electric-rgb), 0.22),
+    0 0 20px rgba(var(--electric-rgb), 0.75),
+    0 2px 8px rgba(0, 0, 0, 0.5);
+}
+.slider:active::-webkit-slider-thumb { transform: scale(1.15); }
+/* Firefox track */
+.slider::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(var(--text-rgb), 0.08);
+  border: 1px solid rgba(var(--text-rgb), 0.06);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+.slider::-moz-range-progress {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--electric);
+}
+/* Firefox thumb */
+.slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, var(--glow-soft) 0%, var(--electric) 55%, var(--electric-deep) 100%);
+  border: 1px solid rgba(var(--text-rgb), 0.35);
+  box-shadow:
+    0 0 0 3px rgba(var(--electric-rgb), 0.18),
+    0 0 14px rgba(var(--electric-rgb), 0.6),
+    0 2px 6px rgba(0, 0, 0, 0.45);
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+.slider:hover::-moz-range-thumb {
+  transform: scale(1.1);
+  box-shadow:
+    0 0 0 5px rgba(var(--electric-rgb), 0.22),
+    0 0 20px rgba(var(--electric-rgb), 0.75),
+    0 2px 8px rgba(0, 0, 0, 0.5);
+}
+.slider:active::-moz-range-thumb { transform: scale(1.15); }
+
+.settings-footnote {
+  text-align: center;
+  margin-top: 12px;
+  color: var(--text-faint);
+}
+

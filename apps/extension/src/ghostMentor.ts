@@ -9,6 +9,10 @@ import {
   hasNativeDiagnosticInRange,
   hasNativeDiagnosticOnLine,
 } from "./nativeDiagnostics.js";
+import {
+  shouldSuppress as gateShouldSuppress,
+  onGateChanged,
+} from "./findingGate.js";
 
 /**
  * Ghost Mentor — a CodeLens that floats above the cursor line whenever
@@ -77,19 +81,28 @@ class GhostLensProvider implements vscode.CodeLensProvider {
     const allSuggestions = getSuggestionsForUri(uri);
     if (allSuggestions.length === 0) return [];
 
-    // Dedup against native diagnostics: if TS / ESLint / cSpell /
-    // Cursor's agent already squiggled this line/range, skip our row.
-    // Protege's job is to surface what those tools DIDN'T catch — not
-    // to echo what's already in the editor. See nativeDiagnostics.ts.
+    // Two-stage filter:
+    //   1) Dedup against native diagnostics — if TS / ESLint / cSpell /
+    //      Cursor agent already squiggled this range, skip.
+    //   2) Finding-gate (A1 + B1) — skip if the line was edited in the
+    //      last 45s, the user's cursor is within ±2 lines, or the same
+    //      ruleId was shown on this URI in the last 5 min.
+    const uriKey = uri;
     const filtered = allSuggestions.filter((s) => {
-      // For block/flow findings the range can span several lines; check
-      // the whole range. Atom-scope findings just check the start line.
-      if (s.scope === "block" || s.scope === "flow") {
-        return !hasNativeDiagnosticInRange(doc.uri, s.range);
-      }
-      return !hasNativeDiagnosticOnLine(doc.uri, s.range.start.line);
+      const rangeHasNative =
+        s.scope === "block" || s.scope === "flow"
+          ? hasNativeDiagnosticInRange(doc.uri, s.range)
+          : hasNativeDiagnosticOnLine(doc.uri, s.range.start.line);
+      if (rangeHasNative) return false;
+      if (gateShouldSuppress(uriKey, s)) return false;
+      return true;
     });
     if (filtered.length === 0) return [];
+
+    // B1 cooldown is armed at ingestion (liveReview.runReview and
+    // ingestFindings) per spec — not at render time. Ghost doesn't
+    // note findings itself because that would miss the SAVE/IDLE
+    // tiers and double-cover the LIVE tier.
 
     // Cap to ONE finding per line. Multiple CodeLenses on the same line
     // are rendered horizontally by VS Code, which stretches the row off
@@ -189,6 +202,16 @@ export function registerGhostMentor(
   // Register the CodeLens provider broadly — we gate inside provideCodeLenses.
   disposables.push(
     vscode.languages.registerCodeLensProvider({ scheme: "file" }, lensProvider)
+  );
+
+  // Re-render when the finding gate's suppression state changes (cursor
+  // moved, file edited, rule cooldown expired via churn). Without this,
+  // the CodeLens only updates when VS Code decides to re-call provide —
+  // which isn't guaranteed on pure cursor movement.
+  disposables.push(
+    onGateChanged(() => {
+      lensProvider?.refresh();
+    })
   );
 
   // ---- Commands ----

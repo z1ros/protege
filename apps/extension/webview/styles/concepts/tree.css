@@ -1,0 +1,440 @@
+/* ==========================================================
+   Skill Tree View — structured, navigable skill hierarchy.
+   Domain → Topic → Skills as collapsible sections.
+   ========================================================== */
+
+.skill-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.st-toolbar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.st-search {
+  flex: 1;
+  padding: 7px 10px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  outline: none;
+}
+.st-search:focus { border-color: rgba(var(--electric-rgb), 0.45); }
+.st-search::placeholder { color: var(--text-faint); }
+
+.st-level-select {
+  padding: 7px 8px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  outline: none;
+  cursor: pointer;
+}
+.st-level-select:focus { border-color: rgba(var(--electric-rgb), 0.45); }
+
+.st-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px 6px 8px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 150ms, background 150ms, border-color 150ms;
+}
+.st-back-btn svg { width: 16px; height: 16px; }
+.st-back-btn:hover {
+  color: var(--glow);
+  background: var(--glass-2);
+  border-color: var(--glass-border-strong);
+}
+
+.st-map-btn {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 150ms, background 150ms, border-color 150ms;
+}
+.st-map-btn svg { width: 16px; height: 16px; }
+.st-map-btn:hover {
+  color: var(--glow);
+  background: var(--glass-2);
+  border-color: var(--glass-border-strong);
+}
+
+.st-summary {
+  padding: 0 4px;
+  color: var(--text-faint);
+}
+
+.st-group-label {
+  padding: 14px 4px 4px;
+  color: var(--text-faint);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  font-weight: 600;
+}
+
+.st-group-label:first-child {
+  padding-top: 4px;
+}
+
+.st-domain-empty {
+  opacity: 0.5;
+}
+
+.st-show-more {
+  display: block;
+  width: 100%;
+  padding: 12px;
+  margin-top: 6px;
+  background: var(--glass-1);
+  border: 1px dashed var(--glass-border);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 150ms, background 150ms, border-color 150ms;
+  text-align: center;
+}
+
+.st-show-more:hover {
+  color: var(--electric-soft);
+  background: var(--glass-2);
+  border-color: rgba(var(--electric-rgb), 0.25);
+}
+
+.st-domains {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Specialty level — top grouping */
+.st-specialty {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.st-specialty-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 14px;
+  background: var(--glass-1);
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.st-specialty-header:hover {
+  background: var(--glass-2);
+}
+
+.st-specialty-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--glow);
+  letter-spacing: 0.01em;
+}
+
+.st-specialty-count {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  margin-left: auto;
+}
+
+.st-specialty-bar {
+  width: 50px;
+  height: 3px;
+  background: var(--glass-2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.st-specialty-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--electric-deep), var(--electric));
+  border-radius: 999px;
+  transition: width 400ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.st-specialty-domains {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0 0 4px;
+}
+
+.st-specialty-domains .st-domain {
+  border-radius: 0;
+  border-left: none;
+  border-right: none;
+  border-bottom: none;
+}
+
+.st-specialty-domains .st-domain-header {
+  padding-left: 26px;
+}
+.st-specialty-domains .st-domain {
+  padding: 2px 0;
+}
+
+/* Domain header — clickable row with progress bar.
+   Grid layout so icon / name / count / bar / chevron each have fixed tracks
+   and stop fighting each other for space. */
+.st-domain-header {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto 72px 14px;
+  align-items: center;
+  column-gap: 14px;
+  width: 100%;
+  padding: 12px 14px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: background 150ms, border-color 150ms;
+}
+.st-domain-header:hover {
+  background: var(--glass-2);
+  border-color: var(--glass-border-strong);
+}
+.st-domain-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 8px;
+  box-shadow: 0 0 8px currentColor;
+}
+.st-domain-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--glow);
+  text-align: left;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.st-domain-count {
+  color: var(--text-faint);
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-align: right;
+  min-width: 52px;
+}
+.st-domain-bar {
+  height: 4px;
+  background: var(--glass-2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.st-domain-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 400ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.st-chevron {
+  width: 14px;
+  height: 14px;
+  color: var(--text-faint);
+  transition: transform 200ms ease;
+  justify-self: center;
+}
+.st-chevron svg { width: 100%; height: 100%; }
+.st-chevron.open { transform: rotate(90deg); }
+.st-chevron.small { width: 12px; height: 12px; flex: 0 0 12px; }
+
+/* Topics inside a domain */
+.st-topics {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0 4px 18px;
+  border-left: 1px solid var(--glass-border);
+  margin-left: 16px;
+}
+.st-topic-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 60px 12px;
+  align-items: center;
+  column-gap: 12px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius) - 2px);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: background 150ms, border-color 150ms;
+}
+.st-topic-header:hover {
+  background: var(--glass-1);
+  border-color: var(--glass-border);
+}
+.st-topic-name {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text);
+  text-align: left;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.st-topic-count {
+  color: var(--text-faint);
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  text-align: right;
+  min-width: 48px;
+}
+.st-topic-bar {
+  height: 3px;
+  background: var(--glass-2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.st-topic-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 300ms ease;
+}
+
+/* Skill chips inside a topic */
+.st-skills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 0 8px 10px;
+}
+.st-skill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  color: inherit;
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  transition: background 150ms, border-color 150ms, transform 120ms, box-shadow 150ms;
+  max-width: 100%;
+}
+.st-skill:hover {
+  background: var(--glass-2);
+  border-color: var(--glass-border-strong);
+  transform: translateY(-1px);
+}
+.st-skill.detected {
+  border-color: rgba(var(--electric-rgb), 0.25);
+  background: rgba(var(--electric-rgb), 0.06);
+}
+.st-skill.detected:hover {
+  border-color: rgba(var(--electric-rgb), 0.5);
+  box-shadow: 0 0 12px rgba(var(--electric-rgb), 0.2);
+}
+.st-skill.mastered {
+  background: rgba(var(--electric-rgb), 0.14);
+  border-color: rgba(var(--electric-rgb), 0.45);
+  box-shadow: 0 0 8px rgba(var(--electric-rgb), 0.2);
+}
+.st-skill.undiscovered {
+  opacity: 0.55;
+}
+.st-skill.undiscovered:hover { opacity: 0.85; }
+.st-skill-name {
+  color: var(--text);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.st-skill.detected .st-skill-name { color: var(--glow); }
+
+.st-skill-bar {
+  width: 30px;
+  height: 2px;
+  background: var(--glass-2);
+  border-radius: 999px;
+  overflow: hidden;
+  flex: 0 0 30px;
+}
+.st-skill-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+}
+.st-skill-diff {
+  font-size: 6px;
+  letter-spacing: 1px;
+  color: var(--text-faint);
+}
+
+/* Domain icon in skill tree rows */
+.domain-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  height: 16px;
+}
+.domain-icon svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+/* Empty state for dashboard cards — honest about missing data */
+.empty-dash-card {
+  padding: 24px 16px;
+  text-align: center;
+  border-style: dashed;
+  border-color: var(--glass-border);
+}
+.empty-dash-message {
+  font-size: 12px;
+  color: var(--text-faint);
+  line-height: 1.5;
+  margin-top: 8px;
+}

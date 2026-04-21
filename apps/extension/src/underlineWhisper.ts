@@ -7,6 +7,7 @@ import {
 import type { Suggestion } from "./reviewEngine.js";
 import { log } from "./log.js";
 import { hasNativeDiagnosticInRange } from "./nativeDiagnostics.js";
+import { shouldSuppress as gateShouldSuppress, onGateChanged } from "./findingGate.js";
 
 /**
  * Underline Whisper — Grammarly for code.
@@ -102,6 +103,17 @@ export function registerUnderlineWhisper(
   // Re-render when the user switches editors.
   disposables.push(
     vscode.window.onDidChangeActiveTextEditor((editor) => {
+      if (!editor) return;
+      renderWhispers(editor);
+    })
+  );
+
+  // Re-render when the finding gate's suppression state changes —
+  // cursor moved, line was edited, a ruleId cooldown expired. Without
+  // this, our static decorations would stay stale between scans.
+  disposables.push(
+    onGateChanged(() => {
+      const editor = vscode.window.activeTextEditor;
       if (!editor) return;
       renderWhispers(editor);
     })
@@ -266,32 +278,33 @@ function renderWhispers(editor: vscode.TextEditor): void {
   // now (see ghostMentor.ts), which renders for every finding on the
   // file, not just the cursor-parked one.
   const ranges: vscode.Range[] = [];
+  const uriKey = uri;
   for (const s of suggestions) {
     // Only atom-scope (single-token) findings get an inline underline.
     // Block and flow-scope findings span many lines — painting a wavy
-    // underline across 20+ lines of a function body is the "everything
-    // is highlighted" chaos the user flagged. Those findings still
-    // appear as a CodeLens row above the code; nothing is lost.
+    // underline across 20+ lines is the "everything is highlighted"
+    // chaos the user flagged. Those findings still render in the
+    // CodeLens row; nothing is lost.
     if (s.scope === "block" || s.scope === "flow") continue;
 
     const tokenRange = resolveTokenRange(doc, s);
     if (!tokenRange) continue;
 
-    // Dedup against native diagnostics — if TS / ESLint / cSpell /
-    // Cursor's agent already squiggled this token, we stay quiet
-    // instead of layering more decorations on top. (Note: Cursor's
-    // "Fix with Agent" inline UI is NOT a diagnostic, so that one
-    // dedup can't detect it; the scope skip above is what prevents
-    // Protege from also covering those lines with block/flow
-    // underlines.)
+    // Dedup against native diagnostics (TS / ESLint / cSpell / Cursor
+    // agent). Cursor's "Fix with Agent" inline UI is NOT a diagnostic
+    // so that dedup can't detect it — the scope skip above is what
+    // prevents Protege from also covering those lines with block/flow
+    // underlines.
     if (hasNativeDiagnosticInRange(doc.uri, tokenRange)) continue;
 
-    // Praise / concept findings are positive-framing signals — they
-    // don't need an "attention, something is wrong" wavy underline.
-    // Keep them visible via the Ghost CodeLens + concept-trail dot;
-    // skip the underline. Only risk-carrying findings (watch-out,
-    // or any non-LEARN severity=warn/perf) get the underline.
+    // Praise / concept findings are positive signals — no wavy
+    // underline. Still visible via Ghost CodeLens + concept-trail dot.
     if (s.kind === "praise" || s.kind === "concept") continue;
+
+    // Finding gate — suppress if user is still editing this line
+    // (±45s), cursor is within ±2 lines, or ruleId was shown in the
+    // last 5 min.
+    if (gateShouldSuppress(uriKey, s)) continue;
 
     ranges.push(tokenRange);
   }

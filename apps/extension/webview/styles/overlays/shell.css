@@ -1,0 +1,78 @@
+/* ==========================================================
+   Overlay (Profile / Settings / Subscription full-panel pages)
+   ========================================================== */
+
+/* Fallback header height. The real value is measured at runtime by
+   App.tsx via a ResizeObserver and written onto :root as --header-h,
+   so overlays always start exactly below the sticky header regardless
+   of what's inside it (streak chip, extra tab rows, responsive padding).
+   This fallback is only used for the first frame before the observer fires. */
+:root { --header-h: 128px; }
+
+.overlay {
+  position: fixed;
+  /* Start below the sticky header instead of covering it */
+  inset: var(--header-h) 0 0 0;
+  z-index: 60;
+  background: rgba(var(--ink-rgb), 0.82);
+  backdrop-filter: blur(18px) saturate(1.1);
+  -webkit-backdrop-filter: blur(18px) saturate(1.1);
+  animation: overlay-in 240ms cubic-bezier(0.16, 1, 0.3, 1);
+  display: flex;
+  flex-direction: column;
+}
+@keyframes overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Inner panel wrapper — when user switches profile → subscription → settings,
+   this element is re-keyed so a cross-fade plays on the content only, while
+   the overlay backdrop stays mounted. Much smoother than unmounting the whole
+   overlay and replaying the full fade-in each time. */
+.overlay-panel {
+  animation: panel-swap 280ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes panel-swap {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.overlay-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 2;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 150ms ease, background 150ms ease, transform 150ms ease;
+}
+.overlay-close svg { width: 14px; height: 14px; }
+.overlay-close:hover {
+  color: var(--glow);
+  background: var(--glass-2);
+  transform: rotate(90deg);
+}
+.overlay-scroll {
+  flex: 1;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.overlay-scroll::-webkit-scrollbar { display: none; }
+
+.page {
+  padding: 22px 18px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  /* No animation here — .overlay-panel already animates the swap. Layering
+     both caused a double-bounce + perceived lag when switching overlays. */
+}
+

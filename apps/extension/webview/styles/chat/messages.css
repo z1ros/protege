@@ -1,0 +1,375 @@
+/* ==========================================================
+   Messages
+   ========================================================== */
+
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 22px 22px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  scroll-behavior: smooth;
+}
+.messages::-webkit-scrollbar { width: 8px; }
+.messages::-webkit-scrollbar-track { background: transparent; }
+.messages::-webkit-scrollbar-thumb {
+  background: var(--glass-2);
+  border-radius: 10px;
+}
+.messages::-webkit-scrollbar-thumb:hover { background: var(--glass-3); }
+
+.msg {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 94%;
+  animation: msg-in 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.msg-user { align-self: flex-end; align-items: flex-end; }
+.msg-assistant { align-self: flex-start; }
+
+@keyframes msg-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.msg .role {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--text-faint);
+  padding: 0 4px;
+  font-weight: 500;
+}
+.msg-user .role { color: var(--electric-soft); }
+
+.msg .content {
+  white-space: pre-wrap;
+  line-height: 1.6;
+  padding: 13px 16px;
+  border-radius: 14px;
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: 0.005em;
+  /* Frosted glass — blurs whatever's behind so text stays legible on any
+     background (grid, cinematic plate, gradients). */
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  /* Critical for block content (code blocks, lists) inside the bubble:
+     min-width: 0 lets the flex child shrink below its content's intrinsic
+     width, max-width: 100% caps it at the parent's max-width, and the
+     overflow keeps long unbreakable tokens from forcing the bubble wider
+     than 94% of the chat panel. Without these, a wide code line stretched
+     the user bubble across the entire chat. */
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+/* Markdown wrapper resets the bubble's pre-wrap so the rendered HTML
+   (which already has structural whitespace) doesn't double up on blank
+   lines between paragraphs. Pre-wrap stays in effect for non-md content
+   and inside `<pre>` blocks (which set their own white-space). */
+.msg .content .md {
+  white-space: normal;
+}
+.msg-user .content {
+  background: linear-gradient(
+    135deg,
+    rgba(var(--electric-rgb), 0.32),
+    rgba(var(--electric-deep-rgb), 0.18)
+  );
+  border: 1px solid rgba(var(--electric-rgb), 0.42);
+  color: var(--glow);
+  border-bottom-right-radius: 4px;
+  box-shadow:
+    0 4px 20px rgba(var(--electric-rgb), 0.15),
+    0 1px 0 0 rgba(var(--text-rgb), 0.08) inset;
+}
+.msg-assistant .content {
+  background: rgba(var(--text-rgb), 0.06);
+  border: 1px solid var(--glass-border);
+  color: var(--text);
+  border-bottom-left-radius: 4px;
+  box-shadow:
+    0 4px 20px rgba(0, 0, 0, 0.25),
+    0 1px 0 0 rgba(var(--text-rgb), 0.06) inset;
+}
+/* Inline code pill — applies ONLY to inline `<code>` elements.
+   Block code lives inside `<pre>` and gets `.md-code-block` styling
+   below. The `:not()` is critical: without it, the block code's outer
+   `<code>` element inherits this inline-pill background, and because
+   `<code>` is `display: inline` by default, the browser paints a
+   separate pill per line-box inside the `<pre>` — what looked like
+   "syntax highlighting failed" was actually this rule leaking. */
+.msg .content code:not(.md-code-block) {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: rgba(0, 0, 0, 0.35);
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--glass-border);
+}
+
+/* ==========================================================
+   Code blocks INSIDE user bubbles — collapsed treatment.
+   Synthetic prompts from gutter buttons ("Fix it", "Teach me") embed
+   a code snippet inside what becomes a user message. The default
+   `.md-code-wrap` chrome (navy gradient, scanline, header with copy
+   button) looks like a foreign widget glued onto the blue bubble.
+   Override to a flat, subdued treatment that reads as "code inside a
+   message" instead of "separate panel."
+   ========================================================== */
+.msg-user .md-code-wrap {
+  background: #1e1e1e;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  margin: 8px 0 4px;
+  box-shadow: none;
+}
+.msg-user .md-code-wrap::before { display: none; }
+.msg-user .md-code-header { display: none; }
+.msg-user .md-pre {
+  font-size: 11px;
+  padding: 9px 11px;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.msg-user .md-pre--wrap {
+  overflow-x: hidden;
+}
+/* Tighter paragraph rhythm in user bubbles so the bubble doesn't get
+   monstrously tall when the synthetic prompt has 3-4 paragraphs. */
+.msg-user .md-p { margin: 0 0 6px; }
+.msg-user .md-p:last-child { margin-bottom: 0; }
+
+/* Follow-up chips — real mentor flow: "want me to explain why?" */
+.followups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 0 2px;
+  animation: msg-in 300ms cubic-bezier(0.16, 1, 0.3, 1) 100ms both;
+}
+.followup-chip {
+  padding: 7px 13px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.005em;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease, color 160ms ease;
+  max-width: 100%;
+  text-align: left;
+  line-height: 1.3;
+}
+.followup-chip::before {
+  content: "↳ ";
+  color: var(--electric);
+  font-weight: 600;
+}
+.followup-chip:hover:not(:disabled) {
+  background: rgba(var(--electric-rgb), 0.1);
+  border-color: rgba(var(--electric-rgb), 0.4);
+  color: var(--glow);
+  transform: translateX(2px);
+}
+.followup-chip:active:not(:disabled) {
+  transform: translateX(2px) scale(0.98);
+}
+.followup-chip:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Tool activity (Protege reading files, etc.) */
+.tool-activity {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.tool-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  color: var(--text-dim);
+  animation: msg-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.tool-row .tool-icon {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+.tool-row.tool-running {
+  border-color: rgba(var(--electric-rgb), 0.35);
+}
+.tool-row.tool-running .tool-icon {
+  background: rgba(var(--electric-rgb), 0.2);
+  color: var(--electric);
+  animation: pulse 1.4s infinite ease-in-out;
+}
+.tool-row.tool-done {
+  border-color: rgba(var(--electric-rgb), 0.2);
+}
+.tool-row.tool-done .tool-icon {
+  background: rgba(var(--electric-rgb), 0.22);
+  color: var(--electric);
+}
+.tool-row.tool-error .tool-icon {
+  background: rgba(var(--rose-rgb), 0.2);
+  color: var(--rose);
+}
+.tool-row.tool-kind-write.tool-done {
+  border-color: rgba(var(--electric-rgb), 0.4);
+  background: rgba(var(--electric-rgb), 0.08);
+}
+.tool-row.tool-kind-write.tool-done .tool-icon {
+  background: rgba(var(--electric-rgb), 0.28);
+  color: var(--electric-soft);
+}
+.tool-row.tool-kind-write .tool-name {
+  color: var(--glow);
+  font-weight: 500;
+}
+.tool-row.tool-kind-teach.tool-done {
+  border-color: rgba(var(--text-rgb), 0.18);
+  background: rgba(var(--text-rgb), 0.04);
+}
+.tool-row.tool-kind-teach.tool-done .tool-icon {
+  background: rgba(var(--text-rgb), 0.14);
+  color: var(--glow);
+}
+.tool-row.tool-kind-teach .tool-name {
+  color: var(--glow);
+  font-weight: 500;
+}
+.tool-row.tool-kind-nav.tool-done {
+  border-color: rgba(var(--electric-rgb), 0.22);
+}
+.tool-row.tool-kind-nav.tool-done .tool-icon {
+  background: rgba(var(--electric-rgb), 0.15);
+  color: var(--electric-soft);
+}
+.tool-row .tool-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Typing indicator */
+.typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.typing-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--electric);
+  animation: pulse 1.4s infinite ease-in-out;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.18s; }
+.typing-dot:nth-child(3) { animation-delay: 0.36s; }
+
+@keyframes pulse {
+  0%, 80%, 100% { opacity: 0.25; transform: scale(0.85); }
+  40% { opacity: 1; transform: scale(1.1); box-shadow: 0 0 8px var(--electric); }
+}
+
+.error {
+  color: var(--rose);
+  background: rgba(var(--rose-rgb), 0.08);
+  border: 1px solid rgba(var(--rose-rgb), 0.22);
+  border-radius: var(--radius);
+  padding: 11px 14px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* ==========================================================
+   Empty state + quick prompts
+   ========================================================== */
+
+.empty {
+  margin: auto;
+  padding: 24px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+  max-width: 360px;
+  text-align: center;
+}
+.empty-headline {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 28px;
+  line-height: 1.15;
+  color: var(--glow);
+  letter-spacing: -0.02em;
+}
+.empty-headline .accent { color: var(--electric); }
+.empty-sub {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.6;
+}
+.prompts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.prompt-btn {
+  text-align: left;
+  padding: 11px 14px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transition: background 150ms ease, border-color 150ms ease, transform 150ms ease;
+}
+.prompt-btn:hover {
+  background: var(--glass-2);
+  border-color: var(--glass-border-strong);
+  transform: translateX(2px);
+}
+.prompt-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--electric-ghost);
+  border: 1px solid rgba(var(--electric-rgb), 0.22);
+  color: var(--electric);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+}
+
