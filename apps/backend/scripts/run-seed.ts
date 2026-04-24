@@ -31,14 +31,22 @@ for (const stmt of statements) {
   } catch {}
 }
 
-// Supabase JS client can't run raw DDL SQL.
-// Use the direct Postgres connection instead.
-const pgUrl = `postgresql://postgres.lfckgmlfvkwfskpsoovq:ProtegeZero%230@aws-1-us-east-1.pooler.supabase.com:5432/postgres`;
+// Supabase JS client can't run raw DDL SQL. Use a direct Postgres
+// connection instead. The connection string must come from env; never
+// hardcode credentials here — this file is git-tracked.
+const pgUrl = process.env.SUPABASE_DB_URL ?? "";
 
 console.log("Connecting to Postgres directly...");
 
 // Use node's built-in or pg module
 try {
+  if (!pgUrl) {
+    throw new Error(
+      "SUPABASE_DB_URL env var required. Set it in apps/backend/.env:\n" +
+        "  SUPABASE_DB_URL=postgresql://postgres:<password>@db.<project>.supabase.co:5432/postgres\n" +
+        "Never commit the password to source."
+    );
+  }
   // Dynamic import pg
   const pg = await import("pg");
   const client = new pg.default.Client({ connectionString: pgUrl, ssl: { rejectUnauthorized: false } });
