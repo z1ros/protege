@@ -6,8 +6,19 @@ import {
   kokoroWarmupError,
   kokoroWarmupStatus,
 } from "../kokoro.js";
+import { sanitizeForVoice } from "../voicePostProcess.js";
 
 export const ttsRoute = new Hono();
+
+// Minimal valid WAV (44-byte RIFF header + 0 samples). Returned when the
+// caller's text was entirely code/markdown that sanitizes to nothing —
+// lets the webview's onended fire cleanly without a 400/empty-blob path.
+const EMPTY_WAV = new Uint8Array([
+  0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45,
+  0x66, 0x6d, 0x74, 0x20, 0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
+  0x80, 0x3e, 0x00, 0x00, 0x00, 0x7d, 0x00, 0x00, 0x02, 0x00, 0x10, 0x00,
+  0x64, 0x61, 0x74, 0x61, 0x00, 0x00, 0x00, 0x00,
+]);
 
 /**
  * POST /tts
@@ -43,6 +54,20 @@ ttsRoute.post("/", async (c) => {
     return c.json({ error: "text is required" }, 400);
   }
 
+  // Strip code fences / filenames / markdown-isms so the spoken reply
+  // sounds natural, regardless of what the caller sent. Chat UI gets
+  // the raw text with code blocks; TTS gets the spoken version here.
+  // Teaching-step narrations are already clean, so this is a no-op for them.
+  const spokenText = sanitizeForVoice(body.text);
+  if (spokenText.trim().length === 0) {
+    // Everything was code/fences → nothing to speak. Return a tiny empty
+    // WAV so the webview's audio.play() resolves cleanly (onended fires)
+    // instead of hitting the empty-blob warn path.
+    return new Response(new Uint8Array(EMPTY_WAV), {
+      headers: { "content-type": "audio/wav", "cache-control": "no-cache" },
+    });
+  }
+
   const voice = body.voice ?? "female";
 
   if (!isKokoroReady()) {
@@ -60,11 +85,11 @@ ttsRoute.post("/", async (c) => {
   }
 
   console.log(
-    `[protege] /tts voice=${voice} chars=${body.text.length}`
+    `[protege] /tts voice=${voice} chars=${spokenText.length} (raw=${body.text.length})`
   );
 
   try {
-    const wav = await kokoroTts(body.text, voice);
+    const wav = await kokoroTts(spokenText, voice);
     return new Response(new Uint8Array(wav), {
       headers: {
         "content-type": "audio/wav",

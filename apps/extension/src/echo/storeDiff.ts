@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
-import { authHeaders } from "../auth.js";
-import { BACKEND_URL } from "../protegeClient.js";
+import { authHeaders } from "../user/auth.js";
+import { BACKEND_URL } from "../user/protegeClient.js";
 
 /**
  * Diagnostic command: prompt for a time window, hit the backend's

@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { aiQuery } from "../aiBackend.js";
+import { aiQuery } from "../ai/aiBackend.js";
 import { detectConcepts } from "../concepts/detector.js";
 
 /**

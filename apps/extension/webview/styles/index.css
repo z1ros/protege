@@ -29,6 +29,7 @@
 @import "./chat/live.css";
 @import "./chat/history.css";
 @import "./chat/map-panel.css";
+@import "./chat/learning-session.css";
 
 @import "./concepts/hero.css";
 @import "./concepts/dashboard-shell.css";

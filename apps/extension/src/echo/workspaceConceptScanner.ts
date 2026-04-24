@@ -1,7 +1,7 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { authHeaders } from "../auth.js";
-import { BACKEND_URL } from "../protegeClient.js";
+import { authHeaders } from "../user/auth.js";
+import { BACKEND_URL } from "../user/protegeClient.js";
 import { detectHybrid } from "../concepts/hybridDetector.js";
 
 /**

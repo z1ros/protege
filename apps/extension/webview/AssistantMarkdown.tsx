@@ -14,6 +14,13 @@ import { ensureTwoslash } from "./syntax/twoslashLoader";
 const TWOSLASH_LANGS = new Set(["typescript", "tsx", "javascript", "jsx"]);
 
 export function AssistantMarkdown({ content }: { content: string }) {
+  // Pre-process the raw content so identifiers the AI quoted with '...'
+  // or "..." become inline code pills — matching how backticks already
+  // render. Protege is a code-mentor agent: nearly every quoted string
+  // in its prose is a symbol, filename, flag, etc. Rendering them as
+  // plain text with visible quotes (as we used to) made replies look
+  // stilted vs. real mentor writing.
+  const processed = useMemo(() => preprocessCodeQuotes(content), [content]);
   return (
     <div className="md">
       <ReactMarkdown
@@ -54,16 +61,131 @@ export function AssistantMarkdown({ content }: { content: string }) {
                 React.isValidElement(c) && (c as React.ReactElement).type === "code"
             );
             const className = codeEl?.props?.className ?? "";
-            const lang = /language-(\w+)/.exec(className)?.[1] ?? "";
+            const rawLang = /language-(\w+)/.exec(className)?.[1] ?? "";
             const text = extractText(codeEl?.props?.children ?? children);
+            // Upgrade the fence language when the body contains JSX —
+            // the AI frequently labels TSX snippets as plain "js" or
+            // "javascript", which makes Shiki pick the non-JSX grammar
+            // and leave component tags like `<Swiper` uncolored. Same
+            // for inline react examples the AI writes during chat.
+            const lang = upgradeLangForJsx(rawLang, text);
             return <CodeBlock lang={lang} code={text} />;
           },
         }}
       >
-        {content}
+        {processed}
       </ReactMarkdown>
     </div>
   );
+}
+
+/* ==========================================================
+   Quoted-identifier → inline-code preprocessor.
+
+   Rewrites short code-shaped tokens wrapped in '...' or "..." into
+   backtick-wrapped inline code, so the markdown renderer picks them
+   up as code pills. Existing backtick spans, fenced code blocks, and
+   inline code are left intact.
+
+   Heuristic for "code-shaped":
+   - No whitespace, no nested quotes/backticks.
+   - Starts with one of: letter, underscore, $, @, ., <, /.
+   - Body uses only: word chars, $, ., -, /, @, (), <>, :, #.
+   - Length 1–40. Beyond 40 chars it's almost certainly prose quotation.
+
+   Contractions like "don't", "it's" don't match because the char
+   AFTER the opening quote would be a space or non-identifier token
+   that terminates the match.
+
+   This is intentionally conservative — false positives on natural
+   English prose would look worse than false negatives. If the AI
+   writes something like "'hello' world", it won't convert (space
+   inside), preserving the quote.
+   ========================================================== */
+const CODE_QUOTE_RE =
+  /(['"])([A-Za-z_$@.<\/][\w$.\-/@()<>:#]{0,39})\1/g;
+
+function preprocessCodeQuotes(content: string): string {
+  // Split on fenced code blocks so we DO NOT rewrite anything inside
+  // triple-backtick code (the AI sometimes puts literal quoted idents
+  // inside an example block — those should stay in the code verbatim).
+  const parts = content.split(/(```[\s\S]*?```)/g);
+  return parts
+    .map((part, i) => {
+      // Odd indices are the fenced blocks (capturing-group halves of split).
+      if (i % 2 === 1) return part;
+      return rewriteQuotedCode(part);
+    })
+    .join("");
+}
+
+function rewriteQuotedCode(text: string): string {
+  // Also protect existing inline code spans (`...`). We scan char-by-char
+  // for runs outside backtick pairs and only rewrite those segments.
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    const tick = text.indexOf("`", i);
+    if (tick === -1) {
+      out += text.slice(i).replace(CODE_QUOTE_RE, (_m, _q, inner) => `\`${inner}\``);
+      break;
+    }
+    // Rewrite the non-code segment before the backtick run.
+    out += text.slice(i, tick).replace(CODE_QUOTE_RE, (_m, _q, inner) => `\`${inner}\``);
+    // Find matching closing backtick (or end of string) and copy verbatim.
+    const close = text.indexOf("`", tick + 1);
+    if (close === -1) {
+      out += text.slice(tick);
+      break;
+    }
+    out += text.slice(tick, close + 1);
+    i = close + 1;
+  }
+  return out;
+}
+
+/**
+ * Bump a fence language up to its JSX/TSX variant when the body
+ * contains React-shaped markup. Two signals:
+ *   1. Capitalized tag like `<Swiper`, `<MyComp />` — React components.
+ *   2. Standard HTML tag like `<div>`, `<ul>`, `</span>` — JSX inside JS.
+ *
+ * Only triggers for base JS/TS langs (or no lang at all) so we don't
+ * clobber intentional labels like "html" or "xml" that also contain
+ * angle brackets. Anything non-JS/TS passes through untouched.
+ */
+function upgradeLangForJsx(lang: string, code: string): string {
+  const base = lang.toLowerCase();
+  const upgradable =
+    base === "" ||
+    base === "js" ||
+    base === "javascript" ||
+    base === "ts" ||
+    base === "typescript";
+  if (!upgradable) return lang;
+
+  // Strip line comments + fenced string contents before scanning so we
+  // don't match `<ul>` that lives inside `// In your JSX, replace the
+  // <ul> with:` — that's prose, not code.
+  const stripped = code
+    .replace(/\/\/.*$/gm, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(['"`])(?:\\.|(?!\1).)*\1/g, "");
+
+  const hasComponent = /<[A-Z][\w.]*(\s|\/|>|\n)/.test(stripped);
+  const hasHtmlTag = /<\/?(?:div|span|p|ul|ol|li|button|input|form|a|img|section|header|footer|nav|main|article|h[1-6]|table|tr|td|th|tbody|thead|svg|path|circle|rect|label|select|option|textarea|pre|code)\b/.test(
+    stripped
+  );
+  if (!hasComponent && !hasHtmlTag) return lang;
+
+  // Prefer tsx when the body also has TS-only constructs; otherwise jsx.
+  const looksTs =
+    base === "ts" ||
+    base === "typescript" ||
+    /\b(interface|type\s+\w+\s*=|as\s+[A-Z]\w*|:\s*[A-Z]\w*(<|\[|\s*[,)]))/m.test(
+      stripped
+    );
+  return looksTs ? "tsx" : "jsx";
 }
 
 function extractText(node: React.ReactNode): string {

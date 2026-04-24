@@ -12,6 +12,8 @@ import { voiceRoute } from "./routes/voice.js";
 import { preferencesRoute } from "./routes/preferences.js";
 import { echoRoute } from "./routes/echo.js";
 import { registerEchoJobs } from "./echo/index.js";
+import { classifyRoute } from "./routes/classify.js";
+import { verifyRoute } from "./routes/verify.js";
 
 const app = new Hono();
 
@@ -43,6 +45,8 @@ app.route("/memory", memoryRoute);
 app.route("/voice", voiceRoute);
 app.route("/preferences", preferencesRoute);
 app.route("/echo", echoRoute);
+app.route("/classify", classifyRoute);
+app.route("/verify", verifyRoute);
 
 // Echo nightly jobs — rollup, archetypeClassifier.
 // Scaffolding only; widget agents fill in the real aggregation logic.

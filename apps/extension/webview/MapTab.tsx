@@ -17,8 +17,17 @@ import type { ProjectMapData, ProjectMapFile } from "@protege/types";
  */
 
 const LOAD_TIMEOUT_MS = 15_000;
+const MOSTLY_UNOWNED_LIMIT = 8;
 
-export function MapTab() {
+export function MapTab({
+  activeTourPath,
+}: {
+  /** Relative path of the file the Architecture Tour is currently on,
+   *  or null when no tour is active. When set, the Map suppresses its
+   *  own selected-file panel (redundant with the SessionStrip's
+   *  narration) and highlights the tour file in the list. */
+  activeTourPath?: string | null;
+} = {}) {
   const [data, setData] = useState<ProjectMapData | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -154,19 +163,56 @@ export function MapTab() {
     : null;
   const selectedSummary = selected ? summaryByPath[selected] : undefined;
 
+  // Derive "mostly unowned" client-side from the current file list so
+  // ownership/changed patches keep the section fresh without a full
+  // map/request round trip. We only surface files in `unknown` or
+  // `partial` states; fully-owned and untracked files are filtered out.
+  const mostlyUnowned = data.files
+    .filter(
+      (f) =>
+        f.ownership != null &&
+        (f.ownership.state === "unknown" || f.ownership.state === "partial")
+    )
+    .sort(
+      (a, b) =>
+        (a.ownership?.ownedPct ?? 1) - (b.ownership?.ownedPct ?? 1) ||
+        (b.ownership?.unknownLines ?? 0) - (a.ownership?.unknownLines ?? 0)
+    )
+    .slice(0, MOSTLY_UNOWNED_LIMIT);
+
+  // Group files by their immediate parent folder. A file at root goes
+  // under "(root)", otherwise the path up to the last slash is the key.
+  // Aggregate ownership is a LINE-WEIGHTED average so one 1000-line
+  // file can't be outvoted by ten 10-line files — summing owned lines
+  // across the folder and dividing by total lines gives the true share.
+  // Only renders as a section if the workspace has 2+ distinct folders;
+  // otherwise the grouping is pointless visual noise.
+  const folderGroups = groupByFolder(data.files);
+  const showFolderSection = folderGroups.length >= 2;
+
   return (
     <div className="map-tab">
       {/* Header */}
       <div className="map-header">
         <div className="map-root microcaps">{shortenRoot(data.root)}</div>
         <div className="map-header-actions">
-          <button
-            className="map-refresh-btn primary"
-            onClick={startCodebaseTour}
-            title="Walk me through 5 key files, narrated"
-          >
-            Tour this codebase
-          </button>
+          {activeTourPath ? (
+            // Tour is already running — replace the start button with a
+            // muted indicator so the user doesn't try to start a second
+            // tour on top of the first. SessionStrip above the tab
+            // already carries the Stop/Finish controls.
+            <span className="map-tour-active microcaps" title="A tour is running">
+              tour running
+            </span>
+          ) : (
+            <button
+              className="map-refresh-btn primary"
+              onClick={startCodebaseTour}
+              title="Walk me through 5 key files, narrated"
+            >
+              Tour this codebase
+            </button>
+          )}
           <button
             className="map-refresh-btn"
             onClick={refresh}
@@ -189,8 +235,10 @@ export function MapTab() {
       )}
 
       {/* Selected file panel — at the top so it's always visible after
-          click. Avoids requiring the user to scroll back up. */}
-      {selectedFile && (
+          click. Avoids requiring the user to scroll back up. Suppressed
+          when the selected file is the same one the tour is currently
+          narrating, since the SessionStrip already shows its summary. */}
+      {selectedFile && selectedFile.path !== activeTourPath && (
         <div className="map-selection">
           <div className="map-selection-path">{selectedFile.path}</div>
           <div className="map-selection-meta microcaps">
@@ -229,6 +277,29 @@ export function MapTab() {
         </div>
       )}
 
+      {/* Mostly unowned — the "vibecoded, not yet understood" list. Sits
+          at the top because this is the single question Protege exists
+          to answer: which of these files do I not yet own? Click-through
+          goes to selection → the user can then Tour / Explain-back. */}
+      {mostlyUnowned.length > 0 && (
+        <MapSection
+          title="Mostly unowned"
+          count={mostlyUnowned.length}
+          subtitle="lowest ownership first"
+        >
+          {mostlyUnowned.map((f) => (
+            <MapFileRow
+              key={f.path}
+              file={f}
+              selected={selected === f.path}
+              onClick={() => selectFile(f.path)}
+              isCurrentTourStop={f.path === activeTourPath}
+              emphasizeOwnership
+            />
+          ))}
+        </MapSection>
+      )}
+
       {/* Entry Points */}
       {data.entryPoints.length > 0 && (
         <MapSection title="Entry Points" count={data.entryPoints.length}>
@@ -238,6 +309,7 @@ export function MapTab() {
               file={f}
               selected={selected === f.path}
               onClick={() => selectFile(f.path)}
+              isCurrentTourStop={f.path === activeTourPath}
             />
           ))}
         </MapSection>
@@ -256,6 +328,7 @@ export function MapTab() {
               file={f}
               selected={selected === f.path}
               onClick={() => selectFile(f.path)}
+              isCurrentTourStop={f.path === activeTourPath}
               showEntryBadge
             />
           ))}
@@ -275,8 +348,52 @@ export function MapTab() {
               file={f}
               selected={selected === f.path}
               onClick={() => selectFile(f.path)}
+              isCurrentTourStop={f.path === activeTourPath}
               showEntryBadge
             />
+          ))}
+        </MapSection>
+      )}
+
+      {/* By folder — grouped breakdown with per-folder ownership. Hidden
+          for single-folder workspaces where grouping adds no signal. */}
+      {showFolderSection && (
+        <MapSection
+          title="By folder"
+          count={folderGroups.length}
+          subtitle="ownership rolled up"
+        >
+          {folderGroups.map((g) => (
+            <div key={g.folder} className="map-folder-group">
+              <div
+                className="map-folder-head"
+                title={`${g.files.length} files · ${g.totalLines} lines tracked · ${g.ownedLines} owned`}
+              >
+                <span className="map-folder-name">{g.folder}</span>
+                <span className="map-folder-count microcaps">
+                  {g.files.length} {g.files.length === 1 ? "file" : "files"}
+                </span>
+                {g.totalLines > 0 && (
+                  <span
+                    className={`map-folder-pct microcaps state-${g.state}`}
+                  >
+                    {Math.round(g.ownedPct * 100)}%
+                  </span>
+                )}
+              </div>
+              <div className="map-folder-files">
+                {g.files.map((f) => (
+                  <MapFileRow
+                    key={f.path}
+                    file={f}
+                    selected={selected === f.path}
+                    onClick={() => selectFile(f.path)}
+                    isCurrentTourStop={f.path === activeTourPath}
+                    hideDirPrefix
+                  />
+                ))}
+              </div>
+            </div>
           ))}
         </MapSection>
       )}
@@ -350,6 +467,9 @@ function MapFileRow({
   selected,
   onClick,
   showEntryBadge = false,
+  isCurrentTourStop = false,
+  emphasizeOwnership = false,
+  hideDirPrefix = false,
 }: {
   file: ProjectMapFile;
   selected: boolean;
@@ -357,6 +477,16 @@ function MapFileRow({
   /** Whether to show a tiny "entry" chip inline — off inside the Entry
    *  Points section (redundant there), on elsewhere. */
   showEntryBadge?: boolean;
+  /** Whether this row is the file the active tour is currently on. */
+  isCurrentTourStop?: boolean;
+  /** When rendered in the "Mostly unowned" section, replace the edit
+   *  count on the right with a specific ownership breakdown:
+   *  `22% · 140 unreviewed`. Makes the row read for its purpose. */
+  emphasizeOwnership?: boolean;
+  /** Hide the dir-prefix microcap on the left. Used inside the
+   *  "By folder" section where the directory is already the group
+   *  header — repeating it in every row is visual noise. */
+  hideDirPrefix?: boolean;
 }) {
   const base = file.path.split("/").pop() ?? file.path;
   const dir = file.path.slice(0, file.path.length - base.length);
@@ -375,9 +505,9 @@ function MapFileRow({
     : undefined;
   return (
     <button
-      className={`map-row ${selected ? "active" : ""}`}
+      className={`map-row ${selected ? "active" : ""} ${isCurrentTourStop ? "tour-stop" : ""}`}
       onClick={onClick}
-      title={file.path}
+      title={isCurrentTourStop ? `${file.path} · current tour stop` : file.path}
     >
       {dotGlyph && (
         <span
@@ -388,23 +518,100 @@ function MapFileRow({
           {dotGlyph}
         </span>
       )}
-      {dir && <span className="map-row-dir microcaps">{dir}</span>}
+      {dir && !hideDirPrefix && (
+        <span className="map-row-dir microcaps">{dir}</span>
+      )}
       <span className="map-row-name">{base}</span>
       {showEntryBadge && file.isEntryPoint && (
         <span className="map-row-badge microcaps">entry</span>
       )}
-      {file.editsTotal > 0 && (
-        <span className="map-row-edits microcaps">
-          {file.editsByMe > 0
-            ? `${file.editsByMe}/${file.editsTotal}`
-            : `${file.editsTotal}`}
+      {emphasizeOwnership && ownership ? (
+        <span
+          className="map-row-ownership-meta microcaps"
+          title={`${Math.round(ownership.ownedPct * 100)}% owned · ${ownership.unknownLines} of ${ownership.totalLines} lines unreviewed`}
+        >
+          {Math.round(ownership.ownedPct * 100)}%
+          <span className="map-row-unknown">
+            {" · "}
+            {ownership.unknownLines} unreviewed
+          </span>
         </span>
+      ) : (
+        file.editsTotal > 0 && (
+          <span className="map-row-edits microcaps">
+            {file.editsByMe > 0
+              ? `${file.editsByMe}/${file.editsTotal}`
+              : `${file.editsTotal}`}
+          </span>
+        )
       )}
     </button>
   );
 }
 
 // ---- Utils ----
+
+interface FolderGroup {
+  folder: string;
+  files: ProjectMapFile[];
+  /** Sum of `totalLines` across files that have ownership data. */
+  totalLines: number;
+  /** Sum of owned lines (typed + explained-auto) across same files. */
+  ownedLines: number;
+  /** Weighted average: ownedLines / totalLines. 0 when totalLines is 0. */
+  ownedPct: number;
+  /** Same bucketing as per-file summary: owned ≥ 0.8, partial 0.3–0.8,
+   *  unknown < 0.3, untracked when no ownership data exists. */
+  state: "owned" | "partial" | "unknown" | "untracked";
+}
+
+function groupByFolder(files: ProjectMapFile[]): FolderGroup[] {
+  const byFolder = new Map<string, ProjectMapFile[]>();
+  for (const f of files) {
+    const idx = f.path.lastIndexOf("/");
+    const folder = idx < 0 ? "(root)" : f.path.slice(0, idx);
+    const list = byFolder.get(folder) ?? [];
+    list.push(f);
+    byFolder.set(folder, list);
+  }
+
+  const out: FolderGroup[] = [];
+  for (const [folder, list] of byFolder) {
+    let totalLines = 0;
+    let ownedLines = 0;
+    for (const f of list) {
+      const o = f.ownership;
+      if (!o) continue;
+      totalLines += o.totalLines;
+      // Derive owned lines from the summary. The source of truth lives
+      // in ownership.ts:getOwnership — `ownedPct * totalLines` round-
+      // trips to the same integer since the summary was computed over
+      // integer line counts upstream.
+      ownedLines += Math.round(o.ownedPct * o.totalLines);
+    }
+    const ownedPct = totalLines > 0 ? ownedLines / totalLines : 0;
+    const state: FolderGroup["state"] =
+      totalLines === 0
+        ? "untracked"
+        : ownedPct >= 0.8
+          ? "owned"
+          : ownedPct >= 0.3
+            ? "partial"
+            : "unknown";
+    list.sort((a, b) => a.path.localeCompare(b.path));
+    out.push({ folder, files: list, totalLines, ownedLines, ownedPct, state });
+  }
+
+  // Folders with the most unowned lines surface first — helps the eye
+  // land on where the debt is concentrated. Tied folders fall back to
+  // alpha for stable ordering.
+  out.sort((a, b) => {
+    const aDebt = a.totalLines - a.ownedLines;
+    const bDebt = b.totalLines - b.ownedLines;
+    return bDebt - aDebt || a.folder.localeCompare(b.folder);
+  });
+  return out;
+}
 
 function shortenRoot(root: string): string {
   const home = "/Users/";

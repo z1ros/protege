@@ -8,8 +8,8 @@ import type {
   EchoWebviewToHost,
   EchoWindow,
 } from "@protege/types";
-import { authHeaders } from "../auth.js";
-import { BACKEND_URL, getUserId } from "../protegeClient.js";
+import { authHeaders } from "../user/auth.js";
+import { BACKEND_URL, getUserId } from "../user/protegeClient.js";
 import { devPortMapping, isDevMode, renderDevHtml } from "../devMode.js";
 import { getBatcher } from "./batcher.js";
 import { isEchoMessage, postToEchoPanel } from "./rpc.js";

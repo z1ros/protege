@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import type { EchoEvent } from "@protege/types";
-import { authHeaders } from "../auth.js";
-import { BACKEND_URL } from "../protegeClient.js";
+import { authHeaders } from "../user/auth.js";
+import { BACKEND_URL } from "../user/protegeClient.js";
 
 /**
  * Offline-safe event batcher. Collects EchoEvent instances in memory,
