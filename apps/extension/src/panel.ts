@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { mountProtegeWebview } from "./webviewHost.js";
+import { devPortMapping, isDevMode } from "./devMode.js";
 
 let current: vscode.WebviewPanel | undefined;
 
@@ -21,6 +22,7 @@ export function openProtegePanel(context: vscode.ExtensionContext) {
       localResourceRoots: [
         vscode.Uri.joinPath(context.extensionUri, "dist", "webview"),
       ],
+      ...(isDevMode(context.extensionMode) ? { portMapping: devPortMapping() } : {}),
     }
   );
 

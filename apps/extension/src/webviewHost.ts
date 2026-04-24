@@ -28,6 +28,7 @@ import {
   setWakeSuspended,
 } from "./voiceCapture.js";
 import { getStoredWakeThreshold } from "./wakeWordCalibration.js";
+import { devPortMapping, isDevMode, renderDevHtml } from "./devMode.js";
 
 /**
  * Registry so outside code (analyzer, status bar) can broadcast messages
@@ -84,8 +85,9 @@ export function mountProtegeWebview(
     localResourceRoots: [
       vscode.Uri.joinPath(context.extensionUri, "dist", "webview"),
     ],
+    ...(isDevMode(context.extensionMode) ? { portMapping: devPortMapping() } : {}),
   };
-  webview.html = renderHtml(webview, context.extensionUri);
+  webview.html = renderHtml(webview, context.extensionUri, context.extensionMode);
   mountedWebviews.add(webview);
 
   const userId = getUserId(context);
@@ -180,6 +182,8 @@ export function mountProtegeWebview(
       vscode.commands.executeCommand("protege.scanActiveFile");
     } else if (msg.type === "liveReview/toggle") {
       vscode.commands.executeCommand("protege.toggleLiveReview");
+    } else if (msg.type === "echo/open") {
+      vscode.commands.executeCommand("protege.openEcho");
     } else if (msg.type === "chat/search") {
       const results = searchHistory(msg.query);
       post(webview, { type: "chat/searchResults", results });
@@ -544,19 +548,27 @@ async function handleChat(
 
 function renderHtml(
   webview: vscode.Webview,
-  extensionUri: vscode.Uri
+  extensionUri: vscode.Uri,
+  mode: vscode.ExtensionMode
 ): string {
+  // In the F5 Extension Development Host the webview loads from the Vite
+  // dev server so HMR updates React/CSS changes in ~100ms without a full
+  // panel reload. Installed extensions always take the bundled path below.
+  if (isDevMode(mode)) return renderDevHtml(webview, "main");
+
   const base = vscode.Uri.joinPath(extensionUri, "dist", "webview");
   // Webview-safe URI for the dist/webview/ directory. Using this as the
   // <base href> makes every relative asset import inside the bundled JS
   // (e.g. "./assets/cathedral.png") resolve through VS Code's resource
   // protocol, so cinematic photos actually load.
   const baseUri = webview.asWebviewUri(base) + "/";
+  // Vite emits these names because vite.config.mts uses a named multi-entry
+  // input map ({ main, echo }). Keep in sync if the entry key changes.
   const scriptUri = webview.asWebviewUri(
-    vscode.Uri.joinPath(base, "assets", "index.js")
+    vscode.Uri.joinPath(base, "assets", "main.js")
   );
   const styleUri = webview.asWebviewUri(
-    vscode.Uri.joinPath(base, "assets", "index.css")
+    vscode.Uri.joinPath(base, "assets", "main.css")
   );
   const nonce = getNonce();
   // `wasm-unsafe-eval` is required for Shiki's Oniguruma grammar engine
