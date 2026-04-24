@@ -1,3 +1,4 @@
+// ARCHIVED 2026-04 — Code IQ tab replaced by Echo. Kept for resurrection / widget cannibalization. Re-enable with PROTEGE_SHOW_CODEIQ=1.
 import React, { useState } from "react";
 import type {
   ClusterSummary,

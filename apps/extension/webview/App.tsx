@@ -52,6 +52,13 @@ import protegeLogoUrl from "./protege-logo.svg";
 type Mode = "chat" | "concepts" | "live";
 type ChatInputMode = "text" | "voice";
 
+// Legacy Code IQ route is hidden behind a dev flag — see the "Archive CodeIQ"
+// block in the Echo plan. Vite inlines process.env.* at build time.
+const SHOW_CODEIQ_TAB: boolean =
+  typeof process !== "undefined" &&
+  (process as unknown as { env?: Record<string, string | undefined> })?.env
+    ?.PROTEGE_SHOW_CODEIQ === "1";
+
 const QUICK_PROMPTS: Array<{ icon: React.ReactNode; label: string }> = [
   { icon: <IconZap size={14} />, label: "Explain this file to me" },
   { icon: <IconBug size={14} />, label: "Find bugs and issues" },
@@ -620,16 +627,28 @@ export function App() {
             Chat
           </button>
           <button
-            className={`tab ${mode === "concepts" && !overlay && !streakOpen ? "active" : ""}`}
+            className="tab"
             onClick={() => {
-              setMode("concepts");
-              setOverlay(null);
-              setStreakOpen(false);
+              // Echo lives in its own editor-tab webview — clicking this
+              // strip entry dispatches the host command that opens it.
+              vscode.postMessage({ type: "echo/open" });
             }}
           >
-            {mode === "concepts" && !overlay && !streakOpen && <span className="tab-dot" />}
-            Code IQ
+            Echo
           </button>
+          {SHOW_CODEIQ_TAB && (
+            <button
+              className={`tab ${mode === "concepts" && !overlay && !streakOpen ? "active" : ""}`}
+              onClick={() => {
+                setMode("concepts");
+                setOverlay(null);
+                setStreakOpen(false);
+              }}
+            >
+              {mode === "concepts" && !overlay && !streakOpen && <span className="tab-dot" />}
+              Code IQ
+            </button>
+          )}
           <button
             className={`tab ${mode === "live" && !overlay && !streakOpen ? "active" : ""}`}
             onClick={() => {

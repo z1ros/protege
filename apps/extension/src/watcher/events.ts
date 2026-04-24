@@ -47,7 +47,23 @@ export type WatcherEvent =
       deltaIq: number;
       file: string;
     }
-  | { type: "active_editor_change"; path: string | null; ts: number };
+  | { type: "active_editor_change"; path: string | null; ts: number }
+  // ========== Echo event taxonomy ==========
+  // New observational events fed into the Echo batcher. Carried in the
+  // same ring buffer so existing triggers can read them if useful, but
+  // the ambient dispatcher ignores types it doesn't handle.
+  | { type: "keystroke_batch"; ts: number; path: string; language: string; keystrokes: number; durationMs: number }
+  | { type: "session_tick"; ts: number; path: string | null; language: string | null; focusStretchMs: number }
+  | { type: "session_boundary"; ts: number; kind: "start" | "end"; reason: "idle" | "vscode-close" | "fresh-start"; activeMs?: number }
+  | { type: "paste_classified"; ts: number; path: string; source: "external" | "ai-chat-output" | "self-edit-paste"; chars: number }
+  | { type: "ai_suggestion_accepted"; ts: number; path: string; chars: number }
+  | { type: "ai_suggestion_rejected"; ts: number; path: string }
+  | { type: "undo_triggered"; ts: number; path: string }
+  | { type: "line_diff"; ts: number; path: string; linesAdded: number; linesRemoved: number; rewrittenFingerprints: Array<{ fingerprint: string; roughLine: number; contentHash: string; sampleContent?: string }> }
+  | { type: "commit_detected"; ts: number; sha: string; message: string; filesTouched: string[] }
+  | { type: "file_focus_change"; ts: number; path: string | null; language: string | null }
+  | { type: "diagnostic_appeared"; ts: number; path: string; line: number; severity: "error" | "warning" | "info"; message: string }
+  | { type: "diagnostic_resolved"; ts: number; path: string; line: number; durationMs: number };
 
 export type WatcherEventKind = WatcherEvent["type"];
 

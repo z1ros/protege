@@ -111,6 +111,9 @@ export function registerAnalyzer(
 
     // 3. Record concepts with content hash (dedup) + quality gate.
     try {
+      const rawLang = doc.languageId;
+      const language =
+        rawLang && rawLang !== "plaintext" ? rawLang : null;
       const result = await recordConcepts(userId, {
         filePath: doc.fileName,
         fileHash,
@@ -118,6 +121,7 @@ export function registerAnalyzer(
         contextScores,
         hasErrors,
         errorCount,
+        language,
       });
       if (result.gains.length > 0) {
         onGain(result.gains, result.codeIq);

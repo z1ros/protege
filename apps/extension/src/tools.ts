@@ -181,8 +181,6 @@ async function dispatch(call: ToolCall): Promise<string> {
       return runTeachStep(call.arguments as Parameters<typeof runTeachStep>[0]);
     }
     case "create_file":
-    case "create_scratch_file":
-    case "run_file":
       return "This tool has been disabled. Teach through chat responses instead.";
     default:
       throw new Error(`Unknown tool: ${call.name}`);

@@ -8,9 +8,6 @@
   "engines": {
     "vscode": "^1.90.0"
   },
-  "enabledApiProposals": [
-    "editorInsets"
-  ],
   "main": "./dist/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -35,6 +32,10 @@
       {
         "command": "protege.openInNewTab",
         "title": "Protege: Open in New Tab"
+      },
+      {
+        "command": "protege.openEcho",
+        "title": "Protege: Open Echo"
       },
       {
         "command": "protege.enableInlineCards",
@@ -155,6 +156,14 @@
       {
         "command": "protege.toggleMaxPlanBackend",
         "title": "Protege: Max Plan — switch Qwen 7B ↔ Haiku"
+      },
+      {
+        "command": "protege.showEchoEventStream",
+        "title": "Protege: Show Echo Event Stream"
+      },
+      {
+        "command": "protege.showStoreDiff",
+        "title": "Protege: Show Echo Store Diff"
       }
     ],
     "configuration": {
@@ -250,10 +259,14 @@
     ]
   },
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onView:protege.launcher",
+    "workspaceContains:**/*"
   ],
   "scripts": {
-    "dev": "tsup --watch",
+    "dev": "cross-env NODE_ENV=development concurrently -n ext,ui -c blue,green \"tsup --watch\" \"vite --port 5173 --strictPort\"",
+    "dev:ext": "tsup --watch",
+    "dev:ui": "vite --port 5173 --strictPort",
     "build": "tsup && vite build",
     "build:ext": "tsup",
     "build:webview": "vite build",
@@ -272,6 +285,7 @@
     "lucide-react": "^1.8.0",
     "node-llama-cpp": "^3.18.1",
     "react-markdown": "^10.1.0",
+    "recharts": "^3.8.1",
     "remark-gfm": "^4.0.1",
     "shiki": "^4.0.2",
     "simple-icons": "^16.16.0"
@@ -285,6 +299,8 @@
     "@types/react-dom": "^18.3.0",
     "@types/vscode": "^1.90.0",
     "@vitejs/plugin-react": "^4.3.0",
+    "concurrently": "^9.0.0",
+    "cross-env": "^7.0.3",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "tsup": "^8.3.0",

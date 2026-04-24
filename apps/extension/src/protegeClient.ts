@@ -48,6 +48,9 @@ export interface RecordConceptsInput {
   contextScores?: Record<string, number>; // concept name → 1.0-3.0 context multiplier
   hasErrors: boolean;
   errorCount: number;
+  /** Rv5.A — file's VS Code languageId ("typescript", "python", …). null
+   *  when the host couldn't resolve a language (or resolved "plaintext"). */
+  language?: string | null;
 }
 
 export interface RecordConceptsResult {

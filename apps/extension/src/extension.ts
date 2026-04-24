@@ -38,6 +38,7 @@ import { registerExerciseEngine } from "./exerciseEngine.js";
 import { initChatHistory, disposeChatHistory } from "./chatHistory.js";
 import { runWakeCalibration, hasCompletedWakeCalibration } from "./wakeWordCalibration.js";
 import { stopWakeWordListener, isWakeWordListening } from "./voiceCapture.js";
+import { initEcho, openEchoPanel, getEventStreamChannel } from "./echo/index.js";
 
 let output: vscode.OutputChannel;
 
@@ -76,6 +77,12 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // ===== Chat history persistence =====
   initChatHistory(context);
+
+  // ===== Echo — behavior observation dashboard (infrastructure layer) =====
+  // Starts the batcher, session tracker, line differ, paste classifier, and
+  // git commit watcher. Widget agents will fill in visualizations against
+  // the data these subsystems produce.
+  initEcho(context, getUserId(context), output);
 
   // ===== Editor Inset proposed API — opt-in via command only =====
   // Cursor's runtime doesn't expose `createWebviewTextEditorInset`, so the
@@ -276,6 +283,19 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("protege.openInNewTab", () =>
       openProtegePanel(context)
     ),
+    vscode.commands.registerCommand("protege.openEcho", () =>
+      openEchoPanel(context)
+    ),
+    vscode.commands.registerCommand("protege.showEchoEventStream", () => {
+      const ch = getEventStreamChannel();
+      if (ch) {
+        ch.show(true);
+      } else {
+        vscode.window.showInformationMessage(
+          "Echo event stream not initialized yet — try again after extension activation completes."
+        );
+      }
+    }),
     vscode.commands.registerCommand("protege.teachFinding", (finding) => {
       openProtegePanel(context);
       setTimeout(() => pushTeachFinding(finding), 300);
