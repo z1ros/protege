@@ -57,6 +57,11 @@ export interface UserRow {
   longestStreak: number;
   velocityLog: import("@protege/types").VelocityLogEntry[]; // last 12 weeks
   pillarSnapshots: import("@protege/types").DailyPillarSnapshot[]; // last 7 days
+  /** v6 Rv6.C gate — once Supabase has hydrated this user's local cache,
+   *  never cold-sync again until the local store is wiped (which resets this
+   *  flag to false automatically since the user row has to be recreated).
+   *  Absent → treated as false. */
+  echoBootstrapped?: boolean;
 }
 
 export interface ConceptState {
@@ -68,6 +73,22 @@ export interface ConceptState {
   bestContextScore: number; // highest context score seen (1.0-3.0)
   firstSeenAt: string;
   lastUsedAt: string;
+  /** Authorship ratio (0..1) for the file where this concept was most
+   *  recently detected. 1.0 = fully human-authored, 0.0 = fully AI.
+   *  `null` when we have no author signal yet (brand new file, or concept
+   *  detected before any keystroke_batch / ai_suggestion_accepted event
+   *  arrived for that file). Populated by the /concept-used pipeline. */
+  authorshipRatio: number | null;
+  /** Sticky flag: once the concept crosses the manual-authorship threshold
+   *  in any file ever, it stays true forever. Monotonic — never resets. */
+  hasBeenAuthored: boolean;
+  /** ISO timestamp set once when hasBeenAuthored first flips true. Stays
+   *  at that original value on every subsequent authored detection. */
+  firstAuthoredAt: string | null;
+  /** Language the concept was first stamped with (e.g. "typescript",
+   *  "python"). null when no language is known yet. Sticky — once set to a
+   *  non-null value, later detections in other languages do not overwrite. */
+  language: string | null;
 }
 
 export interface FileState {
@@ -114,6 +135,142 @@ export interface SessionRow {
   endSummary?: string;      // written by Protege when session closes
 }
 
+/* ============ Echo tables (separate from CodeIQ) ============ */
+
+export interface EchoEventRow {
+  id: string;
+  userId: string;
+  type: string;
+  ts: number;
+  file?: string;
+  concept?: string;
+  payload: Record<string, unknown>;
+}
+
+export interface BehaviorDailyRollupRow {
+  userId: string;
+  date: string;                               // yyyy-mm-dd
+  activeMinutes: number;
+  totalMinutes: number;
+  sessionsCount: number;
+  sessionMinutes: number;
+  hourHistogram: number[];
+  linesAdded: number;
+  linesRemoved: number;
+  linesNet: number;
+  filesTouched: string[];
+  fileHops: number;
+  archetypeHint: string | null;
+}
+
+export interface LineRewriteCounterRowStore {
+  userId: string;
+  filePath: string;
+  lineFingerprint: string;
+  rewriteCount: number;
+  lastContent: string;
+  lastRewriteAt: string;
+}
+
+export interface CommitStoryRowStore {
+  userId: string;
+  commitSha: string;
+  commitTs: string;
+  message: string;
+  filesTouched: string[];
+  activeMinutes: number;
+  undoCount: number;
+  pasteCount: number;
+  aiAcceptCount: number;
+  peakFocusMin: number;
+}
+
+export interface UserPreferenceRow {
+  userId: string;
+  storyModeNotify: boolean;
+  /** v5 W15/W17 language picker. null === "All languages". Shared by both
+   *  concept widgets so a user's chosen language is consistent. */
+  echoConceptLanguage?: string | null;
+  /** One-shot guard — once the v5 hasBeenAuthored backfill has run for this
+   *  user, never run it again. Absence is equivalent to false. */
+  backfillDone?: boolean;
+}
+
+/* ============ R1 authorship + concept-encounter tables ============ */
+
+/** Per-file running char counters. Incremented on every keystroke_batch
+ *  and ai_suggestion_accepted event. `ratio = human / (human + ai)` is a
+ *  pure counter, no time inference. Capped at 500 recently-updated files
+ *  per user. */
+export interface FileAuthorshipCounterRow {
+  userId: string;
+  filePath: string;
+  humanChars: number;
+  aiChars: number;
+  updatedAt: string;
+}
+
+/** User-owned known-state per concept. One row per (userId, concept).
+ *  v5 enum: "unset" means no explicit state, "known" means the user has
+ *  acknowledged the concept, "not_known" means they've flagged it as not
+ *  known yet. Legacy v4 rows are migrated on load via
+ *  migrateLegacyConceptStatus. */
+export interface ConceptStatusRow {
+  userId: string;
+  concept: string;
+  status: "unset" | "known" | "not_known";
+  updatedAt: string;
+}
+
+/** File-open / save driven concept sighting. Authorship ratio is stamped
+ *  at time of detection so the "In codebase" bucket can distinguish
+ *  concepts the user encountered vs. concepts they authored. Deduped by
+ *  (userId, concept, filePath, day-of-seenAt) to avoid flooding on
+ *  repeated reopens. Capped at 5000 per user. */
+export interface ConceptEncounterRow {
+  userId: string;
+  concept: string;
+  filePath: string;
+  seenAt: string;
+  authorshipRatioAtTime: number | null;
+  /** Language of the file at the moment of the encounter (e.g. "typescript").
+   *  null when the host didn't resolve a language or sent "plaintext". */
+  language: string | null;
+}
+
+/** v5 W17 substrate. One row per (userId, workspaceRoot, concept). Populated
+ *  by the workspace scanner (Rv5.B) and read by W17. Capped at 10k rows per
+ *  user; oldest-lastSeenAt evicted when the cap is exceeded. */
+export interface RepoConceptIndexRow {
+  userId: string;
+  workspaceRoot: string;
+  concept: string;
+  language: string | null;
+  fileCount: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+}
+
+/** Rv5.D one-shot migration helper. Collapses legacy v4 ConceptStatus row
+ *  values onto the v5 triple. Idempotent: v5 values pass through unchanged;
+ *  unknown inputs fall back to "unset" so a corrupt row can't crash boot.
+ *
+ *  v4 → v5:
+ *    "default"   → "unset"
+ *    "dismissed" → "not_known"
+ *    "learning"  → "known" */
+function migrateLegacyConceptStatus(
+  status: unknown
+): ConceptStatusRow["status"] {
+  if (status === "unset" || status === "known" || status === "not_known") {
+    return status;
+  }
+  if (status === "learning") return "known";
+  if (status === "dismissed") return "not_known";
+  // "default" and every unknown/malformed value fall through here.
+  return "unset";
+}
+
 interface StoreShape {
   users: UserRow[];
   concepts: ConceptState[];
@@ -122,10 +279,75 @@ interface StoreShape {
   chats: ChatRow[];
   memories: MemoryRow[];
   sessions: SessionRow[];
+  echoEvents: EchoEventRow[];
+  behaviorRollups: BehaviorDailyRollupRow[];
+  lineRewriteCounters: LineRewriteCounterRowStore[];
+  commitStories: CommitStoryRowStore[];
+  userPreferences: UserPreferenceRow[];
+  fileAuthorshipCounters: FileAuthorshipCounterRow[];
+  conceptStatuses: ConceptStatusRow[];
+  conceptEncounters: ConceptEncounterRow[];
+  repoConceptIndex: RepoConceptIndexRow[];
 }
 
 const FILE = path.join(process.cwd(), ".protege-store.json");
 let cache: StoreShape | null = null;
+
+/* ============ v6 shadow-write bridge ============
+ *
+ * Every durable Echo mutation fires a background write to Supabase after
+ * the local persist returns. The bridge uses a dynamic import of the
+ * `echo/sync` module so we break the potential cycle (sync.ts imports
+ * from store.ts, and store.ts wants `shadowSupabaseWrite`).
+ *
+ * Failures in the bridge itself are swallowed — the whole point is that
+ * shadow writes never slow or fail the local path. */
+let _shadowBridge: {
+  shadowSupabaseWrite(label: string, fn: () => Promise<void>): void;
+} | null = null;
+let _shadowBridgePromise: Promise<void> | null = null;
+
+function loadShadowBridge(): void {
+  if (_shadowBridge || _shadowBridgePromise) return;
+  _shadowBridgePromise = import("./echo/sync.js")
+    .then((mod) => {
+      _shadowBridge = { shadowSupabaseWrite: mod.shadowSupabaseWrite };
+    })
+    .catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn("[protege] shadow-sync bridge load failed:", message);
+    });
+}
+
+/** Enqueue a fire-and-forget Supabase shadow write. Silently no-ops when
+ *  Supabase isn't configured (the bridge itself checks `isSupabaseEnabled`).
+ *  Never throws. Never awaited. */
+function shadowWrite(label: string, fn: () => Promise<void>): void {
+  if (_shadowBridge) {
+    _shadowBridge.shadowSupabaseWrite(label, fn);
+    return;
+  }
+  // Bridge not loaded yet — kick off the import and queue the shadow write
+  // once resolved. On the first call per process the bridge lands within a
+  // microtask so there's effectively zero delay after that.
+  loadShadowBridge();
+  if (_shadowBridgePromise) {
+    _shadowBridgePromise
+      .then(() => {
+        if (_shadowBridge) _shadowBridge.shadowSupabaseWrite(label, fn);
+      })
+      .catch(() => {
+        // Bridge load failure is already logged above.
+      });
+  }
+}
+
+/** Test-only escape hatch: drop the in-memory cache so the next `load()`
+ *  re-reads from disk (or re-initializes from the empty shape if the file
+ *  was removed between tests). Not used in production code paths. */
+export function __resetStoreCache(): void {
+  cache = null;
+}
 
 async function load(): Promise<StoreShape> {
   if (cache) return cache;
@@ -144,6 +366,12 @@ async function load(): Promise<StoreShape> {
         longestStreak: u.longestStreak ?? 0,
         velocityLog: (u as any).velocityLog ?? [],
         pillarSnapshots: (u as any).pillarSnapshots ?? [],
+        // v6 Rv6.C: absent flag on existing rows → treated as false so the
+        // first dashboard fetch after upgrade triggers a cold-sync.
+        echoBootstrapped:
+          typeof (u as any).echoBootstrapped === "boolean"
+            ? (u as any).echoBootstrapped
+            : false,
       })),
       concepts: (parsed.concepts ?? []).map((c: any) => ({
         userId: c.userId,
@@ -154,6 +382,20 @@ async function load(): Promise<StoreShape> {
         bestContextScore: (c as any).bestContextScore ?? 1.0,
         firstSeenAt: c.firstSeenAt ?? c.lastUsedAt ?? new Date().toISOString(),
         lastUsedAt: c.lastUsedAt ?? new Date().toISOString(),
+        authorshipRatio:
+          typeof (c as any).authorshipRatio === "number"
+            ? (c as any).authorshipRatio
+            : null,
+        hasBeenAuthored: (c as any).hasBeenAuthored === true,
+        firstAuthoredAt:
+          typeof (c as any).firstAuthoredAt === "string"
+            ? (c as any).firstAuthoredAt
+            : null,
+        language:
+          typeof (c as any).language === "string" &&
+          (c as any).language.length > 0
+            ? (c as any).language
+            : null,
       })),
       files: (parsed.files ?? []).map((f: any) => ({
         userId: f.userId,
@@ -166,6 +408,85 @@ async function load(): Promise<StoreShape> {
       chats: parsed.chats ?? [],
       memories: parsed.memories ?? [],
       sessions: parsed.sessions ?? [],
+      echoEvents: parsed.echoEvents ?? [],
+      behaviorRollups: (parsed.behaviorRollups ?? []).map((r: any) => ({
+        userId: r.userId,
+        date: r.date,
+        activeMinutes: r.activeMinutes ?? 0,
+        totalMinutes: r.totalMinutes ?? 0,
+        sessionsCount: r.sessionsCount ?? 0,
+        sessionMinutes: r.sessionMinutes ?? 0,
+        hourHistogram: Array.isArray(r.hourHistogram) && r.hourHistogram.length === 24
+          ? r.hourHistogram
+          : new Array(24).fill(0),
+        linesAdded: r.linesAdded ?? 0,
+        linesRemoved: r.linesRemoved ?? 0,
+        linesNet: r.linesNet ?? 0,
+        filesTouched: Array.isArray(r.filesTouched) ? r.filesTouched : [],
+        fileHops: r.fileHops ?? 0,
+        archetypeHint: r.archetypeHint ?? null,
+      })),
+      lineRewriteCounters: parsed.lineRewriteCounters ?? [],
+      commitStories: parsed.commitStories ?? [],
+      userPreferences: (parsed.userPreferences ?? []).map((r: any) => {
+        // Defensive pickup: only known keys. Legacy `echoConceptFilters`
+        // rows on disk are silently dropped (Rv5.D cleanup) — no deployed
+        // panels still read them.
+        const row: UserPreferenceRow = {
+          userId: r.userId,
+          storyModeNotify: !!r.storyModeNotify,
+        };
+        if (typeof r.echoConceptLanguage === "string" || r.echoConceptLanguage === null) {
+          row.echoConceptLanguage = r.echoConceptLanguage ?? null;
+        }
+        if (typeof r.backfillDone === "boolean") {
+          row.backfillDone = r.backfillDone;
+        }
+        return row;
+      }),
+      fileAuthorshipCounters: (parsed.fileAuthorshipCounters ?? []).map(
+        (r: any) => ({
+          userId: r.userId,
+          filePath: r.filePath,
+          humanChars: typeof r.humanChars === "number" ? r.humanChars : 0,
+          aiChars: typeof r.aiChars === "number" ? r.aiChars : 0,
+          updatedAt: r.updatedAt ?? new Date().toISOString(),
+        })
+      ),
+      conceptStatuses: (parsed.conceptStatuses ?? []).map((r: any) => ({
+        userId: r.userId,
+        concept: r.concept,
+        // Rv5.D one-shot migration: collapse legacy v4 values onto the v5
+        // triple. Idempotent — rows already v5 pass through unchanged.
+        status: migrateLegacyConceptStatus(r.status),
+        updatedAt: r.updatedAt ?? new Date().toISOString(),
+      })),
+      conceptEncounters: (parsed.conceptEncounters ?? []).map((r: any) => ({
+        userId: r.userId,
+        concept: r.concept,
+        filePath: r.filePath,
+        seenAt: r.seenAt,
+        authorshipRatioAtTime:
+          typeof r.authorshipRatioAtTime === "number"
+            ? r.authorshipRatioAtTime
+            : null,
+        language:
+          typeof r.language === "string" && r.language.length > 0
+            ? r.language
+            : null,
+      })),
+      repoConceptIndex: ((parsed as any).repoConceptIndex ?? []).map((r: any) => ({
+        userId: r.userId,
+        workspaceRoot: r.workspaceRoot,
+        concept: r.concept,
+        language:
+          typeof r.language === "string" && r.language.length > 0
+            ? r.language
+            : null,
+        fileCount: typeof r.fileCount === "number" ? r.fileCount : 0,
+        firstSeenAt: r.firstSeenAt ?? new Date().toISOString(),
+        lastSeenAt: r.lastSeenAt ?? r.firstSeenAt ?? new Date().toISOString(),
+      })),
     };
   } catch {
     cache = {
@@ -176,6 +497,15 @@ async function load(): Promise<StoreShape> {
       chats: [],
       memories: [],
       sessions: [],
+      echoEvents: [],
+      behaviorRollups: [],
+      lineRewriteCounters: [],
+      commitStories: [],
+      userPreferences: [],
+      fileAuthorshipCounters: [],
+      conceptStatuses: [],
+      conceptEncounters: [],
+      repoConceptIndex: [],
     };
   }
   return cache;
@@ -355,9 +685,48 @@ export async function ensureUser(userId: string, username = "local-dev") {
       longestStreak: 0,
       velocityLog: [],
       pillarSnapshots: [],
+      echoBootstrapped: false,
     });
     await save();
   }
+}
+
+/** v6 Rv6.C cold-sync gate — true once Supabase has successfully hydrated
+ *  the local cache for this user. Returns false for absent/new users so the
+ *  first dashboard request triggers a hydrate. */
+export async function isEchoBootstrapped(userId: string): Promise<boolean> {
+  const s = await load();
+  const row = s.users.find((u) => u.userId === userId);
+  return row?.echoBootstrapped === true;
+}
+
+/** Flip the Rv6.C cold-sync gate to true. Idempotent — calling on an
+ *  already-bootstrapped user is a no-op write. Creates the user row if
+ *  missing so this is safe to call without a preceding `ensureUser`. */
+export async function markEchoBootstrapped(userId: string): Promise<void> {
+  const s = await load();
+  let row = s.users.find((u) => u.userId === userId);
+  if (!row) {
+    row = {
+      userId,
+      username: "local-dev",
+      createdAt: new Date().toISOString(),
+      unlockedMilestones: [],
+      unlockedMilestoneAt: {},
+      saveDays: [],
+      dailyIq: [],
+      longestStreak: 0,
+      velocityLog: [],
+      pillarSnapshots: [],
+      echoBootstrapped: true,
+    };
+    s.users.push(row);
+    await save();
+    return;
+  }
+  if (row.echoBootstrapped === true) return;
+  row.echoBootstrapped = true;
+  await save();
 }
 
 /**
@@ -365,7 +734,7 @@ export async function ensureUser(userId: string, username = "local-dev") {
  * Correctly handles year boundaries: Dec 31 can be W01 of next year,
  * and Jan 1 can be W52/53 of the previous year.
  */
-function isoWeek(d: Date): string {
+export function isoWeek(d: Date): string {
   const tmp = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
   // ISO week starts on Monday. Adjust to nearest Thursday (ISO rule).
   tmp.setUTCDate(tmp.getUTCDate() + 4 - (tmp.getUTCDay() || 7));
@@ -545,6 +914,10 @@ export async function recordConcepts(
         bestContextScore: 1.0,
         firstSeenAt: now,
         lastUsedAt: now,
+        authorshipRatio: null,
+        hasBeenAuthored: false,
+        firstAuthoredAt: null,
+        language: null,
       };
       s.concepts.push(row);
     }
@@ -1226,4 +1599,930 @@ export async function appendChat(
 export async function getRecentChat(userId: string, limit = 20) {
   const s = await load();
   return s.chats.filter((c) => c.userId === userId).slice(-limit);
+}
+
+/* ============ Echo — persistence helpers ============ */
+
+// Events older than this are purged on the next write so the JSON file
+// doesn't grow unbounded. The nightly rollup consumes raw events and the
+// dashboard reads only the last 30 days.
+const ECHO_EVENT_RETENTION_MS = 45 * 24 * 60 * 60 * 1000;
+const ECHO_MAX_EVENTS_PER_USER = 50_000;
+
+export interface EchoEventInput {
+  userId: string;
+  type: string;
+  ts: number;
+  file?: string;
+  concept?: string;
+  payload: Record<string, unknown>;
+}
+
+export async function appendEchoEvents(events: EchoEventInput[]): Promise<number> {
+  if (events.length === 0) return 0;
+  const s = await load();
+  const now = Date.now();
+  for (const e of events) {
+    s.echoEvents.push({
+      id: crypto.randomUUID(),
+      userId: e.userId,
+      type: e.type,
+      ts: e.ts,
+      file: e.file,
+      concept: e.concept,
+      payload: e.payload,
+    });
+  }
+  // Retention sweep + per-user cap.
+  const cutoff = now - ECHO_EVENT_RETENTION_MS;
+  s.echoEvents = s.echoEvents.filter((e) => e.ts >= cutoff);
+  const perUser = new Map<string, EchoEventRow[]>();
+  for (const e of s.echoEvents) {
+    const bucket = perUser.get(e.userId);
+    if (bucket) bucket.push(e);
+    else perUser.set(e.userId, [e]);
+  }
+  const trimmed: EchoEventRow[] = [];
+  for (const [, bucket] of perUser) {
+    bucket.sort((a, b) => a.ts - b.ts);
+    const kept = bucket.length > ECHO_MAX_EVENTS_PER_USER
+      ? bucket.slice(bucket.length - ECHO_MAX_EVENTS_PER_USER)
+      : bucket;
+    trimmed.push(...kept);
+  }
+  s.echoEvents = trimmed;
+  await save();
+
+  // v6 shadow-write — fire-and-forget batch per user. We coalesce the input
+  // `events` array (which may contain multiple userIds) into one Supabase
+  // insert per user so a big mixed batch isn't N lonely round-trips.
+  const byUser = new Map<string, EchoEventInput[]>();
+  for (const e of events) {
+    const bucket = byUser.get(e.userId);
+    if (bucket) bucket.push(e);
+    else byUser.set(e.userId, [e]);
+  }
+  for (const [uid, batch] of byUser) {
+    const snapshot = batch.map((e) => ({
+      type: e.type,
+      ts: e.ts,
+      file: e.file,
+      payload: e.payload,
+    }));
+    shadowWrite("appendEchoEvents", async () => {
+      const { cloudAppendEchoEvents } = await import("./supabase.js");
+      await cloudAppendEchoEvents(uid, snapshot);
+    });
+  }
+
+  return events.length;
+}
+
+export async function readEchoEvents(
+  userId: string,
+  sinceMs: number,
+  untilMs: number = Date.now()
+): Promise<EchoEventRow[]> {
+  const s = await load();
+  return s.echoEvents.filter(
+    (e) => e.userId === userId && e.ts >= sinceMs && e.ts <= untilMs
+  );
+}
+
+export async function listEchoUsers(sinceMs: number): Promise<string[]> {
+  const s = await load();
+  const seen = new Set<string>();
+  for (const e of s.echoEvents) {
+    if (e.ts >= sinceMs) seen.add(e.userId);
+  }
+  return [...seen];
+}
+
+/** Earliest EchoEvent timestamp for a user, or null if they have none.
+ *  Used to clamp dashboard windows so new users don't see a sea of
+ *  empty "days before you joined" bars. */
+export async function getFirstEchoEventTs(
+  userId: string
+): Promise<number | null> {
+  const s = await load();
+  let min: number | null = null;
+  for (const e of s.echoEvents) {
+    if (e.userId !== userId) continue;
+    if (min === null || e.ts < min) min = e.ts;
+  }
+  return min;
+}
+
+export async function upsertBehaviorRollup(row: BehaviorDailyRollupRow): Promise<void> {
+  const s = await load();
+  const idx = s.behaviorRollups.findIndex(
+    (r) => r.userId === row.userId && r.date === row.date
+  );
+  if (idx >= 0) s.behaviorRollups[idx] = row;
+  else s.behaviorRollups.push(row);
+  // Keep last 120 rollups per user to cap size.
+  const perUser = new Map<string, BehaviorDailyRollupRow[]>();
+  for (const r of s.behaviorRollups) {
+    const bucket = perUser.get(r.userId);
+    if (bucket) bucket.push(r);
+    else perUser.set(r.userId, [r]);
+  }
+  const trimmed: BehaviorDailyRollupRow[] = [];
+  for (const [, bucket] of perUser) {
+    bucket.sort((a, b) => a.date.localeCompare(b.date));
+    trimmed.push(...bucket.slice(-120));
+  }
+  s.behaviorRollups = trimmed;
+  await save();
+
+  // v6 shadow-write — upsert the single row we just wrote. Cap enforcement
+  // is handled cloud-side by a retention cron (see v6 plan), not here.
+  const snapshot: BehaviorDailyRollupRow = { ...row };
+  shadowWrite("upsertBehaviorRollup", async () => {
+    const { cloudUpsertBehaviorRollup } = await import("./supabase.js");
+    await cloudUpsertBehaviorRollup({
+      userId: snapshot.userId,
+      date: snapshot.date,
+      activeMinutes: snapshot.activeMinutes,
+      totalMinutes: snapshot.totalMinutes,
+      sessionsCount: snapshot.sessionsCount,
+      sessionMinutes: snapshot.sessionMinutes,
+      hourHistogram: snapshot.hourHistogram,
+      linesAdded: snapshot.linesAdded,
+      linesRemoved: snapshot.linesRemoved,
+      linesNet: snapshot.linesNet,
+      filesTouched: snapshot.filesTouched,
+      fileHops: snapshot.fileHops,
+      archetypeHint: snapshot.archetypeHint,
+    });
+  });
+}
+
+export async function readBehaviorRollups(
+  userId: string,
+  startDate: string,
+  endDate: string
+): Promise<BehaviorDailyRollupRow[]> {
+  const s = await load();
+  return s.behaviorRollups
+    .filter((r) => r.userId === userId && r.date >= startDate && r.date <= endDate)
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+export async function upsertLineRewriteCounters(
+  userId: string,
+  filePath: string,
+  touches: Array<{ fingerprint: string; sampleContent: string; ts: number }>
+): Promise<void> {
+  if (touches.length === 0) return;
+  const s = await load();
+  for (const t of touches) {
+    const row = s.lineRewriteCounters.find(
+      (r) =>
+        r.userId === userId &&
+        r.filePath === filePath &&
+        r.lineFingerprint === t.fingerprint
+    );
+    if (row) {
+      row.rewriteCount += 1;
+      row.lastContent = t.sampleContent;
+      row.lastRewriteAt = new Date(t.ts).toISOString();
+    } else {
+      s.lineRewriteCounters.push({
+        userId,
+        filePath,
+        lineFingerprint: t.fingerprint,
+        rewriteCount: 1,
+        lastContent: t.sampleContent,
+        lastRewriteAt: new Date(t.ts).toISOString(),
+      });
+    }
+  }
+  await save();
+
+  // v6 shadow-write — ship the same per-touch list to Supabase. The cloud
+  // helper handles read-then-upsert semantics so the cloud count matches
+  // the local count once flushed.
+  const snapshot = touches.map((t) => ({ ...t }));
+  shadowWrite("upsertLineRewriteCounters", async () => {
+    const { cloudUpsertLineRewriteCounters } = await import("./supabase.js");
+    await cloudUpsertLineRewriteCounters(userId, filePath, snapshot);
+  });
+}
+
+export async function topLineRewrite(
+  userId: string,
+  sinceMs: number
+): Promise<LineRewriteCounterRowStore | null> {
+  const s = await load();
+  const cutoff = new Date(sinceMs).toISOString();
+  const mine = s.lineRewriteCounters.filter(
+    (r) => r.userId === userId && r.lastRewriteAt >= cutoff
+  );
+  if (mine.length === 0) return null;
+  mine.sort((a, b) => b.rewriteCount - a.rewriteCount);
+  return mine[0];
+}
+
+export async function upsertCommitStory(row: CommitStoryRowStore): Promise<void> {
+  const s = await load();
+  const idx = s.commitStories.findIndex(
+    (r) => r.userId === row.userId && r.commitSha === row.commitSha
+  );
+  if (idx >= 0) s.commitStories[idx] = row;
+  else s.commitStories.push(row);
+  // Cap per user at 200 commits.
+  const perUser = s.commitStories.filter((r) => r.userId === row.userId);
+  if (perUser.length > 200) {
+    perUser.sort((a, b) => a.commitTs.localeCompare(b.commitTs));
+    const drop = new Set(perUser.slice(0, perUser.length - 200).map((r) => r.commitSha));
+    s.commitStories = s.commitStories.filter(
+      (r) => !(r.userId === row.userId && drop.has(r.commitSha))
+    );
+  }
+  await save();
+
+  // v6 shadow-write — upsert keyed by (user_id, commit_sha).
+  const snapshot: CommitStoryRowStore = { ...row };
+  shadowWrite("upsertCommitStory", async () => {
+    const { cloudUpsertCommitStory } = await import("./supabase.js");
+    await cloudUpsertCommitStory({
+      userId: snapshot.userId,
+      commitSha: snapshot.commitSha,
+      commitTs: snapshot.commitTs,
+      message: snapshot.message,
+      activeMinutes: snapshot.activeMinutes,
+      undoCount: snapshot.undoCount,
+      pasteCount: snapshot.pasteCount,
+      aiAcceptCount: snapshot.aiAcceptCount,
+      filesTouched: snapshot.filesTouched,
+      peakFocusMin: snapshot.peakFocusMin,
+    });
+  });
+}
+
+export async function readCommitStories(
+  userId: string,
+  sinceMs: number,
+  untilMs: number = Date.now()
+): Promise<CommitStoryRowStore[]> {
+  const s = await load();
+  const since = new Date(sinceMs).toISOString();
+  const until = new Date(untilMs).toISOString();
+  return s.commitStories
+    .filter((r) => r.userId === userId && r.commitTs >= since && r.commitTs <= until)
+    .sort((a, b) => b.commitTs.localeCompare(a.commitTs));
+}
+
+/** Read all ConceptState rows for a user. W1/W15/W16 read directly. */
+export async function readConceptStates(userId: string): Promise<ConceptState[]> {
+  const s = await load();
+  return s.concepts.filter((c) => c.userId === userId);
+}
+
+/** Read recent GainEvents across all users. The global ring buffer has no
+ *  userId field, so callers filter client-side by concept name. */
+export async function readRecentGains(limit = 200): Promise<GainEvent[]> {
+  const s = await load();
+  return s.gains.slice(-limit);
+}
+
+/** Read EchoEvent rows of a specific type for a user across the given
+ *  window. Used by widget aggregators that key off a single event kind. */
+export async function readEchoEventsByType(
+  userId: string,
+  type: string,
+  sinceMs: number,
+  untilMs: number = Date.now()
+): Promise<EchoEventRow[]> {
+  const s = await load();
+  return s.echoEvents.filter(
+    (e) => e.userId === userId && e.type === type && e.ts >= sinceMs && e.ts <= untilMs
+  );
+}
+
+export async function getEchoPreferences(userId: string): Promise<UserPreferenceRow> {
+  const s = await load();
+  const row = s.userPreferences.find((r) => r.userId === userId);
+  return row ?? { userId, storyModeNotify: false };
+}
+
+export async function setEchoPreferences(
+  userId: string,
+  patch: Partial<Omit<UserPreferenceRow, "userId">>
+): Promise<UserPreferenceRow> {
+  const s = await load();
+  let row = s.userPreferences.find((r) => r.userId === userId);
+  if (!row) {
+    row = { userId, storyModeNotify: false };
+    s.userPreferences.push(row);
+  }
+  if (typeof patch.storyModeNotify === "boolean") {
+    row.storyModeNotify = patch.storyModeNotify;
+  }
+  // echoConceptLanguage may be explicitly set to null ("All languages"),
+  // so check for property presence rather than truthiness.
+  if (
+    Object.prototype.hasOwnProperty.call(patch, "echoConceptLanguage")
+  ) {
+    const next = patch.echoConceptLanguage;
+    if (next === null || (typeof next === "string" && next.length > 0)) {
+      row.echoConceptLanguage = next;
+    }
+  }
+  if (typeof patch.backfillDone === "boolean") {
+    row.backfillDone = patch.backfillDone;
+  }
+  await save();
+  return row;
+}
+
+/* ============ R1 authorship + encounter helpers ============ */
+
+const MAX_FILE_AUTHORSHIP_ROWS_PER_USER = 500;
+const MAX_CONCEPT_ENCOUNTERS_PER_USER = 5000;
+
+/** Increment per-file human/ai char counters. One call per event batch.
+ *  Either field may be 0 when the caller only has one side to bump. */
+export async function bumpFileAuthorship(
+  userId: string,
+  filePath: string,
+  delta: { humanChars: number; aiChars: number }
+): Promise<void> {
+  if (!filePath) return;
+  const h = Math.max(0, Number.isFinite(delta.humanChars) ? delta.humanChars : 0);
+  const a = Math.max(0, Number.isFinite(delta.aiChars) ? delta.aiChars : 0);
+  if (h === 0 && a === 0) return;
+  const s = await load();
+  const now = new Date().toISOString();
+  let row = s.fileAuthorshipCounters.find(
+    (r) => r.userId === userId && r.filePath === filePath
+  );
+  if (!row) {
+    row = {
+      userId,
+      filePath,
+      humanChars: 0,
+      aiChars: 0,
+      updatedAt: now,
+    };
+    s.fileAuthorshipCounters.push(row);
+  }
+  row.humanChars += h;
+  row.aiChars += a;
+  row.updatedAt = now;
+
+  // Cap per user — keep the 500 most recently updated files.
+  const perUser = new Map<string, FileAuthorshipCounterRow[]>();
+  for (const r of s.fileAuthorshipCounters) {
+    const bucket = perUser.get(r.userId);
+    if (bucket) bucket.push(r);
+    else perUser.set(r.userId, [r]);
+  }
+  const kept: FileAuthorshipCounterRow[] = [];
+  for (const [, bucket] of perUser) {
+    if (bucket.length > MAX_FILE_AUTHORSHIP_ROWS_PER_USER) {
+      bucket.sort((x, y) => x.updatedAt.localeCompare(y.updatedAt));
+      kept.push(
+        ...bucket.slice(bucket.length - MAX_FILE_AUTHORSHIP_ROWS_PER_USER)
+      );
+    } else {
+      kept.push(...bucket);
+    }
+  }
+  s.fileAuthorshipCounters = kept;
+  await save();
+
+  // v6 shadow-write — delta bump. Cloud helper does read-then-upsert to
+  // stay consistent with local's increment semantics.
+  shadowWrite("bumpFileAuthorship", async () => {
+    const { cloudBumpFileAuthorship } = await import("./supabase.js");
+    await cloudBumpFileAuthorship(userId, filePath, h, a);
+  });
+}
+
+/** v6 Rv6.C absolute setter — used by cold-sync to replay the cloud's
+ *  authoritative counts into the local store without double-counting via
+ *  the delta-incrementer. Guards against double-hydration: if the local
+ *  row already matches (or exceeds, somehow) the cloud values, no-op. */
+export async function setFileAuthorship(
+  userId: string,
+  filePath: string,
+  humanChars: number,
+  aiChars: number,
+  updatedAt: string
+): Promise<void> {
+  if (!filePath) return;
+  const h = Math.max(0, Number.isFinite(humanChars) ? Math.floor(humanChars) : 0);
+  const a = Math.max(0, Number.isFinite(aiChars) ? Math.floor(aiChars) : 0);
+  const s = await load();
+  let row = s.fileAuthorshipCounters.find(
+    (r) => r.userId === userId && r.filePath === filePath
+  );
+  if (!row) {
+    row = {
+      userId,
+      filePath,
+      humanChars: h,
+      aiChars: a,
+      updatedAt: updatedAt || new Date().toISOString(),
+    };
+    s.fileAuthorshipCounters.push(row);
+  } else {
+    // Double-hydration guard: prefer the larger side (cloud or local). If the
+    // local row has already accumulated writes past the cloud value (e.g.
+    // bootstrap ran late after a keystroke landed), keep the local value.
+    row.humanChars = Math.max(row.humanChars, h);
+    row.aiChars = Math.max(row.aiChars, a);
+    row.updatedAt = updatedAt || row.updatedAt;
+  }
+  await save();
+}
+
+export async function readFileAuthorship(
+  userId: string,
+  filePath: string
+): Promise<FileAuthorshipCounterRow | undefined> {
+  const s = await load();
+  return s.fileAuthorshipCounters.find(
+    (r) => r.userId === userId && r.filePath === filePath
+  );
+}
+
+/** Read all authorship counter rows for a user. W1 Hero's `manualPct`
+ *  aggregates human/ai chars across every file touched within the window
+ *  (caller filters by `updatedAt`). */
+export async function readFileAuthorshipRows(
+  userId: string
+): Promise<FileAuthorshipCounterRow[]> {
+  const s = await load();
+  return s.fileAuthorshipCounters.filter((r) => r.userId === userId);
+}
+
+/** Pure math for the authorship ratio. Split out so both `getAuthorshipRatio`
+ *  and unit tests can share the same numerator/denominator handling. Returns
+ *  null when the inputs are unusable (non-finite, or total ≤ 0 after clamping
+ *  negatives to 0). Otherwise returns humanChars / total in [0,1]. */
+export function computeAuthorshipRatio(
+  humanChars: number,
+  aiChars: number
+): number | null {
+  if (!Number.isFinite(humanChars) || !Number.isFinite(aiChars)) return null;
+  const h = humanChars < 0 ? 0 : humanChars;
+  const a = aiChars < 0 ? 0 : aiChars;
+  const total = h + a;
+  if (total <= 0) return null;
+  return h / total;
+}
+
+/** Read the authorship ratio in-memory without touching disk more than
+ *  necessary. Returns null when the file has no counters yet (so callers
+ *  can bucket those concepts as "In codebase"). */
+export async function getAuthorshipRatio(
+  userId: string,
+  filePath: string
+): Promise<number | null> {
+  const row = await readFileAuthorship(userId, filePath);
+  if (!row) return null;
+  return computeAuthorshipRatio(row.humanChars, row.aiChars);
+}
+
+export async function setConceptStatus(
+  userId: string,
+  concept: string,
+  status: ConceptStatusRow["status"]
+): Promise<ConceptStatusRow> {
+  const s = await load();
+  const now = new Date().toISOString();
+  let row = s.conceptStatuses.find(
+    (r) => r.userId === userId && r.concept === concept
+  );
+  if (!row) {
+    row = { userId, concept, status, updatedAt: now };
+    s.conceptStatuses.push(row);
+  } else {
+    row.status = status;
+    row.updatedAt = now;
+  }
+  await save();
+
+  // v6 shadow-write — upsert keyed by (user_id, concept).
+  shadowWrite("setConceptStatus", async () => {
+    const { cloudSetConceptStatus } = await import("./supabase.js");
+    await cloudSetConceptStatus(userId, concept, status);
+  });
+
+  return row;
+}
+
+export async function readConceptStatuses(
+  userId: string
+): Promise<ConceptStatusRow[]> {
+  const s = await load();
+  return s.conceptStatuses.filter((r) => r.userId === userId);
+}
+
+/** Append a ConceptEncounter, deduping by (userId, concept, filePath,
+ *  day-of-seenAt). Repeated reopens on the same day won't create duplicate
+ *  rows — but a sighting the next day will. */
+export async function appendConceptEncounter(
+  row: ConceptEncounterRow
+): Promise<boolean> {
+  if (!row.concept || !row.filePath) return false;
+  const s = await load();
+  const day = row.seenAt.slice(0, 10); // yyyy-mm-dd from ISO string
+  const dup = s.conceptEncounters.find(
+    (r) =>
+      r.userId === row.userId &&
+      r.concept === row.concept &&
+      r.filePath === row.filePath &&
+      r.seenAt.slice(0, 10) === day
+  );
+  if (dup) return false;
+  s.conceptEncounters.push(row);
+
+  // Cap per user — keep the 5000 most recent by seenAt.
+  const perUser = new Map<string, ConceptEncounterRow[]>();
+  for (const r of s.conceptEncounters) {
+    const bucket = perUser.get(r.userId);
+    if (bucket) bucket.push(r);
+    else perUser.set(r.userId, [r]);
+  }
+  const kept: ConceptEncounterRow[] = [];
+  for (const [, bucket] of perUser) {
+    if (bucket.length > MAX_CONCEPT_ENCOUNTERS_PER_USER) {
+      bucket.sort((x, y) => x.seenAt.localeCompare(y.seenAt));
+      kept.push(
+        ...bucket.slice(bucket.length - MAX_CONCEPT_ENCOUNTERS_PER_USER)
+      );
+    } else {
+      kept.push(...bucket);
+    }
+  }
+  s.conceptEncounters = kept;
+  await save();
+
+  // v6 shadow-write — insert the one encounter we just persisted. Dedup
+  // against same-day sightings is enforced locally above; cloud cron
+  // handles the 5000-per-user cap.
+  const snapshot: ConceptEncounterRow = { ...row };
+  shadowWrite("appendConceptEncounter", async () => {
+    const { cloudAppendConceptEncounter } = await import("./supabase.js");
+    await cloudAppendConceptEncounter({
+      userId: snapshot.userId,
+      concept: snapshot.concept,
+      filePath: snapshot.filePath,
+      language: snapshot.language,
+      seenAt: snapshot.seenAt,
+      authorshipRatioAtTime: snapshot.authorshipRatioAtTime,
+    });
+  });
+
+  return true;
+}
+
+export async function readConceptEncounters(
+  userId: string,
+  sinceMs: number,
+  untilMs: number = Date.now()
+): Promise<ConceptEncounterRow[]> {
+  const s = await load();
+  const since = new Date(sinceMs).toISOString();
+  const until = new Date(untilMs).toISOString();
+  return s.conceptEncounters.filter(
+    (r) => r.userId === userId && r.seenAt >= since && r.seenAt <= until
+  );
+}
+
+/** Set authorshipRatio on a user's ConceptState row. No-op if the concept
+ *  hasn't been recorded yet (recordConcepts creates the row before this
+ *  is called in the /concept-used flow). */
+export async function setConceptAuthorshipRatio(
+  userId: string,
+  conceptName: string,
+  ratio: number | null
+): Promise<void> {
+  const s = await load();
+  const row = s.concepts.find(
+    (c) => c.userId === userId && c.conceptName === conceptName
+  );
+  if (!row) return;
+  row.authorshipRatio = ratio;
+  await save();
+
+  // v6 shadow-write — targeted patch on the sticky Rv5 columns only.
+  // Using `cloudPatchConceptExtras` (not `recordCloudConcepts`) so we don't
+  // bump `times_used` every time an AI-accept / keystroke flips the ratio.
+  shadowWrite("setConceptAuthorshipRatio", async () => {
+    const { cloudPatchConceptExtras } = await import("./supabase.js");
+    await cloudPatchConceptExtras(userId, conceptName, {
+      authorshipRatio: ratio,
+    });
+  });
+}
+
+/** Monotonic setter: once hasBeenAuthored is true for a concept, this
+ *  function never flips it back, and never overwrites firstAuthoredAt.
+ *  Invariant: `hasBeenAuthored` is append-only true; this is the ONLY
+ *  writer, and it never sets false. */
+export async function setConceptAuthoredFlag(
+  userId: string,
+  conceptName: string,
+  authoredAt: string
+): Promise<void> {
+  const s = await load();
+  const row = s.concepts.find(
+    (c) => c.userId === userId && c.conceptName === conceptName
+  );
+  if (!row) return;
+  if (row.hasBeenAuthored) return;
+  row.hasBeenAuthored = true;
+  row.firstAuthoredAt = authoredAt;
+  await save();
+
+  // v6 shadow-write — monotonic flip to true + stamp firstAuthoredAt. The
+  // cloud helper respects the same stickiness (no true→false, no overwrite
+  // of the first timestamp).
+  shadowWrite("setConceptAuthoredFlag", async () => {
+    const { cloudPatchConceptExtras } = await import("./supabase.js");
+    await cloudPatchConceptExtras(userId, conceptName, {
+      hasBeenAuthored: true,
+      firstAuthoredAt: authoredAt,
+    });
+  });
+}
+
+/** Stamp the language onto a ConceptState row. Sticky — only overwrites
+ *  a null language. Once a language is set, later detections in another
+ *  language don't flip it. */
+export async function setConceptLanguage(
+  userId: string,
+  conceptName: string,
+  language: string | null
+): Promise<void> {
+  if (!language) return;
+  const s = await load();
+  const row = s.concepts.find(
+    (c) => c.userId === userId && c.conceptName === conceptName
+  );
+  if (!row) return;
+  if (row.language) return;
+  row.language = language;
+  await save();
+
+  // v6 shadow-write — sticky language column patch. Cloud helper only
+  // writes when the Postgres column is still null, mirroring local semantics.
+  shadowWrite("setConceptLanguage", async () => {
+    const { cloudPatchConceptExtras } = await import("./supabase.js");
+    await cloudPatchConceptExtras(userId, conceptName, { language });
+  });
+}
+
+const MAX_REPO_CONCEPT_INDEX_PER_USER = 10_000;
+
+/** Upsert a RepoConceptIndex row keyed by (userId, workspaceRoot, concept).
+ *  Caller passes the authoritative fileCount for that concept in that
+ *  workspace — we replace, not increment. `firstSeenAt` is preserved on
+ *  existing rows; `lastSeenAt` advances to the new value. LRU-evicts by
+ *  `lastSeenAt` when the per-user cap is exceeded. */
+export async function upsertRepoConceptIndex(
+  row: RepoConceptIndexRow
+): Promise<void> {
+  if (!row.userId || !row.workspaceRoot || !row.concept) return;
+  const s = await load();
+  const existing = s.repoConceptIndex.find(
+    (r) =>
+      r.userId === row.userId &&
+      r.workspaceRoot === row.workspaceRoot &&
+      r.concept === row.concept
+  );
+  if (existing) {
+    existing.language = row.language ?? existing.language ?? null;
+    existing.fileCount = Math.max(0, row.fileCount);
+    existing.lastSeenAt = row.lastSeenAt;
+    // firstSeenAt preserved
+  } else {
+    s.repoConceptIndex.push({
+      userId: row.userId,
+      workspaceRoot: row.workspaceRoot,
+      concept: row.concept,
+      language: row.language ?? null,
+      fileCount: Math.max(0, row.fileCount),
+      firstSeenAt: row.firstSeenAt,
+      lastSeenAt: row.lastSeenAt,
+    });
+  }
+
+  // LRU cap per user.
+  const perUser = new Map<string, RepoConceptIndexRow[]>();
+  for (const r of s.repoConceptIndex) {
+    const bucket = perUser.get(r.userId);
+    if (bucket) bucket.push(r);
+    else perUser.set(r.userId, [r]);
+  }
+  const kept: RepoConceptIndexRow[] = [];
+  for (const [, bucket] of perUser) {
+    if (bucket.length > MAX_REPO_CONCEPT_INDEX_PER_USER) {
+      bucket.sort((x, y) => x.lastSeenAt.localeCompare(y.lastSeenAt));
+      kept.push(
+        ...bucket.slice(bucket.length - MAX_REPO_CONCEPT_INDEX_PER_USER)
+      );
+    } else {
+      kept.push(...bucket);
+    }
+  }
+  s.repoConceptIndex = kept;
+  await save();
+
+  // v6 shadow-write — upsert keyed by (user_id, workspace_root, concept).
+  const snapshot: RepoConceptIndexRow = { ...row };
+  shadowWrite("upsertRepoConceptIndex", async () => {
+    const { cloudUpsertRepoConceptIndex } = await import("./supabase.js");
+    await cloudUpsertRepoConceptIndex({
+      userId: snapshot.userId,
+      workspaceRoot: snapshot.workspaceRoot,
+      concept: snapshot.concept,
+      language: snapshot.language ?? null,
+      fileCount: Math.max(0, snapshot.fileCount),
+      firstSeenAt: snapshot.firstSeenAt,
+      lastSeenAt: snapshot.lastSeenAt,
+    });
+  });
+}
+
+/** Read every RepoConceptIndex row for a user + workspace. */
+export async function readRepoConceptIndex(
+  userId: string,
+  workspaceRoot: string
+): Promise<RepoConceptIndexRow[]> {
+  const s = await load();
+  return s.repoConceptIndex.filter(
+    (r) => r.userId === userId && r.workspaceRoot === workspaceRoot
+  );
+}
+
+/** Diagnostic snapshot — returns everything that has changed in the
+ *  store for a user since `sinceMs`. Used by the `/echo/debug/recent`
+ *  inspector endpoint so the extension can verify data is flowing from
+ *  event → store correctly. Read-only; never modifies state. */
+export interface RecentChangesSnapshot {
+  since: string;
+  now: string;
+  echoEvents: Array<{
+    ts: number;
+    type: string;
+    file: string | undefined;
+    payload: Record<string, unknown>;
+  }>;
+  echoEventsByType: Record<string, number>;
+  fileAuthorshipCounters: Array<{
+    filePath: string;
+    humanChars: number;
+    aiChars: number;
+    updatedAt: string;
+  }>;
+  conceptStates: Array<{
+    conceptName: string;
+    timesUsed: number;
+    authorshipRatio: number | null;
+    hasBeenAuthored: boolean;
+    lastUsedAt: string;
+    firstAuthoredAt: string | null;
+  }>;
+  conceptEncounters: Array<{
+    concept: string;
+    filePath: string;
+    seenAt: string;
+    authorshipRatioAtTime: number | null;
+  }>;
+  behaviorRollups: Array<{
+    date: string;
+    activeMinutes: number;
+    linesAdded: number;
+    linesRemoved: number;
+    archetypeHint: string | null;
+  }>;
+  commitStories: Array<{
+    commitSha: string;
+    commitTs: string;
+    message: string;
+  }>;
+  conceptStatuses: Array<{
+    concept: string;
+    status: ConceptStatusRow["status"];
+    updatedAt: string;
+  }>;
+}
+
+export async function getRecentChanges(
+  userId: string,
+  sinceMs: number
+): Promise<RecentChangesSnapshot> {
+  const s = await load();
+  const nowMs = Date.now();
+  const sinceIso = new Date(sinceMs).toISOString();
+  const nowIso = new Date(nowMs).toISOString();
+
+  // ----- echoEvents: cap at 100 most recent by ts desc -----
+  const recentEvents = s.echoEvents
+    .filter((e) => e.userId === userId && e.ts >= sinceMs)
+    .sort((a, b) => b.ts - a.ts);
+  const echoEventsTrimmed = recentEvents.slice(0, 100).map((e) => ({
+    ts: e.ts,
+    type: e.type,
+    file: e.file,
+    payload: e.payload,
+  }));
+  const echoEventsByType: Record<string, number> = {};
+  for (const e of recentEvents) {
+    echoEventsByType[e.type] = (echoEventsByType[e.type] ?? 0) + 1;
+  }
+
+  // ----- fileAuthorshipCounters: rows updated since -----
+  const fileAuthorshipCounters = s.fileAuthorshipCounters
+    .filter((r) => r.userId === userId && r.updatedAt >= sinceIso)
+    .map((r) => ({
+      filePath: r.filePath,
+      humanChars: r.humanChars,
+      aiChars: r.aiChars,
+      updatedAt: r.updatedAt,
+    }));
+
+  // ----- conceptStates: rows with lastUsedAt >= since OR firstAuthoredAt >= since -----
+  const conceptStates = s.concepts
+    .filter((c) => {
+      if (c.userId !== userId) return false;
+      if (c.lastUsedAt && c.lastUsedAt >= sinceIso) return true;
+      if (c.firstAuthoredAt && c.firstAuthoredAt >= sinceIso) return true;
+      return false;
+    })
+    .map((c) => ({
+      conceptName: c.conceptName,
+      timesUsed: c.timesUsed,
+      authorshipRatio: c.authorshipRatio,
+      hasBeenAuthored: c.hasBeenAuthored,
+      lastUsedAt: c.lastUsedAt,
+      firstAuthoredAt: c.firstAuthoredAt,
+    }));
+
+  // ----- conceptEncounters: rows with seenAt >= since, cap 100 by seenAt desc -----
+  const recentEncounters = s.conceptEncounters
+    .filter((r) => r.userId === userId && r.seenAt >= sinceIso)
+    .sort((a, b) => b.seenAt.localeCompare(a.seenAt));
+  const conceptEncounters = recentEncounters.slice(0, 100).map((r) => ({
+    concept: r.concept,
+    filePath: r.filePath,
+    seenAt: r.seenAt,
+    authorshipRatioAtTime: r.authorshipRatioAtTime,
+  }));
+
+  // ----- behaviorRollups: today's date or within 2 days of since -----
+  const todayDate = new Date(nowMs).toISOString().slice(0, 10);
+  const sinceMinus2Days = new Date(sinceMs - 2 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+  const behaviorRollups = s.behaviorRollups
+    .filter(
+      (r) =>
+        r.userId === userId &&
+        (r.date === todayDate || r.date >= sinceMinus2Days)
+    )
+    .map((r) => ({
+      date: r.date,
+      activeMinutes: r.activeMinutes,
+      linesAdded: r.linesAdded,
+      linesRemoved: r.linesRemoved,
+      archetypeHint: r.archetypeHint,
+    }));
+
+  // ----- commitStories: rows with commitTs >= since -----
+  const commitStories = s.commitStories
+    .filter((r) => r.userId === userId && r.commitTs >= sinceIso)
+    .map((r) => ({
+      commitSha: r.commitSha,
+      commitTs: r.commitTs,
+      message: r.message,
+    }));
+
+  // ----- conceptStatuses: rows with updatedAt >= since -----
+  const conceptStatuses = s.conceptStatuses
+    .filter((r) => r.userId === userId && r.updatedAt >= sinceIso)
+    .map((r) => ({
+      concept: r.concept,
+      status: r.status,
+      updatedAt: r.updatedAt,
+    }));
+
+  return {
+    since: sinceIso,
+    now: nowIso,
+    echoEvents: echoEventsTrimmed,
+    echoEventsByType,
+    fileAuthorshipCounters,
+    conceptStates,
+    conceptEncounters,
+    behaviorRollups,
+    commitStories,
+    conceptStatuses,
+  };
 }
