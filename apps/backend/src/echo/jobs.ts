@@ -252,6 +252,11 @@ const jobs: JobRegistration[] = [
 ];
 
 export function registerEchoJobs(): void {
+  // Re-entry guard. Today this is only called once from index.ts, but any
+  // future lifecycle hook (test harness, in-process restart, HMR) that
+  // calls it again would silently stack duplicate rollup loops. Call
+  // shutdownEchoJobs() first if you need to reschedule.
+  if (timers.length > 0) return;
   for (const job of jobs) {
     const jitter = Math.floor(Math.random() * 30_000);
     const kick = setTimeout(() => {

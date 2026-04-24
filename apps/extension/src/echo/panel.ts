@@ -151,20 +151,32 @@ async function handleEchoMessage(
       try {
         if (typeof msg.file !== "string" || msg.file.length === 0) return;
         // Security: never open a file that isn't under an active workspace
-        // folder. Stops a malicious payload from wandering the filesystem.
-        const resolved = path.resolve(msg.file);
+        // folder. path.resolve normalizes but does NOT dereference symlinks,
+        // so we fs.realpathSync both sides (target + roots) before the
+        // containment check — otherwise a symlink inside the workspace
+        // pointing outside (e.g. at /etc/passwd) slips past. realpath
+        // throws on missing paths, which doubles as our stale-path check.
+        const requested = path.resolve(msg.file);
+        let resolved: string;
+        try {
+          resolved = fs.realpathSync(requested);
+        } catch {
+          console.warn("[protege] echo_openMoment stale or unreadable path:", requested);
+          return;
+        }
         const folders = vscode.workspace.workspaceFolders ?? [];
         const inWorkspace = folders.some((f) => {
-          const root = path.resolve(f.uri.fsPath);
+          let root: string;
+          try {
+            root = fs.realpathSync(path.resolve(f.uri.fsPath));
+          } catch {
+            return false;
+          }
           const rel = path.relative(root, resolved);
           return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
         });
         if (!inWorkspace) {
           console.warn("[protege] echo_openMoment refused — not in workspace:", resolved);
-          return;
-        }
-        if (!fs.existsSync(resolved)) {
-          console.warn("[protege] echo_openMoment stale path:", resolved);
           return;
         }
         const uri = vscode.Uri.file(resolved);
