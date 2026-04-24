@@ -211,17 +211,14 @@ export function VoiceMode({
     setMicState("ok");
   }, []);
 
-  /* ============ TTS playback ============ */
-  useEffect(() => {
-    if (!latestReply || latestReply === lastSpokenRef.current) return;
-    lastSpokenRef.current = latestReply;
-    speak(latestReply).catch((err) => {
-      // No robotic SpeechSynthesis fallback — if Kokoro failed or is
-      // warming up, stay silent. The UI already shows "Warming up…".
-      console.warn("[protege] tts failed", err);
-      setPhase(conversationRef.current ? "listening" : "idle");
-    });
-  }, [latestReply, voice]);
+  /* ============ TTS playback ============
+   * Voice-mode replies are now spoken via the GLOBAL voice/playExplain
+   * path (host broadcasts it from handleChat; App.tsx plays through its
+   * persistent audio element). That works whether VoiceMode is mounted
+   * or not — fixes the "wake fired, reply came, no sound" bug when the
+   * user is on the text-chat tab. This local speak() path is preserved
+   * for internal use (the typed input fallback `handleTypedSend` and
+   * future tools) but no longer auto-fires on latestReply changes. */
 
   const speak = async (text: string) => {
     // Stay in "thinking" until the audio actually starts playing —

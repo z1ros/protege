@@ -319,88 +319,174 @@
    everything else (state chip, voice picker, wake toggle) is
    smaller chrome arranged around it.
    ================================================================ */
+/* 2026-04-22 (v2): voice-inline lives inside the composer card and
+   must match a single textarea row's height (~28-36px of content).
+   The earlier attempt was too tall because the base `.voice` class
+   (applied alongside `voice-inline`) forced `flex: 1`, `padding: 32px
+   24px`, `flex-direction: column`, plus ::before/::after spacers
+   that vertically centered everything. All of that has to be
+   explicitly neutralized here — same-specificity class selectors on
+   source-order alone aren't enough when the container is inheriting
+   flex:1 from its parent chain.
+
+   Layout goal (left → right, single row):
+     [ orb ]  tap-to-talk-chip  ────(spacer)────  [Bella][Michael]  [Wake]
+*/
 .voice-inline {
-  position: relative;
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  grid-template-areas:
-    "wake     orb    switch"
-    "chip     chip   chip"
-    "voices   voices voices";
+  /* Kill every property the base .voice class set. */
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 6px 10px;
-  padding: 14px 16px 12px;
-  border-top: 1px solid rgba(148, 163, 184, 0.1);
-  background: linear-gradient(
-    180deg,
-    rgba(15, 23, 42, 0) 0%,
-    rgba(15, 23, 42, 0.22) 100%
-  );
+  gap: 6px 6px;
+  padding: 0;
+  /* Match the textarea's min-height exactly so text ↔ voice doesn't
+     resize the composer card. */
+  min-height: 28px;
+  overflow: visible;
+  background: transparent;
+  border: none;
+  /* Brief fade on mode swap so the content change feels smooth rather
+     than a hard snap. The base .voice animation is overridden above
+     with `animation: none` which wipes the 320ms msg-in that used
+     to fire every time voice-inline mounted. */
+  animation: voice-inline-in 140ms ease both;
+}
+@keyframes voice-inline-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+/* Neutralize the .voice ::before/::after flex-spacers that vertically
+   centered the orb and pushed everything apart. Without this the row
+   balloons to fill the composer vertically. */
+.voice-inline::before,
+.voice-inline::after { display: none !important; }
+
+/* The transcript and error sibling must wrap to their own line
+   BELOW the control row (they're width: 100%, but flex-wrap on the
+   parent is what actually triggers the break). */
+.voice-inline .voice-transcript-inline,
+.voice-inline > .error {
+  flex-basis: 100%;
+  width: 100%;
+  order: 99;
 }
 
-/* Hero orb — centered column, dominant element. */
+/* The legacy onSwitchToText button — hidden in compact layout since
+   the composer's mode-mini toggle handles "back to text" now. */
+.voice-inline .voice-inline-switch { display: none; }
+
+/* Visual order (left → right) independent of DOM order:
+     1. orb
+     2. status chip
+     3. voice picker  (pushed right via margin-left: auto)
+     4. wake toggle
+   The DOM has wake first (React component history), but visually
+   wake belongs at the end. CSS `order` reshuffles without touching
+   the component tree. */
+.voice-inline .voice-orb-wrap,
+.voice-orb-wrap-inline { order: 1; }
+.voice-inline .voice-status { order: 2; }
+.voice-inline-voices { order: 3; }
+.voice-inline .wake-word-toggle { order: 4; }
+
+/* Compact orb — overrides the default 180px/150px from the base
+   .voice-orb-wrap / .voice-orb rules. Selector specificity (0,2,0)
+   beats the defaults (0,1,0) regardless of source order. */
+.voice-inline .voice-orb-wrap,
 .voice-orb-wrap-inline {
-  grid-area: orb;
-  justify-self: center;
-  width: 110px;
-  height: 110px;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
 }
+.voice-inline .voice-orb-wrap .voice-orb,
 .voice-orb-wrap-inline .voice-orb {
-  width: 68px;
-  height: 68px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
 }
+.voice-inline .voice-orb-wrap .ring,
 .voice-orb-wrap-inline .ring {
   position: absolute;
   border-radius: 50%;
 }
-.voice-orb-wrap-inline .ring-1 { width: 86px;  height: 86px;  }
-.voice-orb-wrap-inline .ring-2 { width: 110px; height: 110px; }
+.voice-inline .voice-orb-wrap .ring-1,
+.voice-orb-wrap-inline .ring-1 { width: 24px; height: 24px; }
+.voice-inline .voice-orb-wrap .ring-2,
+.voice-orb-wrap-inline .ring-2 { width: 28px; height: 28px; }
 
-/* State chip — small, centered UNDER the orb. Override the loud
-   voice.css defaults so it doesn't eat the whole row. */
+/* State chip — sits immediately right of the orb, inline. Keeps the
+   row left-weighted (orb + label) so the user reads it as a single
+   "status indicator," not floating chrome. Tightened to 9.5px font
+   and 2px vertical padding so it matches the 28px row height. */
 .voice-inline .voice-status {
-  grid-area: chip;
-  justify-self: center;
-  padding: 4px 12px;
-  font-size: 10px;
+  flex: 0 1 auto;
+  padding: 2px 8px;
+  font-size: 9.5px;
   letter-spacing: 0.1em;
-  min-height: 22px;
+  min-height: 0;
   border-width: 1px;
-  gap: 7px;
-  box-shadow: none; /* keep the glow only on the orb */
+  gap: 5px;
+  box-shadow: none;
+  margin: 0;
+  white-space: nowrap;
 }
-.voice-inline .voice-status-dot { width: 6px; height: 6px; }
+.voice-inline .voice-status-dot { width: 5px; height: 5px; }
 
-/* Voice picker — tight row below the state chip. */
+/* Voice picker — pinned to the right via margin-left: auto. The
+   spacer pushes Bella/Michael + Wake to the right edge of the
+   composer, leaving the orb + status left-aligned. */
 .voice-inline-voices {
-  grid-area: voices;
-  justify-self: center;
+  flex: 0 0 auto;
   display: inline-flex;
-  gap: 4px;
-  padding-top: 2px;
+  gap: 3px;
+  margin-left: auto;
 }
 .voice-inline-voices .voice-pill {
-  padding: 3px 10px;
-  font-size: 10px;
+  padding: 2px 7px;
+  font-size: 9.5px;
   letter-spacing: 0.06em;
-  gap: 4px;
+  gap: 3px;
+  min-height: 0;
+  white-space: nowrap;
 }
 
-/* Wake toggle — bottom-left corner of the grid. */
+/* Wake toggle — pinned to the right of the voice picker. */
 .voice-inline .wake-word-toggle {
-  grid-area: wake;
-  justify-self: start;
+  flex: 0 0 auto;
+  margin: 0;
+  min-width: 0;
 }
 .wake-word-toggle.compact {
-  padding: 5px 11px;
-  font-size: 10px;
-  gap: 5px;
+  padding: 3px 8px;
+  font-size: 9.5px;
+  gap: 4px;
   letter-spacing: 0.04em;
+  white-space: nowrap;
+  /* When the active label ("Protege" ON) is too long for a narrow
+     composer, clip with ellipsis rather than wrapping the whole row
+     to a second line. The mic icon stays visible regardless. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 110px;
+}
+.wake-word-toggle.compact svg {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+}
+
+/* When wake is ACTIVE, prefer a shorter label so the row stays
+   single-line even on narrow composers. The React component emits
+   '"Protege" ON' as the text — we don't truncate it here; we let
+   the max-width: 110px + ellipsis handle overflow. */
+.wake-word-toggle.compact.active {
+  max-width: 130px;
 }
 .wake-word-toggle.compact svg {
   width: 11px;
@@ -436,16 +522,19 @@
   height: 11px;
 }
 
-/* Live transcript sits between orb and chip; hide when empty. */
+/* Live transcript — used to sit in a grid column spanning the full
+   width. In the new flex row layout it just appears below the row,
+   so no grid-column needed. Still hidden when empty. */
 .voice-transcript-inline {
-  grid-column: 1 / -1;
-  text-align: center;
+  width: 100%;
+  text-align: left;
   font-size: 12px;
   max-width: 100%;
-  margin: 0;
-  padding: 0 8px;
+  margin: 6px 0 0;
+  padding: 0 4px;
   color: var(--text-dim);
   font-style: italic;
+  line-height: 1.45;
 }
 .voice-transcript-inline:empty {
   display: none;

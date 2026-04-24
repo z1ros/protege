@@ -1,4 +1,4 @@
-import { generateLocal } from "../onDeviceModel.js";
+import { generateLocal } from "../ai/onDeviceModel.js";
 
 /**
  * AI-based concept detection — uses the on-device model (Qwen2.5-Coder)

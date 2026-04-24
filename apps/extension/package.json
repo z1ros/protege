@@ -45,10 +45,6 @@
         "title": "Protege: Toggle Auto-Accept AI Edits"
       },
       {
-        "command": "protege.toggleFlowScan",
-        "title": "Protege: Toggle Cross-File Flow Scan (IDLE tier)"
-      },
-      {
         "command": "protege.testOnDevice",
         "title": "Protege: Test On-Device Model"
       },
@@ -71,6 +67,10 @@
       {
         "command": "protege.toggle",
         "title": "Protege: Toggle"
+      },
+      {
+        "command": "protege.toggleWake",
+        "title": "Protege: Toggle Wake Word"
       },
       {
         "command": "protege.teachThis",
@@ -195,6 +195,86 @@
       {
         "command": "protege.ownership.dismissChip",
         "title": "Protege: Ownership — dismiss chip"
+      },
+      {
+        "command": "protege.showSelectionActions",
+        "title": "Protege: Show actions for selection"
+      },
+      {
+        "command": "protege.learning.start",
+        "title": "Protege: Learn to build…"
+      },
+      {
+        "command": "protege.learning.done",
+        "title": "Protege: Learning — mark current step done"
+      },
+      {
+        "command": "protege.learning.hint",
+        "title": "Protege: Learning — reveal hint"
+      },
+      {
+        "command": "protege.learning.show",
+        "title": "Protege: Learning — show me the reference"
+      },
+      {
+        "command": "protege.learning.stop",
+        "title": "Protege: Learning — end session"
+      },
+      {
+        "command": "protege.learning.exportSession",
+        "title": "Protege: Learning — export last session trace"
+      },
+      {
+        "command": "protege.predict.fromSelection",
+        "title": "Protege: Predict what this does (selection)"
+      },
+      {
+        "command": "protege.predict.fromCursor",
+        "title": "Protege: Predict what this does (cursor)"
+      },
+      {
+        "command": "protege.predict.acceptEndOfDay",
+        "title": "Protege: Predict — accept end-of-day chip"
+      },
+      {
+        "command": "protege.predict.dismissEndOfDay",
+        "title": "Protege: Predict — dismiss end-of-day chip"
+      },
+      {
+        "command": "protege.misconceptions.showInFile",
+        "title": "Protege: Show misconceptions in this file"
+      },
+      {
+        "command": "protege.misconceptions.quizMe",
+        "title": "Protege: Misconceptions — quiz me on a flag"
+      },
+      {
+        "command": "protege.misconceptions.showFix",
+        "title": "Protege: Misconceptions — show fix for a flag"
+      },
+      {
+        "command": "protege.misconceptions.dismiss",
+        "title": "Protege: Misconceptions — dismiss a flag"
+      },
+      {
+        "command": "protege.aiBlocks.teach",
+        "title": "Protege: AI block — teach me this block"
+      },
+      {
+        "command": "protege.aiBlocks.gotIt",
+        "title": "Protege: AI block — mark reviewed"
+      },
+      {
+        "command": "protege.aiBlocks.dismiss",
+        "title": "Protege: AI block — dismiss"
+      },
+      {
+        "command": "protege.aiBlocks.tellMore",
+        "title": "Protege: AI block — open deeper lesson in chat"
+      },
+      {
+        "command": "protege.aiBlocks.dismissAllInFile",
+        "title": "Protege: AI blocks — dismiss all in this file"
       }
     ],
     "configuration": {
@@ -205,10 +285,10 @@
           "default": false,
           "description": "When true, AI-proposed edits from chat are applied without a confirmation dialog. When false (recommended), every edit shows a preview diff and requires explicit acceptance."
         },
-        "protege.flowScanEnabled": {
+        "protege.learning.devLogging": {
           "type": "boolean",
-          "default": false,
-          "description": "Enable the IDLE (Tier 3) cross-file flow scanner. Runs on-device in the background during idle periods to find architectural issues that span multiple files. Experimental — adds CPU load during idle time."
+          "default": true,
+          "description": "Capture full Learning Mode session traces — raw plan JSON, every validator verdict, hint/show reveals. Dumps to the Protege Output channel and enables the Dev drawer in the Learning panel. Use `Protege: Learning — export last session trace` to save to disk. Turn off before external release to keep sessions summary-only."
         },
         "protege.explainMode": {
           "type": "string",
@@ -234,6 +314,31 @@
           "type": "boolean",
           "default": true,
           "description": "Track which lines of each file you typed vs. auto-inserted from AI tools. Required for the ownership score + vibecode-review invitations. Turn off to fully disable Protege's ownership tracking (your typed code is never sent to any server — this is all local)."
+        },
+        "protege.selectionHover.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "When true, highlighting code auto-opens a small Protege action popup (Explain · Teach me · Explain back) at the selection. The ⌘K S shortcut still works even when this is off, for keyboard-first users who don't want the auto-popup."
+        },
+        "protege.predict.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Predict-and-Reveal: when you hit ⌘K P on a line or selection, Protege asks you to predict what the code does for a specific input, then reveals the answer with a one-line reason. The 'feels like learning' loop — enabled by default."
+        },
+        "protege.misconceptions.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Misconception Catcher: when you accept vibecoded code, Protege scans it against a rule library for specific wrong mental models (await in .map, JSON.parse+stringify cloning, .sort mutation, etc.) and flags matches with a subtle amber line-border + hover. Pull-based — the hover only opens when you mouse over."
+        },
+        "protege.learning.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Learning Mode: ⌘K L prompts for a goal, then Protege generates a 3–5 step plan and you build each step. ⌘↵ marks done, validator checks, moves to next. Instead of Protege writing code for you, it coaches you through writing it yourself."
+        },
+        "protege.aiBlocks.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "AI Block Highlighter: every auto-inserted (vibecoded) region gets a subtle blue line-wash + a CodeLens '◎ <summary> · ✿ Teach me this block'. Click to open a rich hover with a short What + a One thing to know + Got it / Tell me more / Dismiss. Replaces the old comment-thread briefing with a browsable ambient artifact — review whenever you want."
         }
       }
     },
@@ -244,45 +349,6 @@
         "when": "!terminalFocus"
       },
       {
-        "command": "protege.teachThis",
-        "key": "cmd+k t",
-        "when": "editorTextFocus"
-      },
-      {
-        "command": "protege.explainSelection",
-        "key": "cmd+k e",
-        "when": "editorTextFocus"
-      },
-      {
-        "command": "protege.quizMe",
-        "key": "cmd+k q",
-        "when": "editorTextFocus"
-      },
-      {
-        "command": "protege.weakSpots",
-        "key": "cmd+k w",
-        "when": "editorTextFocus"
-      },
-      {
-        "command": "protege.createExercise",
-        "key": "cmd+k x",
-        "when": "editorTextFocus"
-      },
-      {
-        "command": "protege.showHint",
-        "key": "cmd+k h",
-        "when": "editorTextFocus"
-      },
-      {
-        "command": "protege.explainBack.start",
-        "key": "cmd+k r",
-        "when": "editorTextFocus && editorHasSelection"
-      },
-      {
-        "command": "protege.toggleMaxPlanBackend",
-        "key": "cmd+k b"
-      },
-      {
         "command": "protege.clearHighlights",
         "key": "escape",
         "when": "editorTextFocus && !editorHasSelection && !suggestWidgetVisible && !parameterHintsVisible && !inQuickOpen && !inZenMode && protege.hasHighlights"
@@ -291,16 +357,6 @@
         "command": "protege.applyGhost",
         "key": "tab",
         "when": "editorTextFocus && protege.ghostActive && !inlineSuggestionVisible && !suggestWidgetVisible && !parameterHintsVisible"
-      },
-      {
-        "command": "protege.openTeachPeek",
-        "key": "cmd+.",
-        "when": "editorTextFocus && protege.ghostActive && !suggestWidgetVisible"
-      },
-      {
-        "command": "protege.explainGhost",
-        "key": "cmd+alt+.",
-        "when": "editorTextFocus && protege.ghostActive && !suggestWidgetVisible"
       },
       {
         "command": "protege.dismissGhost",

@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { aiQuery } from "../aiBackend.js";
+import { aiQuery } from "../ai/aiBackend.js";
 
 /**
  * "Protege: Explain selection" — explains highlighted code inline.

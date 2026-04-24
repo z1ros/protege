@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { detectConcepts } from "../concepts/detector.js";
-import { aiGenerateQuiz } from "../aiExplain.js";
+import { aiGenerateQuiz } from "../ai/aiExplain.js";
 
 /**
  * "Protege: Quiz me" — generates a quick quiz from concepts in the file.
@@ -50,10 +50,10 @@ export async function quizMe(): Promise<void> {
 
     if (answer === quiz.correct) {
       score++;
-      vscode.window.showInformationMessage(`✅ Correct!`);
+      vscode.window.showInformationMessage(`Correct.`);
     } else {
       vscode.window.showWarningMessage(
-        `❌ Not quite. The answer: ${quiz.correct}`
+        `Not quite. The answer: ${quiz.correct}`
       );
     }
 
@@ -62,9 +62,8 @@ export async function quizMe(): Promise<void> {
   }
 
   if (total > 0) {
-    const emoji = score === total ? "🎉" : score > 0 ? "👍" : "📚";
     const choice = await vscode.window.showInformationMessage(
-      `${emoji} Quiz done! Score: ${score}/${total}`,
+      `Quiz done. Score: ${score}/${total}`,
       "Learn weak spots",
       "Done"
     );

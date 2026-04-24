@@ -5,6 +5,8 @@ import type {
   ConceptRow,
   TourState,
   ExplainBackSession,
+  LearningSession,
+  LearningSessionTrace,
   DailyIqPoint,
   Finding,
   GainEvent,
@@ -25,6 +27,7 @@ import { LiveTab } from "./LiveTab.js";
 import { MapTab } from "./MapTab.js";
 import { SessionStrip } from "./SessionStrip.js";
 import { ExplainBackPanel } from "./ExplainBackPanel.js";
+import { LearningSessionPanel } from "./LearningSessionPanel.js";
 import { ChatSearchBar } from "./ChatSearchBar.js";
 import { ChatHistoryPanel } from "./ChatHistoryPanel.js";
 import { CinematicPlate } from "./CinematicPlate.js";
@@ -51,6 +54,7 @@ import {
   IconPencil,
   IconStar,
   IconPlus,
+  IconMic,
 } from "./icons.js";
 import protegeLogoUrl from "./protege-logo.svg";
 
@@ -87,6 +91,13 @@ const EXPLAIN_BACKEND_URL =
 
 let explainAudio: HTMLAudioElement | null = null;
 let audioUnlocked = false;
+// Monotonic playback generation. Every playExplainAudio call increments this
+// and stamps its handlers; stale handlers (from a previous clip that got
+// interrupted by audio.src=newUrl) compare and no-op. Without this, an old
+// onended fires after we've started the next clip and sends a phantom
+// voice/speaking:false to the host — which resumes the wake listener while
+// the bot is mid-sentence, and reports playbackDone to the wrong requestId.
+let playbackGen = 0;
 
 /**
  * Prime the Audio element inside a user gesture so later programmatic
@@ -109,7 +120,23 @@ function unlockExplainAudio(): void {
       // Silent clip may still reject in some environments — that's fine,
       // the element was still created inside a gesture so it's blessed.
     });
+    console.log("[protege-audio] unlocked explainAudio element");
   } catch {}
+}
+
+// Also unlock on any key press or pointerdown inside the webview window.
+// Just clicking the textarea's contenteditable area or pressing Enter
+// already qualifies as a user gesture — we shouldn't need the user to
+// hit the exact root div. This fires the unlock on the very first key
+// stroke they make.
+if (typeof window !== "undefined") {
+  const onFirstGesture = () => {
+    if (audioUnlocked) return;
+    unlockExplainAudio();
+  };
+  window.addEventListener("keydown", onFirstGesture, { capture: true });
+  window.addEventListener("pointerdown", onFirstGesture, { capture: true });
+  window.addEventListener("touchstart", onFirstGesture, { capture: true });
 }
 
 async function playExplainAudio(
@@ -117,16 +144,37 @@ async function playExplainAudio(
   voice: "female" | "male",
   requestId?: string
 ): Promise<void> {
+  const myGen = ++playbackGen;
+  const isCurrent = () => myGen === playbackGen;
+
   // Every exit path must tell the host what happened — otherwise the
-  // "🔊 Protege speaking…" chip hangs on the editor until the 15s safety
+  // Protege speaking chip hangs on the editor until the 15s safety
   // timer clears it. Previously, TTS fetch failures and autoplay blocks
   // just warned to console and the chip lingered silently.
+  // Gated on isCurrent(): if a newer clip already took over, a late
+  // reportDone from this (now stale) invocation would prematurely
+  // resume the wake listener and misresolve teach_step awaiters.
   const reportDone = (reason: "ended" | "error") => {
+    if (!isCurrent()) return;
     vscode.postMessage({ type: "voice/playbackDone", reason, requestId });
   };
+  // Error exits must also clear the host's speaking flag — host now
+  // pre-suspends wake the moment it broadcasts voice/playExplain (to
+  // close the race where the bot's first syllables self-trigger wake
+  // through the speakers). If /tts fails and we never start playback,
+  // voice/speaking:true → :false from onplaying/onended never fires,
+  // so wake would stay suspended until the 30s deadman.
+  const clearSpeaking = () => {
+    if (!isCurrent()) return;
+    vscode.postMessage({ type: "voice/speaking", active: false });
+  };
+
+  console.log(
+    `[protege-audio] playExplainAudio start · gen=${myGen} · ${text.length} chars · unlocked=${audioUnlocked} · voice=${voice}`
+  );
 
   if (!text || !text.trim()) {
-    console.warn("[protege] voice/playExplain: empty text, nothing to speak");
+    console.warn("[protege-audio] empty text, nothing to speak");
     reportDone("error");
     return;
   }
@@ -137,12 +185,13 @@ async function playExplainAudio(
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text, voice }),
     });
+    if (!isCurrent()) {
+      console.log(`[protege-audio] gen=${myGen} superseded during fetch, dropping`);
+      return;
+    }
     if (res.status === 503) {
-      // Backend is warming Kokoro — first /tts call can take 10–30s to
-      // load the model. VoiceMode.tsx surfaces this as "Warming up…";
-      // here we just log it and fall through to the error chip, which
-      // will prompt the user to retry.
       console.warn("[protege] voice/playExplain: tts 503 — Kokoro warming up");
+      clearSpeaking();
       reportDone("error");
       return;
     }
@@ -151,12 +200,18 @@ async function playExplainAudio(
       console.warn(
         `[protege] voice/playExplain: tts HTTP ${res.status} — ${body.slice(0, 200)}`
       );
+      clearSpeaking();
       reportDone("error");
       return;
     }
     const blob = await res.blob();
+    if (!isCurrent()) {
+      console.log(`[protege-audio] gen=${myGen} superseded during blob, dropping`);
+      return;
+    }
     if (blob.size === 0) {
       console.warn("[protege] voice/playExplain: /tts returned empty blob");
+      clearSpeaking();
       reportDone("error");
       return;
     }
@@ -166,13 +221,33 @@ async function playExplainAudio(
     const audio = explainAudio;
     const prevUrl = audio.src;
 
+    // Hard stop whatever's currently on the shared element before we
+    // reassign src — otherwise the old clip's internal state machine can
+    // still fire onended after we've loaded the new blob, even though
+    // we null out handlers below. Pause + src clear forces a clean reset.
+    try {
+      audio.pause();
+    } catch {}
+    audio.onplaying = null;
+    audio.onended = null;
+    audio.onerror = null;
+
     audio.src = url;
     audio.volume = 0.9;
+
+    audio.onplaying = () => {
+      if (!isCurrent()) return;
+      vscode.postMessage({ type: "voice/speaking", active: true });
+    };
     audio.onended = () => {
+      if (!isCurrent()) return;
+      vscode.postMessage({ type: "voice/speaking", active: false });
       if (url.startsWith("blob:")) URL.revokeObjectURL(url);
       reportDone("ended");
     };
     audio.onerror = () => {
+      if (!isCurrent()) return;
+      vscode.postMessage({ type: "voice/speaking", active: false });
       console.warn("[protege] voice/playExplain: audio element error", audio.error);
       reportDone("error");
     };
@@ -180,11 +255,8 @@ async function playExplainAudio(
     try {
       await audio.play();
     } catch (playErr) {
-      // Autoplay is the usual culprit here. Webview autoplay policy needs
-      // a user gesture INSIDE the webview; a click on the editor's hover
-      // button doesn't count. If this keeps happening, opening the
-      // Protege panel and clicking anywhere inside it "unlocks" audio
-      // for the rest of the session.
+      if (!isCurrent()) return;
+      vscode.postMessage({ type: "voice/speaking", active: false });
       console.warn(
         "[protege] voice/playExplain: audio.play() rejected — likely autoplay block or missing audio codec:",
         playErr
@@ -195,7 +267,9 @@ async function playExplainAudio(
 
     if (prevUrl && prevUrl.startsWith("blob:")) URL.revokeObjectURL(prevUrl);
   } catch (err) {
+    if (!isCurrent()) return;
     console.warn("[protege] voice/playExplain failed:", err);
+    clearSpeaking();
     reportDone("error");
   }
 }
@@ -258,8 +332,24 @@ export function App() {
   const [explainBack, setExplainBack] = useState<ExplainBackSession | null>(
     null
   );
+  // Learning Mode session. Same ownership pattern — host drives, panel
+  // reflects. When non-null, LearningSessionPanel takes over the sidebar.
+  const [learning, setLearning] = useState<LearningSession | null>(null);
+  // Dev-mode trace — host broadcasts `learning/devTrace` when the
+  // `protege.learning.devLogging` setting is on. Null = setting off or
+  // no active session. Passed through to the panel's Dev drawer.
+  const [learningTrace, setLearningTrace] =
+    useState<LearningSessionTrace | null>(null);
   const [streakOpen, setStreakOpen] = useState(false);
   const [chatHistoryOpen, setChatHistoryOpen] = useState(false);
+  // Separate from `messages`: this is the full persisted history the
+  // host returns when the panel opens. `messages` represents the
+  // current chat view (can be cleared by "New chat"); this represents
+  // "everything ever persisted to globalState" so the panel can browse
+  // old conversations even after the view has been cleared.
+  const [historyPanelMessages, setHistoryPanelMessages] = useState<
+    ChatMessage[]
+  >([]);
   const [modelStatus, setModelStatus] = useState<{
     ready: boolean;
     loading: boolean;
@@ -267,6 +357,10 @@ export function App() {
     downloadProgress: number;
   }>({ ready: false, loading: false, error: null, downloadProgress: 0 });
   const [tipDetail, setTipDetail] = useState<TipDetail | null>(null);
+  // Message IDs whose learning-fork chips have been clicked (either path).
+  // Scoped per-render so rehydrated history doesn't re-offer stale forks
+  // across reloads; the user can always ask again to get a fresh fork.
+  const [forkResolved, setForkResolved] = useState<Record<string, true>>({});
 
   const endRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLElement>(null);
@@ -276,8 +370,24 @@ export function App() {
   useEffect(() => {
     const off = onHostMessage((msg) => {
       if (msg.type === "chat/history") {
-        // Restore persisted history on mount — conversations survive reloads
-        setMessages(msg.messages);
+        // Restore persisted history on mount — conversations survive reloads.
+        // Strip <learningFork> tags from historical replies: the fork was
+        // a one-shot affordance at the moment the reply arrived; a reload
+        // later is not the right time to re-offer it (check #8 in
+        // learning-mode-fork-integration §11). A fresh ask in the current
+        // session regenerates the fork.
+        const FORK_STRIP_RE = /\s*<learningFork\s+goal="[^"]+"\s*(?:\/\s*>|><\/learningFork>)/gi;
+        const cleaned = msg.messages.map((m) =>
+          m.role === "assistant"
+            ? { ...m, content: m.content.replace(FORK_STRIP_RE, "").trimEnd() }
+            : m
+        );
+        setMessages(cleaned);
+      } else if (msg.type === "chat/fullHistory") {
+        // Read-only snapshot for the browse panel. Does NOT touch the
+        // main `messages` state — the panel needs to see everything
+        // even when the current chat view has been cleared.
+        setHistoryPanelMessages(msg.messages);
       } else if (msg.type === "chat/append") {
         setMessages((m) => [...m, msg.message]);
         setToolActivity([]);
@@ -405,6 +515,14 @@ export function App() {
         });
       } else if (msg.type === "explainBack/state") {
         setExplainBack(msg.state);
+      } else if (msg.type === "learning/state") {
+        setLearning(msg.state);
+        // If the session cleared, drop the trace too — `learning/devTrace`
+        // also broadcasts null on session end, but wiping here is a
+        // cheap safety net against drift if a trace lingers.
+        if (!msg.state) setLearningTrace(null);
+      } else if (msg.type === "learning/devTrace") {
+        setLearningTrace(msg.trace);
       }
     });
     vscode.postMessage({ type: "ready" });
@@ -467,7 +585,15 @@ export function App() {
       role: "user",
       content: trimmed,
       createdAt: new Date().toISOString(),
+      source: chatInputMode === "voice" ? "voice" : "text",
     };
+    // Snapshot the current visible messages BEFORE adding the user's
+    // new one — that's the AI's short-term context for this turn.
+    // After "New chat" the array is empty → AI starts fresh. If we
+    // sent messages after adding `user`, the host would receive its
+    // own just-sent prompt twice (once as context, once as the new
+    // message).
+    const contextMessages = messages;
     setMessages((m) => [...m, user]);
     setError(null);
     // Flip loading optimistically so the typing-dots bubble appears in
@@ -475,7 +601,12 @@ export function App() {
     // chat/loading round-trips back from the host. The host will still
     // send chat/loading=true → the value stays true → no flicker.
     setLoading(true);
-    vscode.postMessage({ type: "chat/send", message: trimmed, mode: chatInputMode });
+    vscode.postMessage({
+      type: "chat/send",
+      message: trimmed,
+      mode: chatInputMode,
+      contextMessages,
+    });
   };
 
   const teachFinding = (f: Finding) => {
@@ -488,6 +619,24 @@ export function App() {
   const handleSend = () => {
     sendMessage(input);
     setInput("");
+  };
+
+  /** User clicked one of the two fork chips under an assistant message.
+   *  Mark the fork as resolved so the chips disappear, then tell the host
+   *  what the user picked. Host decides what to do with it (learn →
+   *  `protege.learning.start`, just-do-it → synthetic follow-up turn). */
+  const handleForkChoice = (
+    choice: "just-do-it" | "learn",
+    goal: string,
+    messageId: string
+  ) => {
+    setForkResolved((prev) => ({ ...prev, [messageId]: true }));
+    vscode.postMessage({
+      type: "learning/forkChosen",
+      choice,
+      goal,
+      messageId,
+    });
   };
 
   const lastAssistant = useMemo(
@@ -702,6 +851,17 @@ export function App() {
         />
       )}
 
+      {/* Learning Mode overlay — same takeover pattern. Stop posts
+          `learning/stop`, host broadcasts `learning/state: null`,
+          this unmounts. */}
+      {learning && (
+        <LearningSessionPanel
+          session={learning}
+          devTrace={learningTrace}
+          onClose={() => vscode.postMessage({ type: "learning/stop" })}
+        />
+      )}
+
       {streakOpen ? (
         <div className="streak-inline">
           <StreakJournal
@@ -711,8 +871,21 @@ export function App() {
         </div>
       ) : mode === "chat" && chatInputMode === "text" && chatHistoryOpen ? (
         <ChatHistoryPanel
-          messages={messages}
+          messages={
+            historyPanelMessages.length > 0
+              ? historyPanelMessages
+              : messages
+          }
           onJumpTo={(id: string) => {
+            // If the clicked message is already in the current chat
+            // view, just scroll to it. If it's NOT (e.g. it belongs to
+            // a previous session the user had cleared via "New chat"),
+            // restore the full persisted history into the view first
+            // so the scroll target exists, then scroll.
+            const inView = messages.some((m) => m.id === id);
+            if (!inView && historyPanelMessages.length > 0) {
+              setMessages(historyPanelMessages);
+            }
             setChatHistoryOpen(false);
             // Wait one paint for the chat body to remount, then scroll
             requestAnimationFrame(() => {
@@ -729,28 +902,36 @@ export function App() {
             }
           }}
           onNewChat={() => {
+            // "New chat" clears the current view but PRESERVES history.
+            // The trash-icon button (onClearAll) is the only path that
+            // wipes globalState — and it gates behind a confirm dialog.
+            // Previous behavior nuked everything on "New chat" click,
+            // which was indistinguishable from a delete-all by accident.
             setMessages([]);
-            vscode.postMessage({ type: "chat/clearHistory" });
             setChatHistoryOpen(false);
           }}
         />
       ) : mode === "chat" ? (
         <>
-          {/* ---- Chat search bar + history toggle ---- */}
-          {!isEmpty && (
-            <ChatSearchBar
-              messages={messages}
-              onJumpTo={(id: string) => {
-                const el = document.getElementById(`msg-${id}`);
-                if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-              }}
-              onOpenHistory={() => setChatHistoryOpen(true)}
-              onNewChat={() => {
-                setMessages([]);
-                vscode.postMessage({ type: "chat/clearHistory" });
-              }}
-            />
-          )}
+          {/* ---- Chat toolbar (always shown in chat mode so the history
+               icon is reachable even after "New chat" emptied the view).
+               Search moved INTO ChatHistoryPanel — it only appears when
+               the user has actually opened the history. */}
+          <ChatSearchBar
+            onOpenHistory={() => {
+              // Fetch fresh persisted history from the host whenever
+              // the panel opens. Pre-fix this used `messages` state,
+              // which meant "New chat" (which now only clears the
+              // view) also hid all historical chats from the panel
+              // until reload — this round-trip fixes that.
+              vscode.postMessage({ type: "chat/getFullHistory" });
+              setChatHistoryOpen(true);
+            }}
+            onNewChat={() => {
+              // Preserve history — see ChatHistoryPanel handler above.
+              setMessages([]);
+            }}
+          />
           {isEmpty ? (
             <div className="messages">
               <div className="empty">
@@ -786,14 +967,29 @@ export function App() {
           ) : (
             <div className="messages">
               {messages.map((m) => {
-                const { clean, followups } =
+                const { clean, followups, fork } =
                   m.role === "assistant"
-                    ? parseFollowups(m.content)
-                    : { clean: m.content, followups: [] as string[] };
+                    ? parseAssistantExtras(m.content)
+                    : { clean: m.content, followups: [] as string[], fork: null };
+                const forkAvailable =
+                  fork && !forkResolved[m.id] && m.role === "assistant";
                 return (
                   <div key={m.id} id={`msg-${m.id}`} className={`msg msg-${m.role}`}>
                     <div className="role">
                       {m.role === "user" ? "You" : "Protege"}
+                      {m.source === "voice" && (
+                        <span
+                          className="msg-source-voice"
+                          title={
+                            m.role === "user"
+                              ? "You said this (voice input)"
+                              : "Protege spoke this reply"
+                          }
+                          aria-label="voice"
+                        >
+                          <IconMic size={11} />
+                        </span>
+                      )}
                     </div>
                     <div className="content">
                       {/* Both roles get full markdown rendering — user
@@ -803,7 +999,31 @@ export function App() {
                           plain text dropped all of that to literal chars. */}
                       <AssistantMarkdown content={clean} />
                     </div>
-                    {followups.length > 0 && !loading && (
+                    {forkAvailable && fork && (
+                      <div className="learning-fork">
+                        <button
+                          className="fork-btn fork-btn--primary"
+                          onClick={() =>
+                            handleForkChoice("just-do-it", fork.goal, m.id)
+                          }
+                          disabled={loading}
+                          title="Protege writes the code; you skim the diff"
+                        >
+                          ◎ Just do it
+                        </button>
+                        <button
+                          className="fork-btn fork-btn--secondary"
+                          onClick={() =>
+                            handleForkChoice("learn", fork.goal, m.id)
+                          }
+                          disabled={loading}
+                          title="Step-by-step plan; you write each step, Protege validates"
+                        >
+                          ✿ Learn it with me
+                        </button>
+                      </div>
+                    )}
+                    {followups.length > 0 && !loading && !forkAvailable && (
                       <div className="followups">
                         {followups.map((f, i) => (
                           <button
@@ -863,21 +1083,25 @@ export function App() {
             </div>
           )}
 
-          {/* Unified footer: when chatInputMode === "voice" we swap the
-              textarea + send area for the inline VoiceMode. Messages
-              remain visible above — user can read the full conversation
-              context while interacting by voice. */}
-          {chatInputMode === "voice" ? (
-            <VoiceMode
-              inline
-              onSend={sendMessage}
-              latestReply={lastAssistant}
-              loading={loading}
-              error={error}
-              onSwitchToText={() => setChatInputMode("text")}
-            />
-          ) : (
-            <footer className="composer">
+          {/* Unified footer (2026-04-22): voice mode no longer takes over
+              the entire bottom section with its own "PREPARING VOICE
+              ENGINE" card. Instead, the SAME composer card hosts both —
+              the textarea and the voice controls share the same rounded
+              bordered box, the same focus ring, the same padding. Only
+              the BODY swaps: textarea ↔ compact voice row. The actions
+              row (mode toggle + hint + send) stays consistent so the
+              user always has one-click access to switch back. */}
+          <footer className={`composer composer-mode-${chatInputMode}`}>
+            {chatInputMode === "voice" ? (
+              <VoiceMode
+                inline
+                onSend={sendMessage}
+                latestReply={lastAssistant}
+                loading={loading}
+                error={error}
+                onSwitchToText={() => setChatInputMode("text")}
+              />
+            ) : (
               <textarea
                 ref={inputRef}
                 className="composer-input"
@@ -893,42 +1117,48 @@ export function App() {
                 rows={1}
                 disabled={loading}
               />
-              <div className="composer-actions">
-                <div className="composer-actions-left">
-                  <div
-                    className="mode-mini"
-                    role="tablist"
-                    aria-label="Chat modality"
+            )}
+            <div className="composer-actions">
+              <div className="composer-actions-left">
+                <div
+                  className="mode-mini"
+                  role="tablist"
+                  aria-label="Chat modality"
+                >
+                  <button
+                    role="tab"
+                    aria-selected={chatInputMode === "text"}
+                    className={`mode-mini-opt ${chatInputMode === "text" ? "active" : ""}`}
+                    onClick={() => setChatInputMode("text")}
+                    title="Text input"
                   >
-                    <button
-                      role="tab"
-                      aria-selected={chatInputMode === "text"}
-                      className={`mode-mini-opt ${chatInputMode === "text" ? "active" : ""}`}
-                      onClick={() => setChatInputMode("text")}
-                      title="Text input"
-                    >
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" />
-                      </svg>
-                    </button>
-                    <button
-                      role="tab"
-                      aria-selected={false}
-                      className="mode-mini-opt"
-                      onClick={() => setChatInputMode("voice")}
-                      title="Voice input"
-                    >
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <rect x="9" y="3" width="6" height="12" rx="3" />
-                        <path d="M5 11a7 7 0 0014 0" />
-                        <path d="M12 18v3" />
-                      </svg>
-                    </button>
-                  </div>
-                  <span className="microcaps composer-hint">
-                    {loading ? "thinking…" : "↵ send · ⇧↵ newline"}
-                  </span>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" />
+                    </svg>
+                  </button>
+                  <button
+                    role="tab"
+                    aria-selected={chatInputMode === "voice"}
+                    className={`mode-mini-opt ${chatInputMode === "voice" ? "active" : ""}`}
+                    onClick={() => setChatInputMode("voice")}
+                    title="Voice input"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="9" y="3" width="6" height="12" rx="3" />
+                      <path d="M5 11a7 7 0 0014 0" />
+                      <path d="M12 18v3" />
+                    </svg>
+                  </button>
                 </div>
+                <span className="microcaps composer-hint">
+                  {loading
+                    ? "thinking…"
+                    : chatInputMode === "voice"
+                      ? "tap orb · or say \"Protege\""
+                      : "↵ send · ⇧↵ newline"}
+                </span>
+              </div>
+              {chatInputMode === "text" && (
                 <button
                   className="send-btn"
                   onClick={handleSend}
@@ -947,9 +1177,9 @@ export function App() {
                     <path d="M9 7h8v8" />
                   </svg>
                 </button>
-              </div>
-            </footer>
-          )}
+              )}
+            </div>
+          </footer>
         </>
       ) : mode === "concepts" ? (
         <ConceptsTab
@@ -987,7 +1217,13 @@ export function App() {
           }}
         />
       ) : mode === "map" ? (
-        <MapTab />
+        <MapTab
+          activeTourPath={
+            tour && tour.steps[tour.currentIndex]?.path
+              ? tour.steps[tour.currentIndex].path
+              : null
+          }
+        />
       ) : null}
 
       {/* Single persistent overlay — the backdrop stays mounted across panel
@@ -1043,22 +1279,42 @@ function shortPath(full: string): string {
 }
 
 /**
- * Extract <followups>…</followups> block from an assistant message.
- * Returns the cleaned message (without the block) and an array of chip labels.
+ * Extract <followups>…</followups> and <learningFork goal="…" /> blocks
+ * from an assistant message. Returns the cleaned message (both tags
+ * stripped) plus the parsed extras.
  */
-function parseFollowups(content: string): { clean: string; followups: string[] } {
-  const match = content.match(/<followups>([\s\S]*?)<\/followups>/i);
-  if (!match || match.index === undefined) {
-    return { clean: content, followups: [] };
+function parseAssistantExtras(content: string): {
+  clean: string;
+  followups: string[];
+  fork: { goal: string } | null;
+} {
+  let working = content;
+  const followupsMatch = working.match(/<followups>([\s\S]*?)<\/followups>/i);
+  let followups: string[] = [];
+  if (followupsMatch && followupsMatch.index !== undefined) {
+    followups = followupsMatch[1]
+      .split("\n")
+      .map((s) => s.replace(/^[-*•·]\s*/, "").trim())
+      .filter((s) => s.length > 0 && s.length <= 120)
+      .slice(0, 4);
+    working =
+      working.slice(0, followupsMatch.index) +
+      working.slice(followupsMatch.index + followupsMatch[0].length);
   }
-  const followups = match[1]
-    .split("\n")
-    .map((s) => s.replace(/^[-*•·]\s*/, "").trim())
-    .filter((s) => s.length > 0 && s.length <= 120)
-    .slice(0, 4);
-  const clean = (content.slice(0, match.index) + content.slice(match.index + match[0].length))
-    .trim();
-  return { clean, followups };
+  // Self-closing `<learningFork goal="..." />` OR paired form (LLM may
+  // close it either way). Goal attr is required; the tag without it is
+  // meaningless so we ignore it.
+  const forkMatch = working.match(
+    /<learningFork\s+goal="([^"]+)"\s*(?:\/\s*>|><\/learningFork>)/i
+  );
+  let fork: { goal: string } | null = null;
+  if (forkMatch && forkMatch.index !== undefined) {
+    fork = { goal: forkMatch[1] };
+    working =
+      working.slice(0, forkMatch.index) +
+      working.slice(forkMatch.index + forkMatch[0].length);
+  }
+  return { clean: working.trim(), followups, fork };
 }
 
 function toolLabel(name: string, args: Record<string, unknown>): string {

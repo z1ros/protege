@@ -13,7 +13,6 @@ import {
   TOOL_DEFINITIONS,
 } from "../anthropic.js";
 import { buildSystemPrompt, buildLearnerBlock } from "../prompts/persona.js";
-import { sanitizeForVoice } from "../voicePostProcess.js";
 import {
   addMemory,
   removeMemory,
@@ -49,11 +48,28 @@ function resolveModel(_backend: ChatRunRequest["backend"]): string {
   return process.env.ANTHROPIC_HAIKU_MODEL ?? "claude-haiku-4-5";
 }
 
+/**
+ * Cap reply length by channel:
+ *  - voice / voice-dialogue → 300 tokens (~150–200 words, 45–60s of speech
+ *    max). Hard ceiling that prevents the LLM from unrolling a 3-paragraph
+ *    explanation that the user will then sit through being read aloud.
+ *    Soft pressure from the VOICE_MODE prompt + this hard cap together.
+ *  - teaching → 1200 tokens. Tool-loop turns are shorter than full text
+ *    but the terminal reply still needs room for context.
+ *  - text → 4096 (no practical cap). Chat is scannable, long is fine.
+ */
+function maxTokensForMode(mode: string): number {
+  if (mode === "voice" || mode === "voice-dialogue") return 300;
+  if (mode === "teaching") return 1200;
+  return 4096;
+}
+
 chatRoute.post("/", async (c) => {
   const body = (await c.req.json()) as ChatRunRequest;
   const userId = body.userId ?? c.req.header("x-user-id") ?? "local-dev";
   const mode = body.mode ?? "text";
   const model = resolveModel(body.backend);
+  const maxTokens = maxTokensForMode(mode);
 
   let messages: OAITurn[] = body.messages ?? [];
 
@@ -202,7 +218,7 @@ chatRoute.post("/", async (c) => {
 
   const res = await anthropic.messages.create({
     model,
-    max_tokens: 4096,
+    max_tokens: maxTokens,
     system: systemBlocks,
     ...(useTools ? { tools: TOOL_DEFINITIONS } : {}),
     messages: anthropicMessages,
@@ -308,7 +324,7 @@ chatRoute.post("/", async (c) => {
     if (sd2) sysBlocks2.push({ type: "text", text: sd2 });
     const res2 = await anthropic.messages.create({
       model,
-      max_tokens: 4096,
+      max_tokens: maxTokens,
       system: sysBlocks2,
       tools: TOOL_DEFINITIONS,
       messages: am2,
@@ -353,10 +369,7 @@ chatRoute.post("/", async (c) => {
       }
     }
 
-    return c.json<ChatRunResponse>({
-      reply: mode === "voice" || mode === "voice-dialogue" ? sanitizeForVoice(text2) : text2,
-      messages,
-    });
+    return c.json<ChatRunResponse>({ reply: text2, messages });
   }
 
   // If Claude wants tool calls → return them to the extension for execution
@@ -372,11 +385,11 @@ chatRoute.post("/", async (c) => {
     return c.json<ChatRunResponse>({ toolCalls, messages });
   }
 
-  // Terminal: final text reply
-  return c.json<ChatRunResponse>({
-    reply: mode === "voice" || mode === "voice-dialogue" ? sanitizeForVoice(assistantText) : assistantText,
-    messages,
-  });
+  // Terminal: final text reply. Always return the full reply (including
+  // code blocks) — the chat UI renders it as markdown. The /tts route
+  // sanitizes for speech on its side, so voice modes hear a clean spoken
+  // summary while the chat still shows the code the user asked for.
+  return c.json<ChatRunResponse>({ reply: assistantText, messages });
 });
 
 /**

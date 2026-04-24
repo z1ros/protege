@@ -26,7 +26,11 @@
 .composer-input {
   width: 100%;
   resize: none;
-  min-height: 22px;
+  /* Bumped 22 → 28 to match the voice-inline row height, so swapping
+     between text and voice modes inside the composer doesn't shift
+     the card's vertical size. Keeps the swap feeling like a smooth
+     content change rather than a layout jump. */
+  min-height: 28px;
   max-height: 220px;
   overflow-y: auto;
   font-family: inherit;

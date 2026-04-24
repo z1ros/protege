@@ -2,56 +2,71 @@ import * as vscode from "vscode";
 import { exec } from "node:child_process";
 import type { MeResponse, HostToWebview } from "@protege/types";
 import { openProtegePanel } from "./panel.js";
-import { LauncherProvider } from "./launcher.js";
-import { registerAnalyzer } from "./analyzer.js";
-import { FindingCodeLensProvider } from "./codeLens.js";
-import { broadcast, pushTeachFinding } from "./webviewHost.js";
-import { getUserId, fetchMe } from "./protegeClient.js";
-import { initActiveFileTracker } from "./activeFile.js";
+import { LauncherProvider, updateLauncherStats } from "./launcher.js";
+import { registerAnalyzer } from "./review/analyzer.js";
+import { FindingCodeLensProvider } from "./review/codeLens.js";
+import { broadcast, pushTeachFinding, toggleGlobalWake } from "./chat/webviewHost.js";
+import { registerHighlightCodeLens } from "./ai/tools.js";
+import { registerDidYouKnowCodeLens } from "./hints/didYouKnow.js";
+import { getUserId, fetchMe } from "./user/protegeClient.js";
+import { initActiveFileTracker } from "./workspace/activeFile.js";
 import { startWatcher, type DispatchedNudge } from "./watcher/index.js";
 // Editor-surface UI modules paused — imports removed so the bundle doesn't
 // carry them while we redesign:
 //   inlineErrors, peekTeach, didYouKnow, findingHover
 // Live review still loads because its scan pipeline feeds the sidebar data.
-import { registerLiveReview } from "./liveReview.js";
-import { registerStatusBarLive, updateStatusBarData } from "./statusBarLive.js";
-import { registerUnderlineWhisper } from "./underlineWhisper.js";
-import { registerGhostMentor } from "./ghostMentor.js";
-import { registerFileOpenGreeter } from "./fileOpenGreeter.js";
-import { registerPatternSpotter } from "./patternSpotter.js";
-import { registerStruggleChip, showStruggleChip } from "./struggleChip.js";
-import { registerSaveRecap } from "./saveRecap.js";
-import { registerConceptTrail } from "./conceptTrail.js";
-import { dispatchTeachConcept } from "./teachConceptDispatch.js";
-import { registerInsetExperiment } from "./insetExperiment.js";
-import { registerFindingGate } from "./findingGate.js";
-import { registerProjectMap } from "./projectMap.js";
-import { registerArchitectureTour } from "./architectureTour.js";
-import { registerExplainBack } from "./explainBack.js";
-import { installChangeOriginDetector, onChangeOrigin } from "./changeOriginDetector.js";
-import { installOwnership, recordChange as recordOwnershipChange, onOwnershipChanged, getOwnership } from "./ownership.js";
-import { registerOwnershipInviter } from "./ownershipInviter.js";
-import { registerTeachingThread } from "./teachingThread.js";
-import { registerSmartFix } from "./smartFix.js";
+import { registerLiveReview } from "./review/liveReview.js";
+import { registerStatusBarLive, updateStatusBarData } from "./review/statusBarLive.js";
+import { registerUnderlineWhisper } from "./hints/underlineWhisper.js";
+import { registerGhostMentor } from "./hints/ghostMentor.js";
+import { registerFileOpenGreeter } from "./hints/fileOpenGreeter.js";
+import { registerPatternSpotter } from "./detection/patternSpotter.js";
+import { registerStruggleChip, showStruggleChip } from "./hints/struggleChip.js";
+import { registerSaveRecap } from "./detection/saveRecap.js";
+import { registerConceptTrail } from "./concepts/conceptTrail.js";
+import { dispatchTeachConcept } from "./teaching/teachConceptDispatch.js";
+import { registerInsetExperiment } from "./hints/insetExperiment.js";
+import { registerFindingGate } from "./review/findingGate.js";
+import { registerProjectMap } from "./workspace/projectMap.js";
+import { registerArchitectureTour } from "./teaching/architectureTour.js";
+import { registerExplainBack } from "./teaching/explainBack.js";
+import { registerLearningMode, getLatestTrace } from "./teaching/learningMode.js";
+import { installChangeOriginDetector, onChangeOrigin } from "./detection/changeOriginDetector.js";
+import { installOwnership, recordChange as recordOwnershipChange, onOwnershipChanged, getOwnership } from "./user/ownership.js";
+import { registerOwnershipInviter } from "./user/ownershipInviter.js";
+import { registerTeachingThread } from "./teaching/teachingThread.js";
+import { registerSmartFix } from "./review/smartFix.js";
+import { registerErrorLineHighlight } from "./review/errorLineHighlight.js";
+import { registerSelectionHover } from "./hints/selectionHover.js";
+import { registerPredict } from "./detection/predict.js";
+import { registerMisconceptions } from "./concepts/misconceptions.js";
+// Vibecode Brief comment thread retired 2026-04-22 — replaced by the
+// ambient AI-block highlighter (see hints/aiBlocks.ts), which treats
+// vibecoded regions as browsable artifacts instead of popping a
+// comment thread after every burst. File kept on disk in case we
+// want to revive the thread-style surface later.
+import { registerVibeBrief } from "./hints/vibeBrief.js";
+import { registerAiBlocks } from "./hints/aiBlocks.js";
 // Inline lesson comment surface (the big `/* PROTEGE · ... */` block) is
 // disabled — too much visual chrome stacked above the finding line.
 // Teach now shows the hover popup + plays voice instead. The module
 // stays in tree to make re-enabling a one-line change.
-// import { registerInlineLessonComment } from "./inlineLessonComment.js";
-import { registerWorkspaceIndex } from "./workspaceIndex.js";
-import { registerSaveScan } from "./saveScan.js";
-import { registerFlowScan } from "./flowScan.js";
-import { registerFindingDiagnostics } from "./findingDiagnostics.js";
-import { registerInsetWizardCommand } from "./insetWizard.js";
+// import { registerInlineLessonComment } from "./hints/inlineLessonComment.js";
+import { registerWorkspaceIndex } from "./workspace/workspaceIndex.js";
+// SAVE and IDLE scan tiers retired 2026-04-23 — kept registerFindingDiagnostics
+// so any surviving block/flow findings (from cache) still surface natively.
+import { registerFindingDiagnostics } from "./review/findingDiagnostics.js";
+import { registerInsetWizardCommand } from "./hints/insetWizard.js";
 import { registerCommands } from "./commands/index.js";
-import { registerTeachPopup } from "./teachPopup.js";
-import { registerTeachingFlow } from "./teachingFlow.js";
-import { registerOnDeviceModel } from "./onDeviceModel.js";
-import { initAiBackend, onBackendCall } from "./aiBackend.js";
-import { registerExerciseEngine } from "./exerciseEngine.js";
-import { initChatHistory, disposeChatHistory } from "./chatHistory.js";
-import { runWakeCalibration, hasCompletedWakeCalibration } from "./wakeWordCalibration.js";
-import { stopWakeWordListener, isWakeWordListening } from "./voiceCapture.js";
+import { registerTeachPopup } from "./teaching/teachPopup.js";
+import { registerTeachingFlow } from "./teaching/teachingFlow.js";
+import { registerOnDeviceModel } from "./ai/onDeviceModel.js";
+import { initAiBackend, onBackendCall } from "./ai/aiBackend.js";
+import { registerExerciseEngine } from "./teaching/exerciseEngine.js";
+import { initChatHistory, disposeChatHistory } from "./chat/chatHistory.js";
+import { runWakeCalibration, hasCompletedWakeCalibration, getWakeEnabled as getWakeEnabledFor } from "./voice/wakeWordCalibration.js";
+import { stopWakeWordListener, isWakeWordListening } from "./voice/voiceCapture.js";
+import { registerVoiceStatusBar, setVoiceState } from "./voice/voiceStatusBar.js";
 
 let output: vscode.OutputChannel;
 
@@ -136,6 +151,14 @@ export async function activate(context: vscode.ExtensionContext) {
   // ===== Status bar (context-aware, JARVIS Layer 4) =====
   const statusBarDisposables = registerStatusBarLive(context);
 
+  // Voice state chip in the status bar — visible even when the sidebar
+  // is closed, so the user always knows whether Protege is listening /
+  // thinking / speaking. State is driven by webviewHost when wake events
+  // or TTS playback events fire.
+  const voiceStatusDisposables = registerVoiceStatusBar(context);
+  // Initial state: off until we confirm wake is enabled.
+  setVoiceState(getWakeEnabledFor(context) ? "idle" : "off");
+
   // ===== Diagnostics + CodeLens =====
   const diagnostics = vscode.languages.createDiagnosticCollection("protege");
   // FindingCodeLensProvider (the "Ask Protege" CodeLens above finding lines)
@@ -144,12 +167,26 @@ export async function activate(context: vscode.ExtensionContext) {
   const codeLens = new FindingCodeLensProvider();
   const codeLensSub: vscode.Disposable = new vscode.Disposable(() => {});
 
+  // HighlightCodeLensProvider renders the "Apply fix · Teach me · Dismiss"
+  // row ABOVE any line Protege has highlighted via the highlight_code tool.
+  // Replaces the old right-side italic `← <tag>` inline after-decoration —
+  // now the primary action surface is the CodeLens; the hover stays as the
+  // deeper-detail tooltip on mouseover.
+  const highlightLensSub = registerHighlightCodeLens();
+  context.subscriptions.push(highlightLensSub);
+  // Did-You-Know tip row above the line — replaces the old right-side
+  // `💡 tip` after-decoration so the Learn more / Dismiss actions are
+  // always visible, not buried behind a mouseover.
+  const dykLensSub = registerDidYouKnowCodeLens();
+  context.subscriptions.push(dykLensSub);
+
   // ===== Analyzer (file save → concepts + bugs + IQ update) =====
   const analyzer = registerAnalyzer(
     context,
     diagnostics,
     (me) => {
       updateStatusBarData({ codeIq: me.codeIq, streakDays: me.streak.current, totalConcepts: me.totalConcepts });
+      updateLauncherStats({ codeIq: me.codeIq, maxIq: me.maxIq, streakDays: me.streak.current, totalConcepts: me.totalConcepts });
       codeLens.refresh();
       broadcastMe(me);
     },
@@ -285,6 +322,59 @@ export async function activate(context: vscode.ExtensionContext) {
   const explainBackDisposables = registerExplainBack(context, (msg) =>
     broadcast(msg as Parameters<typeof broadcast>[0])
   );
+  // Learning Mode — user types a goal, Protege generates a step-by-step
+  // plan, user writes each step, validator LLM checks. Same broadcaster
+  // pattern as explainBack. Command: `protege.learning.start` (⌘K L).
+  const learningModeDisposables = registerLearningMode(context, (msg) =>
+    broadcast(msg as Parameters<typeof broadcast>[0])
+  );
+
+  // Export the most recent Learning Mode session trace (raw plan +
+  // every validator call + reveal events) to disk, and put the path
+  // on the clipboard. Lets you audit Haiku's output without tailing
+  // the Output channel. See plans/create-a-plan-how-buzzing-walrus.md.
+  context.subscriptions.push(
+    vscode.commands.registerCommand("protege.learning.exportSession", async () => {
+      const trace = getLatestTrace();
+      if (!trace) {
+        vscode.window.showInformationMessage(
+          "No completed Learning Mode session to export. Finish (or stop) a session first."
+        );
+        return;
+      }
+      const os = await import("node:os");
+      const fs = await import("node:fs");
+      const pathMod = await import("node:path");
+      const dir = pathMod.join(os.homedir(), ".protege", "learning-sessions");
+      try {
+        fs.mkdirSync(dir, { recursive: true });
+      } catch (err) {
+        vscode.window.showErrorMessage(
+          `Protege: couldn't create ${dir} — ${err instanceof Error ? err.message : String(err)}`
+        );
+        return;
+      }
+      const slug = trace.goal
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 48) || "session";
+      const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const filePath = pathMod.join(dir, `${ts}-${slug}.json`);
+      try {
+        fs.writeFileSync(filePath, JSON.stringify(trace, null, 2));
+      } catch (err) {
+        vscode.window.showErrorMessage(
+          `Protege: couldn't write ${filePath} — ${err instanceof Error ? err.message : String(err)}`
+        );
+        return;
+      }
+      await vscode.env.clipboard.writeText(filePath);
+      vscode.window.showInformationMessage(
+        `Trace saved — path on clipboard. ${filePath}`
+      );
+    })
+  );
   // ===== Code Ownership (vibecoding partnership) =====
   // changeOriginDetector  — classifies every text edit as typed /
   //                         auto-inserted / mixed, based on burst + pace.
@@ -367,20 +457,50 @@ export async function activate(context: vscode.ExtensionContext) {
   // round-trip when the user clicks Fix. Better quality, worth the ~1s
   // and ~$0.0001 per click.
   const smartFixDisposables = registerSmartFix(context);
+  // Error-line highlight — subtle white wash on every line with an error
+  // diagnostic (TS/ESLint/Protege). Ambient; no AI calls, no commands.
+  const errorLineHighlightDisposables = registerErrorLineHighlight();
+  // Selection Hover — when the user highlights code, auto-open a tiny
+  // popup with [◎ Explain · ✿ Teach me · ✿ Explain back]. Matches the
+  // vibe of Cursor's floating "Add to Chat" bar but carries Protege's
+  // actions. Also summonable via Cmd+K S on the current selection.
+  const selectionHoverDisposables = registerSelectionHover(context);
+  // Predict-and-Reveal — forced-prediction learning loop. User triggers
+  // via Cmd+K P or the selection hover; Protege generates a 4-choice
+  // quiz about a non-obvious behavior of the code. Reveal shows the
+  // answer + reason. "Got it" raises ownership on the reasoned range.
+  // Day 1: scaffold + hardcoded dummy quiz. LLM lands Day 2.
+  const predictDisposables = registerPredict(context);
+  // Misconception Catcher — scans freshly-inserted vibecoded code
+  // against a small library of rules that flag SPECIFIC wrong mental
+  // models (await inside map runs parallel, JSON.parse+stringify loses
+  // Map/Set, .sort mutates, …). Flagged lines get an amber left-border
+  // decoration + a hover with [? Quiz me / ✿ Show fix / ✕ Dismiss].
+  // Pull, not push — the decoration is silent, the hover opens only
+  // when the user mouses over.
+  const misconceptionsDisposables = registerMisconceptions(context);
+  // Vibecode briefing retired 2026-04-22 — replaced by aiBlocks below.
+  // Keeping the variable as an empty disposable array so existing
+  // subscription spreads compile unchanged.
+  const vibeBriefDisposables: vscode.Disposable[] = [];
+  // AI Block Highlighter — every unreviewed auto-inserted region (from
+  // ownership.ts) gets a subtle blue wash + a `◎ <summary> · ✿ Teach
+  // me this block` CodeLens at its top line. Click → hover with What /
+  // One thing to know / Got it / Tell me more / Dismiss. Replaces the
+  // intrusive comment-thread briefing with a browsable ambient artifact.
+  const aiBlocksDisposables = registerAiBlocks(context);
   // Inline lesson comment temporarily disabled — too much chrome
   // stacked above the finding line per user feedback. Hover + voice
   // carries the lesson now.
   const lessonCommentDisposables: vscode.Disposable[] = [];
 
-  // ===== Tiered scan pipeline =====
-  // LIVE (2s debounce, active file) — already in liveReview.ts
-  // SAVE (on save, file + 1-hop neighbors) — saveScan.ts, block + flow scope
-  // IDLE (≥30s no activity, workspace cluster) — flowScan.ts, flow scope only
-  // The workspace index is the substrate SAVE + IDLE sit on.
-  // Diagnostics mirror block/flow findings for native Problems-panel nav.
+  // ===== Scan pipeline =====
+  // LIVE only — fires 3s after typing stops on the active file.
+  // SAVE + IDLE tiers retired; they fired too rarely to be worth the code
+  // path, and the user wanted LIVE to do the heavy lifting anyway.
+  // The workspace index is kept because other features (teachConcept,
+  // architectureTour) still consume it.
   const workspaceIndexDisposables = registerWorkspaceIndex(context);
-  const saveScanDisposables = registerSaveScan(context);
-  const flowScanDisposables = registerFlowScan(context);
   const findingDiagnosticsDisposables = registerFindingDiagnostics(context);
 
   // ===== JARVIS Layer 5: Command palette commands =====
@@ -399,6 +519,7 @@ export async function activate(context: vscode.ExtensionContext) {
     ...projectMapDisposables,
     ...architectureTourDisposables,
     ...explainBackDisposables,
+    ...learningModeDisposables,
     changeOriginDisposable,
     changeOriginSub,
     ownershipChangedSub,
@@ -413,10 +534,14 @@ export async function activate(context: vscode.ExtensionContext) {
     ...insetExperimentDisposables,
     ...teachingThreadDisposables,
     ...smartFixDisposables,
+    ...errorLineHighlightDisposables,
+    ...selectionHoverDisposables,
+    ...predictDisposables,
+    ...misconceptionsDisposables,
+    ...vibeBriefDisposables,
+    ...aiBlocksDisposables,
     ...lessonCommentDisposables,
     ...workspaceIndexDisposables,
-    ...saveScanDisposables,
-    ...flowScanDisposables,
     ...findingDiagnosticsDisposables,
     ...didYouKnowDisposables,
     ...findingHoverDisposables,
@@ -429,6 +554,12 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.window.registerWebviewViewProvider("protege.launcher", launcher),
     vscode.commands.registerCommand("protege.toggle", () =>
       openProtegePanel(context)
+    ),
+    // Status bar voice chip fires this; webview's "Protege ON" chip also
+    // fires this (via wake/toggle message). Both paths update all
+    // mounted webviews + the status bar via broadcast + setVoiceState.
+    vscode.commands.registerCommand("protege.toggleWake", () =>
+      toggleGlobalWake(context, getUserId(context))
     ),
     vscode.commands.registerCommand("protege.openInNewTab", () =>
       openProtegePanel(context)
@@ -472,7 +603,7 @@ export async function activate(context: vscode.ExtensionContext) {
       // Max Plan quick switch — flips the AI backend between Qwen 7B
       // (on-device) and Haiku cloud. For A/B testing the two engines
       // in the Max tier without leaving the editor.
-      const { getAiBackend, setAiBackend } = await import("./aiBackend.js");
+      const { getAiBackend, setAiBackend } = await import("./ai/aiBackend.js");
       const current = getAiBackend();
       const next = current === "on-device" ? "haiku" : "on-device";
       setAiBackend(next);
@@ -494,29 +625,12 @@ export async function activate(context: vscode.ExtensionContext) {
         `Protege Explain mode: ${next.toUpperCase()} — click the Ghost Lens "Explain" to try it.`
       );
     }),
-    vscode.commands.registerCommand("protege.toggleFlowScan", async () => {
-      const cfg = vscode.workspace.getConfiguration("protege");
-      const current = cfg.get<boolean>("flowScanEnabled", false);
-      await cfg.update(
-        "flowScanEnabled",
-        !current,
-        vscode.ConfigurationTarget.Global
-      );
-      vscode.window
-        .showInformationMessage(
-          `Protege flow scan: ${!current ? "ON — cross-file insights while you idle. Reload to activate." : "OFF. Reload to fully disable."}`,
-          "Reload window"
-        )
-        .then((pick) => {
-          if (pick === "Reload window") {
-            vscode.commands.executeCommand("workbench.action.reloadWindow");
-          }
-        });
-    }),
+    // toggleFlowScan removed — IDLE scan tier retired 2026-04-23.
     vscode.commands.registerCommand("protege.refreshIQ", async () => {
       try {
         const me = await fetchMe(getUserId(context));
         updateStatusBarData({ codeIq: me.codeIq, streakDays: me.streak.current, totalConcepts: me.totalConcepts });
+      updateLauncherStats({ codeIq: me.codeIq, maxIq: me.maxIq, streakDays: me.streak.current, totalConcepts: me.totalConcepts });
         broadcastMe(me);
       } catch (e) {
         output.appendLine(`[protege] refreshIQ err: ${e}`);
@@ -535,7 +649,7 @@ export async function activate(context: vscode.ExtensionContext) {
       );
     }),
     vscode.commands.registerCommand("protege.clearHighlights", async () => {
-      const { clearAllHighlights } = await import("./tools.js");
+      const { clearAllHighlights } = await import("./ai/tools.js");
       await clearAllHighlights();
     }),
     vscode.commands.registerCommand("protege.scanActiveFile", async () => {
@@ -566,7 +680,7 @@ export async function activate(context: vscode.ExtensionContext) {
       "protege.applyFix",
       async (args: { path: string; startLine: number; endLine: number; fix: string }) => {
         try {
-          const { clearAllHighlights } = await import("./tools.js");
+          const { clearAllHighlights } = await import("./ai/tools.js");
           const uri = args.path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(args.path)
             ? vscode.Uri.file(args.path)
             : vscode.Uri.joinPath(vscode.workspace.workspaceFolders![0].uri, args.path);
@@ -717,6 +831,20 @@ export async function activate(context: vscode.ExtensionContext) {
       output.appendLine(`[protege] auto-open failed: ${String(e)}`);
     }
   }, 400);
+
+  // Start the wake-word listener on activate — not just when a webview
+  // mounts. This lets `Protege` work even if the user closes the sidebar:
+  // the Rust binary keeps running in the extension host, and when a wake
+  // fires we auto-reveal the panel to play audio. Default threshold is
+  // used when the user hasn't calibrated yet — wake still works, just
+  // at the generic 0.13 tuning.
+  if (getWakeEnabledFor(context)) {
+    setTimeout(() => {
+      import("./chat/webviewHost.js").then((mod) => {
+        void mod.startGlobalWakeListener(context, getUserId(context));
+      });
+    }, 800);
+  }
 }
 
 // Old updateStatusBar removed — replaced by statusBarLive.ts

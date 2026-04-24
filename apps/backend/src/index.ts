@@ -10,6 +10,8 @@ import { ttsRoute, sttRoute } from "./routes/tts.js";
 import { memoryRoute } from "./routes/memory.js";
 import { voiceRoute } from "./routes/voice.js";
 import { preferencesRoute } from "./routes/preferences.js";
+import { classifyRoute } from "./routes/classify.js";
+import { verifyRoute } from "./routes/verify.js";
 
 const app = new Hono();
 
@@ -40,6 +42,8 @@ app.route("/stt", sttRoute);
 app.route("/memory", memoryRoute);
 app.route("/voice", voiceRoute);
 app.route("/preferences", preferencesRoute);
+app.route("/classify", classifyRoute);
+app.route("/verify", verifyRoute);
 
 const port = Number(process.env.PORT ?? 8787);
 serve({ fetch: app.fetch, port });

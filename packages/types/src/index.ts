@@ -8,6 +8,11 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   createdAt: string;
+  /** How this turn was delivered. "voice" means the user spoke it (wake
+   *  word or voice mode) or the assistant's reply was spoken aloud. Used
+   *  by the UI to show a small mic glyph, and by the backend to pick a
+   *  short, ear-friendly prompt. Undefined on legacy/persisted messages. */
+  source?: "voice" | "text";
 }
 
 export interface FileContext {
@@ -264,6 +269,90 @@ export interface ToolResult {
 export type ChatMode = "text" | "voice" | "voice-dialogue" | "teaching";
 
 /**
+ * Task shaping — classifier output consumed by the chat router.
+ * See plans/task-shaping.md §2.2. Produced by `shapeTask()` from the
+ * intent/ subsystem before every chat turn; drives fork-chip decisions
+ * in Phase 1 and (later) TaskSession creation in Phase 2.
+ */
+export type TaskShapeKind =
+  | "qna"       // concept question, no code change
+  | "build"     // add/create something
+  | "teach"     // user explicitly wants to learn
+  | "debug"     // user is stuck on a broken thing
+  | "refactor"  // restructure existing code, no new surface
+  | "chat";     // social / casual / clarifying
+
+export type TaskComplexity = "trivial" | "single-step" | "multi-step";
+
+export interface TaskShape {
+  shape: TaskShapeKind;
+  complexity: TaskComplexity;
+  mode: "text" | "voice-dialogue" | "learning";
+  needsRoadmap: boolean;
+  roadmapSeeds?: string[];
+  confidence: number; // 0..1
+  signals: { tier: "regex" | "llm" | "cache"; why: string };
+}
+
+/** Context the classifier consults. Built host-side via `buildShapeContext`
+ *  from the current editor / history / mode state. Sent over to `/classify`
+ *  for tier 2 LLM classification. */
+export interface ShapeContext {
+  activeFilePath: string | null;
+  activeFileLanguage: string | null;
+  activeFileSelection: string | null;
+  recentMessages: { role: "user" | "assistant"; content: string }[];
+  currentMode: ChatMode;
+  wakeActive: boolean;
+  diagnosticsOnActiveFile: {
+    severity: "error" | "warning";
+    message: string;
+  }[];
+}
+
+export interface ClassifyRequest {
+  message: string;
+  context: ShapeContext;
+}
+
+export type ClassifyResponse =
+  | { shape: TaskShape }
+  | { error: string };
+
+/**
+ * Understanding-Check verifier — one Haiku call between shapeTask and
+ * runChat that either confirms the goal is clear, asks ONE clarifier,
+ * or refines the goal into something actionable. See
+ * plans/understanding-check.md.
+ */
+export type UnderstandingAction =
+  | "clarify"
+  | "offer-learn"
+  | "offer-do"
+  | "answer";
+
+export interface Understanding {
+  action: UnderstandingAction;
+  goal: string;
+  clarifier?: string;
+  confidence: number;
+  signals: { tier: "skip" | "llm" | "cache"; why: string };
+}
+
+export interface VerifyRequest {
+  message: string;
+  shape: TaskShape;
+  context: ShapeContext;
+  /** True when the message is the user's reply to a prior clarifier. The
+   *  verifier must NOT emit another `clarify` in this case. */
+  forceProceed?: boolean;
+}
+
+export type VerifyResponse =
+  | { understanding: Understanding }
+  | { error: string };
+
+/**
  * Cloud chat backend the user wants to route this request through. The
  * server maps this to a concrete Anthropic model id. `undefined` means
  * "use the server default" (backwards-compat with pre-selection clients).
@@ -309,7 +398,18 @@ export interface ChatResponse {
 /* ========== Webview <-> host messages ========== */
 
 export type WebviewToHost =
-  | { type: "chat/send"; message: string; mode?: ChatMode }
+  | {
+      type: "chat/send";
+      message: string;
+      mode?: ChatMode;
+      /** Messages currently visible in the webview's chat view. When
+       *  provided, the host uses these as the AI's short-term context
+       *  INSTEAD of pulling the last N from globalState. Lets "New chat"
+       *  start fresh without wiping persisted history — the webview
+       *  clears its local view → context becomes empty → AI sees no
+       *  prior turns, but the history panel still has old sessions. */
+      contextMessages?: ChatMessage[];
+    }
   | { type: "chat/clear" }
   | { type: "ready" }
   | { type: "watcher/engage"; nudgeId: string; triggerId: UnpromptedTriggerId; context: UnpromptedNudge["context"] }
@@ -344,6 +444,11 @@ export type WebviewToHost =
   | { type: "explainMode/set"; mode: "text" | "voice" | "both" }
   | { type: "chat/search"; query: string }
   | { type: "chat/clearHistory" }
+  /** Webview → host: "give me the full persisted history from
+   *  globalState so the history panel can browse past sessions even
+   *  when the current chat view has been cleared by a 'New chat'
+   *  click." Response: `chat/fullHistory`. */
+  | { type: "chat/getFullHistory" }
   | { type: "map/request" }
   | { type: "map/fileSummary"; path: string }
   | { type: "map/openFile"; path: string }
@@ -352,11 +457,31 @@ export type WebviewToHost =
   | { type: "tour/stop" }
   | { type: "explainBack/submit"; explanation: string }
   | { type: "explainBack/stop" }
+  | { type: "learning/done" }
+  | { type: "learning/hint" }
+  | { type: "learning/show" }
+  | { type: "learning/stop" }
+  | {
+      /** User picked one of the two fork chips ("Just do it" / "Learn it
+       *  with me") under an assistant message. Host either fires the
+       *  learning session (learn) or synthesizes a "go ahead, do it"
+       *  follow-up turn (just-do-it). */
+      type: "learning/forkChosen";
+      choice: "just-do-it" | "learn";
+      goal: string;
+      messageId: string;
+    }
   | { type: "debug/log"; tag: string; message: string };
 
 export type HostToWebview =
   | { type: "chat/append"; message: ChatMessage }
   | { type: "chat/history"; messages: ChatMessage[] }
+  /** Host → webview: full persisted history for the browse panel.
+   *  Distinct from `chat/history` which the webview uses to replace
+   *  its main `messages` state on mount — `chat/fullHistory` is a
+   *  read-only snapshot the history panel consumes without clobbering
+   *  the current chat view. */
+  | { type: "chat/fullHistory"; messages: ChatMessage[] }
   | { type: "chat/searchResults"; results: { message: ChatMessage; snippet: string }[] }
   | { type: "chat/loading"; loading: boolean }
   | { type: "chat/error"; error: string }
@@ -500,6 +625,13 @@ export type HostToWebview =
   | { type: "tour/state"; state: TourState | null }
   | { type: "tour/narrationReady"; index: number; narration: string }
   | { type: "explainBack/state"; state: ExplainBackSession | null }
+  | { type: "learning/state"; state: LearningSession | null }
+  | {
+      /** Broadcast the in-progress session trace when `protege.learning.devLogging`
+       *  is on. Panel reads it to render the Dev drawer. Null = clear. */
+      type: "learning/devTrace";
+      trace: LearningSessionTrace | null;
+    }
   | { type: "ownership/changed"; path: string; summary: OwnershipSummary };
 
 /* ========== Project Map (A1) ========== */
@@ -626,6 +758,12 @@ export interface OwnershipRegion {
    *  or null if still unreviewed. Typed regions may have `explainedAt`
    *  null — they still count as owned. */
   explainedAt: number | null;
+  /** ms epoch when this region was first recorded. Drives the auto-
+   *  expire behaviour for unreviewed auto-inserted regions — stale
+   *  "AI blocks" from hours-old sessions shouldn't reappear forever.
+   *  Optional for backward compatibility with regions recorded before
+   *  the field was introduced (they're treated as stale on load). */
+  createdAt?: number;
 }
 
 export interface FileOwnership {
@@ -663,3 +801,153 @@ export interface OwnershipSummary {
    *  no unreviewed range. */
   topUnknownRange: { startLine: number; endLine: number } | null;
 }
+
+/* ========== Learning Mode ========== */
+
+/** One step in a LearningPlan. The plan is generated once at session
+ *  start; step states mutate as the user progresses through them. */
+export interface LearningStep {
+  /** Stable id assigned by the planner — validator calls reference this
+   *  so an out-of-order validation still targets the right step. */
+  id: string;
+  /** Short title shown as the row header. Under 60 chars. */
+  title: string;
+  /** Optional one-sentence mental model — the WHY of this step. Shown
+   *  above whatToDo in the panel. Absent for legacy plans generated
+   *  before the pedagogy prompt change; fallback is just whatToDo. */
+  whyItMatters?: string;
+  /** 2–3 sentences describing the OUTCOME, never the code. */
+  whatToDo: string;
+  /** One sentence, verifiable from the file contents alone. The
+   *  validator compares current file state against this. */
+  successCriteria: string;
+  /** One-sentence nudge, revealed only when the user clicks "Hint".
+   *  Ladder rung, not the answer. */
+  hint: string;
+  /** Optional last-resort reference snippet. Shown when the user clicks
+   *  "Show me" — costs the step its "pass" credit since it's no longer
+   *  self-built. */
+  referenceSnippet?: string;
+  /** Current UI/validation state. */
+  status: "pending" | "current" | "passed" | "partial" | "failed" | "off-track" | "shown";
+  /** Number of "I'm done" attempts this step has seen. */
+  attempts: number;
+  /** Whether the user has revealed the hint for this step. Resets on
+   *  session restart; purely UI hint. */
+  hintRevealed: boolean;
+  /** Last validator feedback, if any. Set by every /validate call. */
+  lastNote?: string;
+  /** Extra positive thing the validator noticed ("you also refactored
+   *  X — clean"). Displayed as a secondary line under the main note. */
+  lastBonus?: string;
+  /** Validator's retry nudge on non-pass outcomes. */
+  lastHintFromValidator?: string;
+}
+
+/** The plan emitted by the plan-generator LLM. Frozen at session start. */
+export interface LearningPlan {
+  /** One-sentence restatement of what the user will build. */
+  goal: string;
+  /** Ordered 3–5 steps. */
+  steps: LearningStep[];
+  /** Validator-friendly estimate used only for the header copy. */
+  estimatedMinutes: number;
+  /** Concept slugs from the registry, for mastery attribution on
+   *  session complete. E.g. ["react/useState", "conditional-rendering"]. */
+  conceptsTagged: string[];
+  /** Range of the file this session covers — used by markExplained on
+   *  completion so the Map tab's dot rises. */
+  ownershipRange: { startLine: number; endLine: number };
+}
+
+export interface LearningSession {
+  /** Stable session id (uuid). Used as the git-note anchor + persistence key. */
+  id: string;
+  /** User's verbatim goal as they typed it. */
+  goal: string;
+  /** File the session is scoped to. */
+  path: string;
+  /** Language id for syntax highlighting in the panel. */
+  language: string;
+  /** Frozen plan generated at start. */
+  plan: LearningPlan;
+  /** Current active step index (0-based). */
+  currentStepIndex: number;
+  /** ms epoch when the session started. */
+  startedAt: number;
+  /** ms epoch when the session was marked complete or abandoned. Null while active. */
+  completedAt: number | null;
+  /** True while the validator's LLM call is in flight for the current
+   *  step — the panel disables "I'm done" to prevent double-clicks. */
+  validating: boolean;
+  /** Outcome — populated when completedAt is set. */
+  outcome?: "complete" | "abandoned";
+}
+
+/** Lightweight per-session record persisted to globalState after
+ *  completion. Feeds the "Learning log" list in the Profile overlay. */
+export interface LearningSessionLogEntry {
+  id: string;
+  goal: string;
+  path: string;
+  startedAt: number;
+  completedAt: number;
+  outcome: "complete" | "abandoned";
+  stepsPassed: number;
+  stepsTotal: number;
+  totalAttempts: number;
+  elapsedMs: number;
+  conceptsTagged: string[];
+  /** Optional full-fidelity trace for iterating on teaching quality.
+   *  Captured when `protege.learning.devLogging` is on; older entries
+   *  retain only the summary above. See plans/create-a-plan-how-buzzing-walrus.md. */
+  trace?: LearningSessionTrace;
+}
+
+/** Current schema version for LearningSessionTrace. Bump on breaking changes;
+ *  parsers should skip traces with an unknown version. */
+export const LEARNING_TRACE_SCHEMA_VERSION = 1;
+
+/** Full-fidelity capture of one Learning Mode session — raw Haiku plan,
+ *  every validator call, reveal events. Stored in globalState (capped, see
+ *  learningMode.ts) and/or exported to disk via `protege.learning.exportSession`.
+ *  Purely observational: never re-calls the model, just stores what was already
+ *  sent/returned during the live session. */
+export interface LearningSessionTrace {
+  traceSchemaVersion: number;
+  sessionId: string;
+  goal: string;
+  planRaw: string;            // raw Haiku output text (pre-parse)
+  plan: LearningPlan;          // parsed plan
+  events: LearningTraceEvent[];
+  /** Set when trace was trimmed to fit the globalState size cap. Oldest
+   *  events drop first; newest (including session-ended) kept. */
+  truncated?: boolean;
+}
+
+export type LearningTraceEvent =
+  | {
+      kind: "plan-generated";
+      at: string;
+      elapsedMs: number;
+    }
+  | {
+      kind: "validation";
+      at: string;
+      stepId: string;
+      attempt: number;
+      fileBefore: string;        // truncated to ~2KB
+      fileNow: string;           // truncated to ~2KB
+      verdictRaw: string;        // raw Haiku text (pre-parse)
+      verdict: {
+        status: "pass" | "partial" | "fail" | "off-track";
+        note?: string;
+        hint?: string;
+        caught_bonus?: string;
+        ready_for_next?: boolean;
+      };
+      elapsedMs: number;
+    }
+  | { kind: "hint-revealed"; at: string; stepId: string }
+  | { kind: "show-revealed"; at: string; stepId: string }
+  | { kind: "session-ended"; at: string; outcome: "complete" | "abandoned" | "replaced" };

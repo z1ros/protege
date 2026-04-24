@@ -162,6 +162,31 @@
   border-color: rgba(120, 180, 255, 0.3);
   color: var(--text);
 }
+/* Current tour stop — the file the SessionStrip is narrating right now.
+ * Quiet amber ring so the user can glance at the list and see where the
+ * tour is in the larger map without competing with the selection color. */
+.map-row.tour-stop {
+  border-color: rgba(240, 200, 120, 0.45);
+  box-shadow: inset 2px 0 0 0 rgba(240, 200, 120, 0.6);
+}
+.map-row.tour-stop.active {
+  border-color: rgba(240, 200, 120, 0.65);
+}
+
+/* "tour running" indicator in the Map header — replaces the "Tour this
+ * codebase" button while a tour is active. Deliberately muted so it
+ * reads as a status badge, not a clickable action. */
+.map-tour-active {
+  padding: 4px 10px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: rgba(240, 200, 120, 0.9);
+  border: 1px solid rgba(240, 200, 120, 0.35);
+  border-radius: 999px;
+  background: rgba(240, 200, 120, 0.08);
+  white-space: nowrap;
+  align-self: center;
+}
 .map-row-dir {
   color: var(--text-faint);
   font-size: 10px;
@@ -213,6 +238,78 @@
 }
 .map-row-ownership.ownership-owned {
   color: rgba(120, 200, 140, 0.6);
+}
+/* Ownership readout on "Mostly unowned" rows — replaces the edit count
+ * with `22% · 140 unreviewed` so the row tells you exactly why it's in
+ * that section. The secondary piece dims so the percentage leads. */
+.map-row-ownership-meta {
+  margin-left: auto;
+  color: rgba(240, 180, 140, 0.9);
+  font-size: 10px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+  display: inline-flex;
+  gap: 0;
+  align-items: baseline;
+}
+.map-row-ownership-meta .map-row-unknown {
+  color: var(--text-faint);
+}
+
+/* Folder-grouped section — header per folder, then compact rows below
+ * with the dir-prefix suppressed since the header carries it. */
+.map-folder-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 10px;
+}
+.map-folder-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 2px 4px 2px;
+  border-bottom: 1px dashed var(--glass-border);
+}
+.map-folder-name {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.map-folder-count {
+  font-size: 9px;
+  color: var(--text-faint);
+  letter-spacing: 0.06em;
+  flex-shrink: 0;
+}
+.map-folder-pct {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+.map-folder-pct.state-owned {
+  color: rgba(120, 200, 140, 0.85);
+}
+.map-folder-pct.state-partial {
+  color: rgba(240, 200, 120, 0.95);
+}
+.map-folder-pct.state-unknown {
+  color: rgba(240, 140, 120, 0.95);
+}
+.map-folder-pct.state-untracked {
+  color: var(--text-faint);
+}
+.map-folder-files {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-left: 10px;
 }
 .map-row-ownership.ownership-partial {
   color: rgba(240, 200, 120, 0.9);

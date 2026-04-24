@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { mountProtegeWebview } from "./webviewHost.js";
+import { mountProtegeWebview } from "./chat/webviewHost.js";
 
 let current: vscode.WebviewPanel | undefined;
 
