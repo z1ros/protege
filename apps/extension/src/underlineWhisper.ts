@@ -6,6 +6,8 @@ import {
 } from "./liveReview.js";
 import type { Suggestion } from "./reviewEngine.js";
 import { log } from "./log.js";
+import { hasNativeDiagnosticInRange } from "./nativeDiagnostics.js";
+import { shouldSuppress as gateShouldSuppress, onGateChanged } from "./findingGate.js";
 
 /**
  * Underline Whisper — Grammarly for code.
@@ -65,6 +67,22 @@ const WHISPER_TAG = vscode.window.createTextEditorDecorationType({
 // given hover position is over one of our whispers (vs random code).
 const whisperRangesByUri = new Map<string, vscode.Range[]>();
 
+/**
+ * Look up the first whisper range on the given line, if any. Used by the
+ * Ghost Mentor headline peek command to park the cursor INSIDE the token
+ * our hover provider is registered on — otherwise `editor.action.showHover`
+ * fires at an empty position and the popup never renders.
+ */
+export function getWhisperRangeAtLine(
+  uri: string,
+  line: number
+): vscode.Range | null {
+  const ranges = whisperRangesByUri.get(uri);
+  if (!ranges || ranges.length === 0) return null;
+  const hit = ranges.find((r) => r.start.line <= line && line <= r.end.line);
+  return hit ?? null;
+}
+
 // ---- Public API ----
 
 export function registerUnderlineWhisper(
@@ -85,6 +103,17 @@ export function registerUnderlineWhisper(
   // Re-render when the user switches editors.
   disposables.push(
     vscode.window.onDidChangeActiveTextEditor((editor) => {
+      if (!editor) return;
+      renderWhispers(editor);
+    })
+  );
+
+  // Re-render when the finding gate's suppression state changes —
+  // cursor moved, line was edited, a ruleId cooldown expired. Without
+  // this, our static decorations would stay stale between scans.
+  disposables.push(
+    onGateChanged(() => {
+      const editor = vscode.window.activeTextEditor;
       if (!editor) return;
       renderWhispers(editor);
     })
@@ -208,11 +237,12 @@ export function registerUnderlineWhisper(
         if (!args || typeof args.line !== "number") return;
         const uri = args.uri ?? vscode.window.activeTextEditor?.document.uri.toString();
         if (!uri) return;
-        // For MVP, "dismiss" just nudges the user into a Protege-free zone
-        // by hiding the hover (VS Code hovers auto-hide). A future version
-        // will mark the suggestion as snoozed for this session so the
-        // whisper clears too.
-        void uri;
+        // Actually remove the finding from the shared store. The change
+        // event refreshes every subscribed surface (Ghost CodeLens,
+        // Underline Whisper, Inlay hint) so the row, underline, and
+        // hover all disappear in one frame.
+        const { dismissSuggestionAtLine } = await import("./liveReview.js");
+        dismissSuggestionAtLine(uri, args.line);
       }
     )
   );
@@ -248,9 +278,34 @@ function renderWhispers(editor: vscode.TextEditor): void {
   // now (see ghostMentor.ts), which renders for every finding on the
   // file, not just the cursor-parked one.
   const ranges: vscode.Range[] = [];
+  const uriKey = uri;
   for (const s of suggestions) {
+    // Only atom-scope (single-token) findings get an inline underline.
+    // Block and flow-scope findings span many lines — painting a wavy
+    // underline across 20+ lines is the "everything is highlighted"
+    // chaos the user flagged. Those findings still render in the
+    // CodeLens row; nothing is lost.
+    if (s.scope === "block" || s.scope === "flow") continue;
+
     const tokenRange = resolveTokenRange(doc, s);
     if (!tokenRange) continue;
+
+    // Dedup against native diagnostics (TS / ESLint / cSpell / Cursor
+    // agent). Cursor's "Fix with Agent" inline UI is NOT a diagnostic
+    // so that dedup can't detect it — the scope skip above is what
+    // prevents Protege from also covering those lines with block/flow
+    // underlines.
+    if (hasNativeDiagnosticInRange(doc.uri, tokenRange)) continue;
+
+    // Praise / concept findings are positive signals — no wavy
+    // underline. Still visible via Ghost CodeLens + concept-trail dot.
+    if (s.kind === "praise" || s.kind === "concept") continue;
+
+    // Finding gate — suppress if user is still editing this line
+    // (±45s), cursor is within ±2 lines, or ruleId was shown in the
+    // last 5 min.
+    if (gateShouldSuppress(uriKey, s)) continue;
+
     ranges.push(tokenRange);
   }
 
@@ -329,10 +384,15 @@ function buildActionHover(
   // Cleaner: rule name, then a one-line explanation, then actions.
   md.appendMarkdown(`**${title}**\n\n`);
 
-  // Short explanation — one sentence. Teaser preferred; falls back to
-  // first sentence of `message` when teaser is missing.
-  const teaser = compactMessage(s.teaser || s.message);
-  md.appendMarkdown(`${teaser}\n\n`);
+  // Use the LESSON field when present — it's the model's 2-sentence
+  // "what's wrong + why it matters here" explanation, exactly the
+  // depth the user asked for ("explain more, like one or two
+  // paragraphs why"). Falls back to teaser, then message, when the
+  // lesson wasn't generated (older scans, on-device path).
+  const explanation = (s.lesson && s.lesson.trim())
+    ? s.lesson.trim()
+    : compactMessage(s.teaser || s.message);
+  md.appendMarkdown(`${explanation}\n\n`);
 
   // Compact fix block when we have one — max 2 lines, longer fixes are
   // truncated with an ellipsis so the hover never scrolls.
@@ -356,10 +416,13 @@ function buildActionHover(
   const teachCmd = `command:protege.openTeachingThread?${argsObj}`;
   const dismissCmd = `command:protege.dismissWhisper?${argsObj}`;
 
+  // Action labels mirror the CodeLens row exactly — same glyphs, same
+  // verbs — so users learn one vocabulary that works everywhere. No
+  // codicons (rule: "no emoji and no `$(name)` codicons in label text").
   const parts: string[] = [];
-  if (s.fix) parts.push(`[$(wand) Fix](${applyCmd})`);
-  parts.push(`[$(book) Teach](${teachCmd})`);
-  parts.push(`[$(close)](${dismissCmd})`);
+  if (s.fix) parts.push(`[✔ Apply fix](${applyCmd})`);
+  parts.push(`[✿ Teach me](${teachCmd})`);
+  parts.push(`[✘ Dismiss](${dismissCmd})`);
   md.appendMarkdown(`${parts.join("  ·  ")}`);
 
   return md;

@@ -13,8 +13,7 @@ import { IconStar, IconCheck, IconPlus } from "./icons.js";
  * The top half is "who you are" (profile hero, stats, journey, recent wins).
  * The bottom half is "how Protege behaves" (the preferences that used to
  * live in a separate Settings overlay). Combined here because the user
- * asked to reduce header icons and keep everything in one place, AND
- * because theme control now lives in the header as a direct toggle.
+ * asked to reduce header icons and keep everything in one place.
  */
 
 interface Props {

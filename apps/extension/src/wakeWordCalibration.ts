@@ -6,11 +6,12 @@ import { recordSingleUtterance, scoreWavAgainstWakeModel } from "./voiceCapture.
 
 const STATE_KEY_THRESHOLD = "protege.wakeWordThreshold";
 const STATE_KEY_CALIBRATED = "protege.wakeWordCalibrated";
+const STATE_KEY_WAKE_ENABLED = "protege.wakeListenerEnabled";
 
 /** Threshold used when the user has not calibrated yet. Tuned for the
  *  LiveKit-trained model (2026-04-18): real-voice peaks 0.22–0.28,
  *  background noise tops ~0.18. See main.rs. */
-export const DEFAULT_WAKE_THRESHOLD = 0.18;
+export const DEFAULT_WAKE_THRESHOLD = 0.13;
 
 const MIN_THRESHOLD = 0.12;
 const MAX_THRESHOLD = 0.35;
@@ -26,6 +27,22 @@ export function getStoredWakeThreshold(context: vscode.ExtensionContext): number
 
 export function hasCompletedWakeCalibration(context: vscode.ExtensionContext): boolean {
   return context.globalState.get<boolean>(STATE_KEY_CALIBRATED) === true;
+}
+
+/** Whether the wake-word listener should be on. Defaults to TRUE for new
+ *  users so voice-first is the out-of-box experience. Persists per-user in
+ *  globalState so the choice survives window reloads and VS Code restarts. */
+export function getWakeEnabled(context: vscode.ExtensionContext): boolean {
+  const v = context.globalState.get<boolean>(STATE_KEY_WAKE_ENABLED);
+  // undefined (first-ever launch) → true; explicit false stays false.
+  return v === undefined ? true : v;
+}
+
+export async function setWakeEnabled(
+  context: vscode.ExtensionContext,
+  enabled: boolean
+): Promise<void> {
+  await context.globalState.update(STATE_KEY_WAKE_ENABLED, enabled);
 }
 
 function samplesDir(): string {

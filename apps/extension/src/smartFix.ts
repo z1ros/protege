@@ -75,6 +75,26 @@ Locate the real issue in this window, then use \`edit_file\` to apply the fix. K
 
   log("smartFix", `routing fix via chat · ${fileHint}:${lineNum} · ${s.ruleId}`);
 
+  // Optimistically mark the finding as "fix in progress" BEFORE opening
+  // the chat. The CodeLens / underline / inlay all clear instantly so the
+  // user sees immediate feedback. The key is suppressed from re-ingestion
+  // for 60s — if Claude's edit_file actually resolves the issue the
+  // finding stays gone; if it doesn't, the TTL lapses and the next scan
+  // re-adds it (honest signal that the fix failed).
+  // Also acts as the natural dedup: a second click on the same finding
+  // finds nothing in the store (markFixPending removed it) so smartFix
+  // returns at the top guard above instead of stacking another chat call.
+  const { markFixPending } = await import("./liveReview.js");
+  markFixPending(args.uri, args.line);
+
+  // Instant visual confirmation so the user doesn't re-click while
+  // Claude is mid-edit. Auto-clears after 8s — chat reply usually lands
+  // in that window and naturally overwrites the message.
+  vscode.window.setStatusBarMessage(
+    `$(wand) Protege · fixing ${s.ruleId}…`,
+    8000
+  );
+
   // Open the Protege panel so the chat conversation is visible when the
   // tool calls start firing. The webview is what actually renders the
   // message and streams back the reply; autoSend makes it behave as

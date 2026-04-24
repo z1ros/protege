@@ -1,0 +1,466 @@
+/* ==========================================================
+   Live Tab — JARVIS mission control
+   ========================================================== */
+
+.live-tab {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 20px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  animation: msg-in 320ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.live-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.live-section-label {
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  font-weight: 500;
+  padding: 0 2px;
+}
+
+/* Current file card */
+.live-file-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+}
+.live-file-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--glow);
+  box-shadow: 0 0 4px rgba(var(--text-rgb), 0.3);
+  flex-shrink: 0;
+}
+.live-file-name {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--glow);
+  font-weight: 500;
+}
+.live-file-empty {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+/* Control toggles */
+.live-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.live-control-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+.live-control-row.active {
+  border-color: rgba(var(--electric-rgb), 0.25);
+  background: rgba(var(--electric-rgb), 0.04);
+}
+.live-control-info {
+  flex: 1;
+  min-width: 0;
+}
+.live-control-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--glow);
+}
+.live-control-desc {
+  font-size: 10px;
+  color: var(--text-faint);
+  margin-top: 2px;
+  line-height: 1.3;
+}
+
+/* Toggle switch */
+.live-toggle {
+  width: 38px;
+  height: 22px;
+  background: var(--glass-2);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  position: relative;
+  cursor: pointer;
+  transition: background 180ms ease, border-color 180ms ease;
+  flex-shrink: 0;
+  padding: 0;
+}
+.live-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: var(--text-dim);
+  border-radius: 50%;
+  transition: left 220ms cubic-bezier(0.16, 1, 0.3, 1), background 180ms ease;
+}
+.live-toggle.on {
+  background: rgba(var(--electric-rgb), 0.2);
+  border-color: rgba(var(--electric-rgb), 0.45);
+}
+.live-toggle.on .live-toggle-thumb {
+  left: 18px;
+  background: var(--electric);
+  box-shadow: 0 0 8px rgba(var(--electric-rgb), 0.5);
+}
+
+/* Quick action buttons */
+.live-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.live-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  color: var(--glow);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease;
+  text-align: left;
+}
+.live-action-btn:hover {
+  background: var(--glass-2);
+  border-color: var(--glass-border-strong);
+}
+.live-action-label { flex: 1; }
+.live-action-shortcut {
+  font-size: 9px;
+  color: var(--text-faint);
+  letter-spacing: 0.1em;
+  padding: 2px 6px;
+  background: var(--glass-2);
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+/* Keyboard shortcuts */
+.live-shortcuts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 14px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+}
+.live-shortcut-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 0;
+}
+.live-kbd {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--glow);
+  padding: 3px 8px;
+  background: var(--glass-2);
+  border: 1px solid var(--glass-border);
+  border-radius: 5px;
+  min-width: 80px;
+  text-align: center;
+  white-space: nowrap;
+}
+.live-shortcut-action {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.live-footer {
+  text-align: center;
+  color: var(--text-ghost);
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  margin-top: 8px;
+}
+
+/* ---- Max Plan quick switch ---- */
+/* Two-option side-by-side toggle for fast A/B testing between Qwen 7B
+   and Haiku. Visually distinct from the full engine list below so it
+   reads as a "tier preset" rather than just another option. */
+.max-plan-switch {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  margin-bottom: 10px;
+}
+.max-plan-label {
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.max-plan-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.max-plan-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 12px;
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  color: var(--text-dim);
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.max-plan-option:hover {
+  background: var(--glass-1);
+  color: var(--text-bright);
+}
+.max-plan-option.active {
+  background: rgba(74, 158, 255, 0.14);
+  border-color: rgba(74, 158, 255, 0.55);
+  color: var(--text-bright);
+}
+.max-plan-option-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: inherit;
+}
+.max-plan-option-sub {
+  font-size: 10px;
+  color: var(--text-faint);
+  letter-spacing: 0.02em;
+}
+
+/* ---- AI Engine selector in Live tab ---- */
+.live-ai-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.live-ai-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  color: inherit;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+.live-ai-option:hover {
+  background: var(--glass-2);
+  border-color: var(--glass-border-strong);
+}
+.live-ai-option.active {
+  border-color: var(--electric);
+  background: rgba(var(--electric-rgb), 0.06);
+}
+.live-ai-radio {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--glass-border-strong);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: border-color 150ms ease;
+}
+.live-ai-option.active .live-ai-radio {
+  border-color: var(--electric);
+}
+.live-ai-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: transparent;
+  transition: background 150ms ease;
+}
+.live-ai-dot.on {
+  background: var(--electric);
+  box-shadow: 0 0 6px rgba(var(--electric-rgb), 0.5);
+}
+.live-ai-info {
+  flex: 1;
+  min-width: 0;
+}
+.live-ai-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--glow);
+}
+.live-ai-desc {
+  font-size: 10px;
+  color: var(--text-faint);
+  margin-top: 1px;
+}
+.live-ai-badge {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--glass-2);
+  color: var(--text-faint);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.live-ai-badge.badge-ready {
+  background: rgba(var(--good-rgb), 0.12);
+  color: rgba(var(--good-rgb), 0.9);
+}
+.live-ai-badge.badge-loading {
+  background: rgba(var(--electric-rgb), 0.12);
+  color: var(--electric);
+  animation: pulse 1.4s infinite ease-in-out;
+}
+
+/* "Last call" chip — proves which backend actually handled the most
+   recent aiQuery() so the user can see on-device vs. cloud in real time. */
+.live-lastcall {
+  margin-top: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 11px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text);
+  letter-spacing: 0.02em;
+  transition: background 240ms ease, border-color 240ms ease;
+}
+.live-lastcall.ondevice {
+  background: rgba(130, 170, 255, 0.08);
+  border-color: rgba(130, 170, 255, 0.3);
+}
+.live-lastcall.cloud {
+  background: rgba(255, 203, 139, 0.06);
+  border-color: rgba(255, 203, 139, 0.25);
+}
+.live-lastcall.failed {
+  background: rgba(255, 123, 156, 0.08);
+  border-color: rgba(255, 123, 156, 0.35);
+}
+.live-lastcall-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 6px currentColor;
+}
+.live-lastcall.ondevice .live-lastcall-dot { color: #82b7ff; }
+.live-lastcall.cloud .live-lastcall-dot { color: #ffcb8b; }
+.live-lastcall.failed .live-lastcall-dot { color: #ff7b9c; }
+.live-lastcall-label {
+  font-size: 9px;
+  color: var(--text-faint);
+  letter-spacing: 0.14em;
+}
+.live-lastcall-backend {
+  color: var(--glow);
+  font-weight: 600;
+}
+.live-lastcall-sep { color: var(--text-faint); }
+.live-lastcall-time,
+.live-lastcall-ago {
+  color: var(--text-dim);
+}
+.live-lastcall-warn {
+  margin-left: 4px;
+  color: #ff7b9c;
+  font-weight: 600;
+}
+/* Fallback state — user wanted on-device but we went to cloud.
+   Make it loud so it can never be mistaken for the intended path. */
+.live-lastcall.fallback {
+  background: rgba(255, 203, 139, 0.14);
+  border-color: rgba(255, 203, 139, 0.55);
+  box-shadow: 0 0 10px rgba(255, 203, 139, 0.18);
+}
+.live-lastcall.fallback .live-lastcall-dot { color: #ffcb8b; }
+.live-lastcall-fallback {
+  margin-left: 6px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(255, 203, 139, 0.2);
+  color: #ffcb8b;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.3); }
+}
+
+/* Download progress bar */
+.live-download-bar {
+  margin-top: 8px;
+  padding: 10px 14px;
+  background: var(--glass-1);
+  border: 1px solid rgba(var(--electric-rgb), 0.2);
+  border-radius: 10px;
+}
+.live-download-label {
+  font-size: 9px;
+  color: var(--electric-soft);
+  letter-spacing: 0.12em;
+  margin-bottom: 6px;
+}
+.live-download-track {
+  height: 4px;
+  background: var(--glass-2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.live-download-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--electric-deep), var(--electric));
+  box-shadow: 0 0 8px rgba(var(--electric-rgb), 0.5);
+  border-radius: 999px;
+  transition: width 300ms ease;
+}
+

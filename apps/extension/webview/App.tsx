@@ -3,6 +3,8 @@ import type {
   ChatMessage,
   ClusterSummary,
   ConceptRow,
+  TourState,
+  ExplainBackSession,
   DailyIqPoint,
   Finding,
   GainEvent,
@@ -20,6 +22,9 @@ import { vscode, onHostMessage } from "./vscode.js";
 import { VoiceMode } from "./VoiceMode.js";
 import { ConceptsTab } from "./ConceptsTab.js";
 import { LiveTab } from "./LiveTab.js";
+import { MapTab } from "./MapTab.js";
+import { SessionStrip } from "./SessionStrip.js";
+import { ExplainBackPanel } from "./ExplainBackPanel.js";
 import { ChatSearchBar } from "./ChatSearchBar.js";
 import { ChatHistoryPanel } from "./ChatHistoryPanel.js";
 import { CinematicPlate } from "./CinematicPlate.js";
@@ -49,7 +54,7 @@ import {
 } from "./icons.js";
 import protegeLogoUrl from "./protege-logo.svg";
 
-type Mode = "chat" | "concepts" | "live";
+type Mode = "chat" | "concepts" | "live" | "map";
 type ChatInputMode = "text" | "voice";
 
 // Legacy Code IQ route is hidden behind a dev flag — see the "Archive CodeIQ"
@@ -246,6 +251,20 @@ export function App() {
   } | null>(null);
   const [scanning, setScanning] = useState(false);
   const [liveMode, setLiveMode] = useState(false);
+  // Hoisted here (not in LiveTab) so tab switches don't remount the state
+  // to the default. Hydrated via `explainMode/state` on every mount + any
+  // config change. Passed down to LiveTab as a controlled prop.
+  const [explainMode, setExplainMode] = useState<"text" | "voice" | "both">("text");
+  // Architecture Tour (A2) session state. Hoisted here so the strip
+  // survives tab switches. Host is the source of truth — we mirror
+  // whatever `tour/state` comes in, and partial updates via
+  // `tour/narrationReady` mutate the steps array in place.
+  const [tour, setTour] = useState<TourState | null>(null);
+  // Explain-back (B1) session. Same pattern as `tour` — host owns
+  // truth, we mirror. `null` means no session active.
+  const [explainBack, setExplainBack] = useState<ExplainBackSession | null>(
+    null
+  );
   const [streakOpen, setStreakOpen] = useState(false);
   const [chatHistoryOpen, setChatHistoryOpen] = useState(false);
   const [modelStatus, setModelStatus] = useState<{
@@ -255,14 +274,6 @@ export function App() {
     downloadProgress: number;
   }>({ ready: false, loading: false, error: null, downloadProgress: 0 });
   const [tipDetail, setTipDetail] = useState<TipDetail | null>(null);
-  // Theme state — "dark" (default) | "light" | "auto" (respects OS)
-  // Persisted to localStorage so it survives reloads. The actual DOM
-  // attribute update happens in a useEffect below; everything else in
-  // the app reads theme via CSS variables (see styles/tokens.css).
-  const [theme, setTheme] = useState<"dark" | "light">(() => {
-    const stored = typeof localStorage !== "undefined" ? localStorage.getItem("protege:theme") : null;
-    return stored === "light" ? "light" : "dark";
-  });
 
   const endRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLElement>(null);
@@ -384,15 +395,50 @@ export function App() {
         // future surface (status bar, inlay, etc.) can re-subscribe here.
       } else if (msg.type === "watcher/dismiss") {
         // same as above — no-op
+      } else if (msg.type === "explainMode/state") {
+        setExplainMode(msg.mode);
+      } else if (msg.type === "tour/state") {
+        setTour(msg.state);
+      } else if (msg.type === "tour/narrationReady") {
+        // Patch the narration into the current tour without losing
+        // position / other already-landed narrations.
+        setTour((prev) => {
+          if (!prev) return prev;
+          if (msg.index < 0 || msg.index >= prev.steps.length) return prev;
+          const steps = prev.steps.map((s, i) =>
+            i === msg.index ? { ...s, narration: msg.narration } : s
+          );
+          return { ...prev, steps };
+        });
+      } else if (msg.type === "explainBack/state") {
+        setExplainBack(msg.state);
       }
     });
     vscode.postMessage({ type: "ready" });
     return off;
   }, []);
 
+  // Auto-scroll the messages list to the bottom whenever a new turn or
+  // tool activity arrives. Smooth scroll can get cut off mid-flight when
+  // content grows during streaming, so we:
+  //   1. wait for the next paint (requestAnimationFrame) so layout is
+  //      final, and
+  //   2. scroll the actual .messages container to `scrollHeight`
+  //      rather than scrollIntoView on a ref (which fights with parent
+  //      overflow when the endRef div happens to be just barely in view).
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading]);
+    const id = requestAnimationFrame(() => {
+      const end = endRef.current;
+      if (!end) return;
+      const container = end.closest(".messages") as HTMLElement | null;
+      if (container) {
+        container.scrollTop = container.scrollHeight;
+      } else {
+        end.scrollIntoView({ block: "end" });
+      }
+    });
+    return () => cancelAnimationFrame(id);
+  }, [messages, loading, toolActivity]);
 
   // Sync --header-h to the real measured header height so the overlay starts
   // exactly below it regardless of content (streak chip, tab padding, etc.).
@@ -410,11 +456,6 @@ export function App() {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem("protege:theme", theme);
-  }, [theme]);
 
   // Auto-grow textarea — like Cursor/Claude. Resets to 0 first so shrinking works.
   useEffect(() => {
@@ -436,6 +477,11 @@ export function App() {
     };
     setMessages((m) => [...m, user]);
     setError(null);
+    // Flip loading optimistically so the typing-dots bubble appears in
+    // the SAME paint as the user message, not 200–500ms later when
+    // chat/loading round-trips back from the host. The host will still
+    // send chat/loading=true → the value stays true → no flicker.
+    setLoading(true);
     vscode.postMessage({ type: "chat/send", message: trimmed, mode: chatInputMode });
   };
 
@@ -587,23 +633,6 @@ export function App() {
                 <path d="M12 7v10M9 10h5a2 2 0 010 4h-4a2 2 0 000 4h5" strokeLinecap="round" />
               </svg>
             </button>
-            <button
-              className="header-icon-btn theme-toggle-btn"
-              onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
-              title={theme === "dark" ? "Switch to light" : "Switch to dark"}
-              aria-label="Toggle theme"
-            >
-              {theme === "dark" ? (
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                  <path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              ) : (
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                  <circle cx="12" cy="12" r="4" />
-                  <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" strokeLinecap="round" />
-                </svg>
-              )}
-            </button>
           </div>
         </div>
 
@@ -660,9 +689,37 @@ export function App() {
             {mode === "live" && !overlay && !streakOpen && <span className="tab-dot" />}
             Live
           </button>
+          <button
+            className={`tab ${mode === "map" && !overlay && !streakOpen ? "active" : ""}`}
+            onClick={() => {
+              setMode("map");
+              setOverlay(null);
+              setStreakOpen(false);
+            }}
+            title="Project Map — what matters in this codebase"
+          >
+            {mode === "map" && !overlay && !streakOpen && <span className="tab-dot" />}
+            Map
+          </button>
         </div>
 
       </header>
+
+      {/* Architecture-tour session strip. Renders between header and
+          tab content, visible on every tab so the user can switch to
+          Chat to ask a question mid-tour without losing the session. */}
+      <SessionStrip tour={tour} />
+
+      {/* Explain-back (B1) overlay — takes over the sidebar content
+          while active. Host is the single source of truth; closing
+          posts `explainBack/stop` which clears session server-side and
+          broadcasts `explainBack/state: null`, unmounting this panel. */}
+      {explainBack && (
+        <ExplainBackPanel
+          session={explainBack}
+          onClose={() => vscode.postMessage({ type: "explainBack/stop" })}
+        />
+      )}
 
       {streakOpen ? (
         <div className="streak-inline">
@@ -696,7 +753,7 @@ export function App() {
             setChatHistoryOpen(false);
           }}
         />
-      ) : mode === "chat" && chatInputMode === "text" ? (
+      ) : mode === "chat" ? (
         <>
           {/* ---- Chat search bar + history toggle ---- */}
           {!isEmpty && (
@@ -825,77 +882,93 @@ export function App() {
             </div>
           )}
 
-          <footer className="composer">
-            <textarea
-              ref={inputRef}
-              className="composer-input"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSend();
-                }
-              }}
-              placeholder="Ask about your code…"
-              rows={1}
+          {/* Unified footer: when chatInputMode === "voice" we swap the
+              textarea + send area for the inline VoiceMode. Messages
+              remain visible above — user can read the full conversation
+              context while interacting by voice. */}
+          {chatInputMode === "voice" ? (
+            <VoiceMode
+              inline
+              onSend={sendMessage}
+              latestReply={lastAssistant}
+              loading={loading}
+              error={error}
+              onSwitchToText={() => setChatInputMode("text")}
             />
-            <div className="composer-actions">
-              <div className="composer-actions-left">
-                <div
-                  className="mode-mini"
-                  role="tablist"
-                  aria-label="Chat modality"
-                >
-                  <button
-                    role="tab"
-                    aria-selected={chatInputMode === "text"}
-                    className={`mode-mini-opt ${chatInputMode === "text" ? "active" : ""}`}
-                    onClick={() => setChatInputMode("text")}
-                    title="Text input"
+          ) : (
+            <footer className="composer">
+              <textarea
+                ref={inputRef}
+                className="composer-input"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
+                placeholder={loading ? "Protege is thinking…" : "Ask about your code…"}
+                rows={1}
+                disabled={loading}
+              />
+              <div className="composer-actions">
+                <div className="composer-actions-left">
+                  <div
+                    className="mode-mini"
+                    role="tablist"
+                    aria-label="Chat modality"
                   >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" />
-                    </svg>
-                  </button>
-                  <button
-                    role="tab"
-                    aria-selected={false}
-                    className="mode-mini-opt"
-                    onClick={() => setChatInputMode("voice")}
-                    title="Voice input"
-                  >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <rect x="9" y="3" width="6" height="12" rx="3" />
-                      <path d="M5 11a7 7 0 0014 0" />
-                      <path d="M12 18v3" />
-                    </svg>
-                  </button>
+                    <button
+                      role="tab"
+                      aria-selected={chatInputMode === "text"}
+                      className={`mode-mini-opt ${chatInputMode === "text" ? "active" : ""}`}
+                      onClick={() => setChatInputMode("text")}
+                      title="Text input"
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" />
+                      </svg>
+                    </button>
+                    <button
+                      role="tab"
+                      aria-selected={false}
+                      className="mode-mini-opt"
+                      onClick={() => setChatInputMode("voice")}
+                      title="Voice input"
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="9" y="3" width="6" height="12" rx="3" />
+                        <path d="M5 11a7 7 0 0014 0" />
+                        <path d="M12 18v3" />
+                      </svg>
+                    </button>
+                  </div>
+                  <span className="microcaps composer-hint">
+                    {loading ? "thinking…" : "↵ send · ⇧↵ newline"}
+                  </span>
                 </div>
-                <span className="microcaps composer-hint">
-                  {loading ? "thinking…" : "↵ send · ⇧↵ newline"}
-                </span>
-              </div>
-              <button
-                className="send-btn"
-                onClick={handleSend}
-                disabled={loading || !input.trim()}
-                aria-label="Send"
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
+                <button
+                  className="send-btn"
+                  onClick={handleSend}
+                  disabled={loading || !input.trim()}
+                  aria-label="Send"
                 >
-                  <path d="M7 17L17 7" />
-                  <path d="M9 7h8v8" />
-                </svg>
-              </button>
-            </div>
-          </footer>
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M7 17L17 7" />
+                    <path d="M9 7h8v8" />
+                  </svg>
+                </button>
+              </div>
+            </footer>
+          )}
         </>
       ) : mode === "concepts" ? (
         <ConceptsTab
@@ -926,49 +999,15 @@ export function App() {
             });
           }}
           modelStatus={modelStatus}
+          explainMode={explainMode}
+          onExplainModeChange={(mode) => {
+            setExplainMode(mode);
+            vscode.postMessage({ type: "explainMode/set", mode });
+          }}
         />
-      ) : (
-        <div className="voice-wrap">
-          <VoiceMode
-            onSend={sendMessage}
-            latestReply={lastAssistant}
-            loading={loading}
-            error={error}
-          />
-          <div className="voice-mode-footer">
-            <div
-              className="mode-mini"
-              role="tablist"
-              aria-label="Chat modality"
-            >
-              <button
-                role="tab"
-                aria-selected={chatInputMode === "text"}
-                className={`mode-mini-opt ${chatInputMode === "text" ? "active" : ""}`}
-                onClick={() => setChatInputMode("text")}
-                title="Text input"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" />
-                </svg>
-              </button>
-              <button
-                role="tab"
-                aria-selected={chatInputMode === "voice"}
-                className={`mode-mini-opt ${chatInputMode === "voice" ? "active" : ""}`}
-                onClick={() => setChatInputMode("voice")}
-                title="Voice input"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="9" y="3" width="6" height="12" rx="3" />
-                  <path d="M5 11a7 7 0 0014 0" />
-                  <path d="M12 18v3" />
-                </svg>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      ) : mode === "map" ? (
+        <MapTab />
+      ) : null}
 
       {/* Single persistent overlay — the backdrop stays mounted across panel
           switches so only the inner content cross-fades. Keyed by the current

@@ -359,7 +359,54 @@ function fixWavHeader(wav: Buffer): Buffer {
   return wav;
 }
 
+/** Compute RMS of a 16kHz mono 16-bit PCM WAV buffer. Skips the 44-byte
+ *  RIFF header and reads signed 16-bit little-endian samples. Returns a
+ *  normalized value in roughly [0, 1]. Used to reject mostly-silent
+ *  captures before paying for a Whisper call — Whisper hallucinates on
+ *  low-signal audio. */
+function computeWavRms(wav: Buffer): number {
+  if (wav.length < 44 + 2) return 0;
+  const data = wav.subarray(44);
+  const sampleCount = Math.floor(data.length / 2);
+  if (sampleCount === 0) return 0;
+  let sumSq = 0;
+  for (let i = 0; i < sampleCount; i++) {
+    const s = data.readInt16LE(i * 2) / 32768;
+    sumSq += s * s;
+  }
+  return Math.sqrt(sumSq / sampleCount);
+}
+
+/** Detect Whisper's "repeat-phrase" hallucination signature. Real speech
+ *  from a coding Q&A rarely has the exact same 4+ word phrase twice; when
+ *  Whisper is confused by noise it often regurgitates something like
+ *  "You can't see it. You can't see it." Returns true if we should drop. */
+function looksRepetitive(text: string): boolean {
+  const words = text.toLowerCase().replace(/[.!?,]/g, "").split(/\s+/).filter(Boolean);
+  if (words.length < 8) return false;
+  const phraseLen = 4;
+  const seen = new Map<string, number>();
+  for (let i = 0; i + phraseLen <= words.length; i++) {
+    const phrase = words.slice(i, i + phraseLen).join(" ");
+    const count = (seen.get(phrase) ?? 0) + 1;
+    seen.set(phrase, count);
+    if (count >= 2) return true;
+  }
+  return false;
+}
+
 export async function transcribe(wavBuffer: Buffer): Promise<string> {
+  // Defensive pre-check: skip Whisper entirely when the audio is mostly
+  // silent. 0.012 is just below our Rust VAD speech threshold (0.015) —
+  // if the overall energy is below this, the brief speech burst that
+  // tripped VAD was too short to transcribe cleanly, and sending it to
+  // Whisper produces hallucinations like "Thanks for watching".
+  const rms = computeWavRms(wavBuffer);
+  if (rms < 0.012) {
+    pipeLog("protege-stt", `dropped low-signal audio (rms=${rms.toFixed(4)})`);
+    return "";
+  }
+
   const arrayBuf = wavBuffer.buffer.slice(
     wavBuffer.byteOffset,
     wavBuffer.byteOffset + wavBuffer.byteLength
@@ -380,27 +427,49 @@ export async function transcribe(wavBuffer: Buffer): Promise<string> {
 
   const data = (await res.json()) as { text?: string };
   const text = (data.text ?? "").trim();
-  // Whisper hallucinates on silent / near-silent audio. These are the
-  // most common "ghost transcripts" — treat them as nothing heard so we
-  // don't fire random chat turns when the user didn't actually speak.
+
+  // Exact-match ghost filter — the short-phrase hallucinations Whisper
+  // outputs on silence.
   const normalized = text.toLowerCase().replace(/[.!?,]/g, "").trim();
   const GHOST_TRANSCRIPTS = new Set([
     "",
     "thank you",
     "thanks",
-    "thank you.",
     "thanks for watching",
-    "thanks for watching!",
     "you",
     "bye",
-    "bye.",
     ".",
     "okay",
     "ok",
+    "hi",
+    "hello",
+    "yeah",
+    "yes",
+    "no",
+    "huh",
+    "uh",
+    "um",
+    "mm",
+    "mm hmm",
+    "mmhmm",
+    "subscribe",
+    "like and subscribe",
+    "please subscribe",
+    "see you next time",
+    "see you in the next video",
   ]);
   if (GHOST_TRANSCRIPTS.has(normalized)) {
     pipeLog("protege-stt", `dropped ghost transcript: "${text}"`);
     return "";
   }
+
+  // Repetition sniff — classic Whisper-on-noise output has a repeated
+  // phrase ("You can't see it. You can't see it."). Reject if we see
+  // the same 4-word phrase twice.
+  if (looksRepetitive(text)) {
+    pipeLog("protege-stt", `dropped repetitive hallucination: "${text.slice(0, 120)}"`);
+    return "";
+  }
+
   return text;
 }

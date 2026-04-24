@@ -45,7 +45,31 @@ import { log } from "./log.js";
  *
  * No Comment Thread panel. No Problems-panel entry.
  */
+// Click-dedup: same finding (uri+line) fired within this window = ignored.
+// Without this, double-clicking the 📖 Teach button (or impatient
+// re-clicks while the voice clip is loading) starts the TTS clip twice
+// — overlapping audio + duplicated chat replies. 6s matches the Teach
+// dedup in dispatchTeachConcept so both entry points behave identically.
+const TEACH_DEDUP_WINDOW_MS = 6_000;
+const lastTeachAt = new Map<string, number>();
+
 export function openTeachingThread(uri: string, line: number): boolean {
+  const key = `${uri}:${line}`;
+  const now = Date.now();
+  const lastFired = lastTeachAt.get(key);
+  if (lastFired && now - lastFired < TEACH_DEDUP_WINDOW_MS) {
+    log(
+      "teachingThread",
+      `dedup · ${shortUri(uri)}:${line} fired ${now - lastFired}ms ago`
+    );
+    return false;
+  }
+  lastTeachAt.set(key, now);
+  // Auto-prune so the map doesn't grow.
+  setTimeout(() => {
+    if (lastTeachAt.get(key) === now) lastTeachAt.delete(key);
+  }, TEACH_DEDUP_WINDOW_MS * 5);
+
   const s = findSuggestionAtLine(uri, line);
   if (!s) {
     log("teachingThread", `teach skip — no suggestion at ${shortUri(uri)}:${line}`);

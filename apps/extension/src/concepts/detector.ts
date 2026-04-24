@@ -1,4 +1,5 @@
-import { RULES } from "./rules.js";
+import { RULES, getWeight } from "./rules.js";
+import { detectFromAst } from "./astDetector.js";
 
 /**
  * A detected concept with a context score indicating usage sophistication.
@@ -15,70 +16,50 @@ export interface DetectedConcept {
   contextScore: number; // 1.0 – 3.0
 }
 
+const JS_TS_LANGS = new Set([
+  "javascript",
+  "typescript",
+  "javascriptreact",
+  "typescriptreact",
+]);
+
 /**
- * Detect which concepts appear in a file with context-aware scoring.
+ * Regex-only concept detection with context scoring.
  *
- * Phase 1: regex pattern matching (same as before — finds WHAT was used).
- * Phase 2: context analysis around each match (NEW — scores HOW it was used).
+ * Intentionally does NOT delegate to AST — this is called exclusively by
+ * hybridDetector, which already runs the AST layer separately and would
+ * double-work every JS/TS file if we delegated here. For JS/TS files the
+ * rules in rules.ts carry empty `languages`, so this returns `[]` — AST
+ * covers them via Layer 1 in the hybrid pipeline.
  *
- * Each concept is counted once per file save with its max context score.
+ * Direct external callers that need JS/TS coverage should use
+ * `detectConcepts()` (which delegates to AST) or `detectHybrid()`.
  */
 export function detectConceptsWithContext(
   language: string,
   content: string,
   filePath: string
 ): DetectedConcept[] {
-  const lines = content.split("\n");
-  const results = new Map<string, number>(); // name → max context score
-
-  for (const rule of RULES) {
-    if (!rule.languages.includes(language)) continue;
-
-    for (const pattern of rule.patterns) {
-      // Find ALL match positions (not just boolean test)
-      const globalPattern = new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : pattern.flags + "g");
-      let match: RegExpExecArray | null;
-
-      // Reset lastIndex for safety
-      globalPattern.lastIndex = 0;
-      let matched = false;
-
-      while ((match = globalPattern.exec(content)) !== null) {
-        matched = true;
-        // Find the line number of this match
-        const matchLine = content.slice(0, match.index).split("\n").length - 1;
-
-        // Score the context around this match
-        const score = scoreContext(lines, matchLine, rule.name, filePath);
-
-        // Keep the highest score for this concept
-        const existing = results.get(rule.name) ?? 0;
-        if (score > existing) {
-          results.set(rule.name, score);
-        }
-
-        // Don't need to find ALL occurrences — just enough to get the best score
-        if (score >= 2.5) break;
-
-        // Prevent infinite loops on zero-width matches
-        if (match[0].length === 0) globalPattern.lastIndex++;
-      }
-
-      if (matched) break; // Don't check other patterns for the same rule
-    }
-  }
-
-  return [...results.entries()].map(([name, contextScore]) => ({
-    name,
-    contextScore,
-  }));
+  return detectFromRegex(language, content, filePath);
 }
 
 /**
- * Legacy function — returns just concept names (backward compatible).
- * Used by callers that don't need context scores.
+ * Legacy name-only variant. Same routing as `detectConceptsWithContext`.
+ * Used by callers that only need concept names (status bar, save recap,
+ * quizMe, weak spots, concept trail).
  */
 export function detectConcepts(language: string, content: string): string[] {
+  if (JS_TS_LANGS.has(language)) {
+    // filePath is only used by AST for test-file detection; an empty path
+    // just means no test-file bonus, which is fine for name-only callers.
+    // Sort by rule weight descending so callers that only read concepts[0]
+    // (e.g. statusBarLive's concept-at-cursor) see the most teachable
+    // concept first rather than whichever node AST visited first.
+    return detectFromAst(content, "", language)
+      .map((c) => c.name)
+      .sort((a, b) => getWeight(b) - getWeight(a));
+  }
+
   const hits = new Set<string>();
   for (const rule of RULES) {
     if (!rule.languages.includes(language)) continue;
@@ -93,129 +74,50 @@ export function detectConcepts(language: string, content: string): string[] {
 }
 
 /* ==========================================================
-   Context Analyzer — scores HOW a concept is used, not just IF.
+   Regex path — used for Python (and any future non-AST language).
 
-   Reads ±20 lines around each match and checks:
-   1. Related concepts nearby (composing skills)
-   2. TypeScript type annotations present
-   3. Error handling (try/catch) wrapping the usage
-   4. Nesting depth (inside a function/class/module)
-   5. Test file bonus (file is a test OR imports are tested)
+   Scoring is deliberately simple: base 1.0 + test-file bonus.
+   Fine-grained context scoring (related concepts, type annotations,
+   try/catch nesting, custom abstractions) is handled by the AST layer
+   for JS/TS. Python code is short-form idiomatic enough that the base
+   score carries the signal.
    ========================================================== */
 
-// Patterns that indicate sophistication in surrounding context
-const TYPE_ANNOTATION_PATTERNS = [
-  /:\s*\w+(\[\])?(<[^>]+>)?(\s*\||\s*&)?/,  // : Type, : Type[], : Type<T>
-  /\binterface\s+\w+/,
-  /\btype\s+\w+\s*=/,
-  /<[A-Z]\w*>/,                               // <T> generic
-  /as\s+\w+/,                                  // type assertion
-];
-
-const ERROR_HANDLING_PATTERNS = [
-  /\btry\s*\{/,
-  /\.catch\s*\(/,
-  /\.finally\s*\(/,
-  /\bthrow\s+new\s+/,
-];
-
-const CUSTOM_ABSTRACTION_PATTERNS = [
-  /function\s+use[A-Z]\w*/,     // custom hook definition
-  /const\s+use[A-Z]\w*\s*=/,   // custom hook as arrow
-  /export\s+(default\s+)?function/,
-  /export\s+const\s+\w+\s*=/,
-  /class\s+\w+/,
-];
-
-const TEST_FILE_INDICATORS = [
-  /\.(test|spec)\.(ts|tsx|js|jsx)$/,
+const TEST_FILE_PATH_PATTERNS = [
+  /\.(test|spec)\.(ts|tsx|js|jsx|py)$/,
   /__(tests|test)__\//,
-  /\bdescribe\s*\(/,
-  /\bit\s*\(/,
-  /\btest\s*\(/,
-  /\bexpect\s*\(/,
+  /\btest_[\w_]+\.py$/,
+  /\b[\w_]+_test\.py$/,
 ];
 
-// Map of concept names to related concepts (for composability scoring)
-const RELATED_CONCEPTS: Record<string, string[]> = {
-  "React useState": ["React useEffect", "React useCallback", "React useMemo", "React useRef"],
-  "React useEffect": ["React useState", "React useRef", "React useCallback", "React useEffect cleanup"],
-  "React useEffect cleanup": ["React useEffect", "React useRef"],
-  "React useMemo": ["React useCallback", "React useState"],
-  "React useCallback": ["React useMemo", "React useRef"],
-  "React useRef": ["React useEffect", "React useState"],
-  "React useReducer": ["React useState", "React useContext"],
-  "React custom hook": ["React useState", "React useEffect", "React useRef", "React useCallback"],
-  "async/await": ["Promises", "Error handling", "Fetch API"],
-  "Promises": ["async/await", "Error handling"],
-  "Array reduce": ["Array map", "Array filter", "Destructuring"],
-  "Array map": ["Array filter", "Array reduce", "Arrow functions"],
-  "TypeScript generics": ["TypeScript interface", "TypeScript type alias", "Generic constraints"],
-  "Generic constraints": ["TypeScript generics", "Conditional types"],
-  "Conditional types": ["TypeScript generics", "Generic constraints", "TypeScript type alias"],
-  "Destructuring": ["Spread / rest", "Arrow functions"],
-  "Error handling": ["async/await", "Promises"],
-};
-
-function scoreContext(
-  lines: string[],
-  matchLine: number,
-  conceptName: string,
+function detectFromRegex(
+  language: string,
+  content: string,
   filePath: string
-): number {
-  let score = 1.0;
+): DetectedConcept[] {
+  const results = new Map<string, number>();
+  const isTestFile = TEST_FILE_PATH_PATTERNS.some((p) => p.test(filePath));
+  const bonus = isTestFile ? 0.3 : 0;
 
-  // Extract ±20 lines of context
-  const start = Math.max(0, matchLine - 20);
-  const end = Math.min(lines.length, matchLine + 21);
-  const contextWindow = lines.slice(start, end).join("\n");
-  const matchLineContent = lines[matchLine] ?? "";
+  for (const rule of RULES) {
+    if (!rule.languages.includes(language)) continue;
 
-  // 1. Related concepts nearby (+0.15 per related concept found, max +0.6)
-  const related = RELATED_CONCEPTS[conceptName] ?? [];
-  let relatedCount = 0;
-  for (const rel of related) {
-    const relRule = RULES.find((r) => r.name === rel);
-    if (relRule) {
-      for (const p of relRule.patterns) {
-        if (p.test(contextWindow)) {
-          relatedCount++;
-          break;
-        }
+    let matched = false;
+    for (const pattern of rule.patterns) {
+      if (pattern.test(content)) {
+        matched = true;
+        break;
       }
     }
+    if (matched) {
+      const score = Math.min(3.0, 1.0 + bonus);
+      const prev = results.get(rule.name) ?? 0;
+      if (score > prev) results.set(rule.name, score);
+    }
   }
-  score += Math.min(0.6, relatedCount * 0.15);
 
-  // 2. Type annotations in context (+0.3 if present)
-  const hasTypes = TYPE_ANNOTATION_PATTERNS.some((p) => p.test(contextWindow));
-  if (hasTypes) score += 0.3;
-
-  // 3. Error handling around the usage (+0.25 if wrapped in try/catch)
-  const hasErrorHandling = ERROR_HANDLING_PATTERNS.some((p) => p.test(contextWindow));
-  if (hasErrorHandling) score += 0.25;
-
-  // 4. Inside a custom abstraction (+0.2 if inside a named function/class)
-  const insideAbstraction = CUSTOM_ABSTRACTION_PATTERNS.some((p) => {
-    // Check lines ABOVE the match to see if we're inside a function/class
-    const above = lines.slice(Math.max(0, matchLine - 15), matchLine).join("\n");
-    return p.test(above);
-  });
-  if (insideAbstraction) score += 0.2;
-
-  // 5. Nesting depth: count { before this line - count } before this line
-  const beforeMatch = lines.slice(0, matchLine).join("\n");
-  const openBraces = (beforeMatch.match(/\{/g) ?? []).length;
-  const closeBraces = (beforeMatch.match(/\}/g) ?? []).length;
-  const depth = openBraces - closeBraces;
-  if (depth >= 3) score += 0.15; // deeply nested = more complex usage
-
-  // 6. Test file bonus (+0.3 if this file is a test file)
-  const isTestFile = TEST_FILE_INDICATORS.some((p) =>
-    typeof p === "object" ? p.test(filePath) || p.test(contextWindow) : false
-  );
-  if (isTestFile) score += 0.3;
-
-  // Cap at 3.0
-  return Math.min(3.0, Math.round(score * 100) / 100);
+  return [...results.entries()].map(([name, contextScore]) => ({
+    name,
+    contextScore,
+  }));
 }

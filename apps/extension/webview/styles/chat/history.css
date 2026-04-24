@@ -1,0 +1,404 @@
+/* ==========================================================
+   Chat search bar + history browser
+   ========================================================== */
+
+.chat-search-wrap {
+  padding: 8px 16px 4px;
+  border-bottom: 1px solid var(--glass-border);
+  background: rgba(var(--ink-rgb), 0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.chat-search-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.chat-search-input-wrap {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.chat-search-icon {
+  position: absolute;
+  left: 8px;
+  width: 13px;
+  height: 13px;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+.chat-search-input {
+  width: 100%;
+  padding: 6px 28px 6px 28px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  color: var(--glow);
+  font-family: inherit;
+  font-size: 11px;
+  outline: none;
+  transition: border-color 150ms ease;
+}
+.chat-search-input::placeholder { color: var(--text-faint); }
+.chat-search-input:focus { border-color: var(--glass-border-strong); }
+.chat-search-clear {
+  position: absolute;
+  right: 6px;
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.chat-search-clear:hover { color: var(--glow); }
+
+.chat-history-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-faint);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 150ms ease, background 150ms ease, border-color 150ms ease;
+}
+.chat-history-btn svg { width: 14px; height: 14px; }
+.chat-history-btn:hover {
+  color: var(--glow);
+  background: var(--glass-1);
+  border-color: var(--glass-border);
+}
+
+/* "+ New chat" pill — slightly more prominent than the history icon,
+   since starting a new chat is the main call-to-action up there. */
+.chat-new-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px 5px 8px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 7px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 140ms, border-color 140ms, color 140ms, transform 140ms;
+}
+.chat-new-btn svg { width: 13px; height: 13px; }
+.chat-new-btn:hover {
+  background: rgba(var(--electric-rgb), 0.14);
+  border-color: rgba(var(--electric-rgb), 0.4);
+  color: var(--electric-soft);
+  transform: translateY(-1px);
+}
+.chat-new-btn:active { transform: translateY(0); }
+
+/* Search results dropdown */
+.chat-search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 6px 0;
+  scrollbar-width: none;
+}
+.chat-search-results::-webkit-scrollbar { display: none; }
+.chat-search-count {
+  font-size: 8px;
+  color: var(--text-faint);
+  letter-spacing: 0.14em;
+  padding: 4px 4px 6px;
+}
+.chat-search-result {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  color: inherit;
+  transition: background 100ms ease;
+}
+.chat-search-result:hover { background: var(--glass-1); }
+.chat-search-role {
+  font-size: 8px;
+  color: var(--text-faint);
+  letter-spacing: 0.12em;
+}
+.chat-search-snippet {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-search-empty {
+  font-size: 11px;
+  color: var(--text-faint);
+  padding: 12px 4px;
+  text-align: center;
+}
+
+/* History browser — day groups */
+.chat-history-day {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+  color: inherit;
+  transition: background 100ms ease;
+}
+.chat-history-day:hover { background: var(--glass-1); }
+.chat-history-day-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--glow);
+}
+.chat-history-day-count {
+  font-size: 9px;
+  color: var(--text-faint);
+  letter-spacing: 0.1em;
+}
+
+/* ==========================================================
+   ChatHistoryPanel — full-height browse view, rendered in place of
+   the messages + composer when the user clicks the history icon.
+   Styled to feel like a continuation of the chat body, NOT a floating
+   card: no border, no margin, no card background — flush with whatever
+   surface the chat area uses so nothing jumps visually when the user
+   opens/closes history.
+   ========================================================== */
+.chat-history-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+  animation: chp-in 200ms cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+@keyframes chp-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Head — matches the vertical rhythm of the chat search bar above it:
+   same 22 px gutter as `.messages` uses, thin separator below. */
+.chp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 22px 12px;
+  border-bottom: 1px solid var(--glass-border);
+}
+.chp-head-main {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+.chp-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text);
+}
+.chp-meta {
+  color: var(--text-faint);
+  white-space: nowrap;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+}
+.chp-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.chp-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-faint);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 140ms, background 140ms, border-color 140ms;
+}
+.chp-action svg { width: 13px; height: 13px; }
+.chp-action:hover {
+  color: var(--glow);
+  background: var(--glass-1);
+  border-color: var(--glass-border);
+}
+.chp-action-primary {
+  background: rgba(var(--electric-rgb), 0.1);
+  border-color: rgba(var(--electric-rgb), 0.3);
+  color: var(--electric-soft);
+}
+.chp-action-primary:hover {
+  background: rgba(var(--electric-rgb), 0.18);
+  border-color: rgba(var(--electric-rgb), 0.5);
+  color: var(--electric-soft);
+}
+.chp-action-danger:hover { color: var(--rose); }
+.chp-action-close { padding: 5px 7px; }
+
+/* Body — matches `.messages` padding (22 22 12) so the history list
+   aligns left-edge with chat messages underneath when user closes. */
+.chp-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 22px 20px;
+  scrollbar-width: thin;
+}
+.chp-body::-webkit-scrollbar { width: 8px; }
+.chp-body::-webkit-scrollbar-track { background: transparent; }
+.chp-body::-webkit-scrollbar-thumb {
+  background: var(--glass-2);
+  border-radius: 10px;
+}
+
+.chp-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 48px 24px;
+  color: var(--text-faint);
+}
+.chp-empty-title {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+.chp-empty-sub {
+  margin: 0;
+  font-size: 11.5px;
+  max-width: 320px;
+  line-height: 1.5;
+}
+
+.chp-day {
+  margin-top: 22px;
+}
+.chp-day:first-child { margin-top: 0; }
+
+/* Day section header — styled like an editorial "date divider" with a
+   thin rule trailing off to the right; sticky so the current day stays
+   visible while you scroll past it. Matches microcaps tone used
+   elsewhere in the app (STREAK section subs, LAST 365 DAYS, etc). */
+.chp-day-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  margin-bottom: 4px;
+  background: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+.chp-day-head::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--glass-border);
+}
+.chp-day-label {
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.chp-day-count {
+  color: var(--text-faint);
+  letter-spacing: 0.1em;
+}
+
+.chp-day-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* Message row — flush, zero-chrome. Hover reveals a faint glass tint
+   instead of a bordered box, so the list feels like chat history, not a
+   table of rows. Role tag in microcaps matches the chat bubble's .role. */
+.chp-msg {
+  display: grid;
+  grid-template-columns: 58px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 120ms;
+}
+.chp-msg:hover { background: var(--glass-1); }
+.chp-msg-role {
+  font-size: 9px;
+  color: var(--text-faint);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+.chp-msg-user .chp-msg-role { color: var(--electric-soft); }
+.chp-msg-snippet {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.45;
+}
+.chp-msg:hover .chp-msg-snippet { color: var(--text); }
+.chp-msg-time {
+  color: var(--text-faint);
+  font-size: 10px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+

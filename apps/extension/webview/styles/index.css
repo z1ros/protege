@@ -1,28 +1,49 @@
 /**
  * Protege webview styles — split into feature files for maintainability.
  *
- * Load order matters:
+ * Layer order matters for cascade:
  *   1. tokens       — :root variables, resets, html/body grid background
  *   2. base         — typography helpers (.microcaps, .serif-num, .serif)
  *   3. primitives   — shared patterns (.plate, .iq-toast)
  *   4. header       — .header, .brand-*, .tabs, .tab, .iq-chip, .streak-chip
- *   5. chat         — .messages, .msg, .empty, .composer, .nudge
- *   6. concepts     — .concepts, .iq-hero-*, .cluster-*, .concept-*, .milestones, .recs, .gains
+ *   5. chat/*       — messages, composer, markdown, live tab, history, map panel
+ *   6. concepts/*   — hero, dashboard shell + v2, cards, constellation, tree
  *   7. voice        — .voice, .voice-orb, .ring, .voice-bars, .voice-pill
- *   8. overlays     — .overlay, .page, Profile / Settings / Subscription
+ *   8. overlays/*   — shell, profile, settings, subscription, streak journal, tip detail
  *   9. responsive   — clamp hero sizes + narrow/wide @media blocks
  *
- * Add new components by dropping new rules into the matching feature file.
- * If a component doesn't fit any file, prefer extending primitives over
- * creating a new file.
+ * Chat / concepts / overlays were each split out of a single mega-file
+ * so HMR doesn't rebuild 3000 lines on every tweak. Splits preserve
+ * cascade order — files are imported in the same order the original
+ * rules appeared.
  */
 
 @import "./tokens.css";
 @import "./base.css";
 @import "./primitives.css";
 @import "./header.css";
-@import "./chat.css";
-@import "./concepts.css";
+
+@import "./chat/messages.css";
+@import "./chat/composer.css";
+@import "./chat/markdown.css";
+@import "./chat/live.css";
+@import "./chat/history.css";
+@import "./chat/map-panel.css";
+
+@import "./concepts/hero.css";
+@import "./concepts/dashboard-shell.css";
+@import "./concepts/cards.css";
+@import "./concepts/dashboard-v2.css";
+@import "./concepts/constellation.css";
+@import "./concepts/tree.css";
+
 @import "./voice.css";
-@import "./overlays.css";
+
+@import "./overlays/shell.css";
+@import "./overlays/profile.css";
+@import "./overlays/settings.css";
+@import "./overlays/subscription.css";
+@import "./overlays/streak-journal.css";
+@import "./overlays/tip-detail.css";
+
 @import "./responsive.css";

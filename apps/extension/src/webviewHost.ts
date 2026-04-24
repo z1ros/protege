@@ -27,7 +27,11 @@ import {
   setStrictWakeMode,
   setWakeSuspended,
 } from "./voiceCapture.js";
-import { getStoredWakeThreshold } from "./wakeWordCalibration.js";
+import {
+  getStoredWakeThreshold,
+  getWakeEnabled,
+  setWakeEnabled,
+} from "./wakeWordCalibration.js";
 import { devPortMapping, isDevMode, renderDevHtml } from "./devMode.js";
 
 /**
@@ -129,6 +133,27 @@ export function mountProtegeWebview(
       // reflects persisted state instead of defaulting to "auto".
       const { getAiBackend, getLastCall } = await import("./aiBackend.js");
       post(webview, { type: "ai/backend", backend: getAiBackend() });
+      // Hydrate the current explain mode so the Live tab's 3-option
+      // toggle reflects the persisted setting on mount.
+      const modeVal = vscode.workspace
+        .getConfiguration("protege")
+        .get<string>("explainMode", "text");
+      const mode = (modeVal === "voice" || modeVal === "both" ? modeVal : "text") as
+        | "text"
+        | "voice"
+        | "both";
+      post(webview, { type: "explainMode/state", mode });
+      // Hydrate an in-flight Architecture Tour if one's running — the
+      // session strip needs to reappear when the user re-opens the
+      // sidebar. Idempotent; `null` means no active tour.
+      const { getCurrentTour } = await import("./architectureTour.js");
+      post(webview, { type: "tour/state", state: getCurrentTour() });
+      // Same for explain-back — survives sidebar close/reopen mid-session.
+      const { getCurrentExplainBack } = await import("./explainBack.js");
+      post(webview, {
+        type: "explainBack/state",
+        state: getCurrentExplainBack(),
+      });
       const last = getLastCall();
       if (last) {
         post(webview, {
@@ -145,6 +170,14 @@ export function mountProtegeWebview(
       const history = getHistory();
       if (history.length > 0) {
         post(webview, { type: "chat/history", messages: history });
+      }
+
+      // Auto-resume the wake-word listener if the user had it on before
+      // reloading. Defaults to TRUE for new users so voice-first is the
+      // out-of-box experience. Fires on the first webview ready — no-op
+      // for any subsequent webview since the listener is a singleton.
+      if (getWakeEnabled(context)) {
+        void startWakeListenerForWebview(webview, context, userId);
       }
 
       // Send GitHub auth state (silent — don't prompt yet)
@@ -190,6 +223,13 @@ export function mountProtegeWebview(
     } else if (msg.type === "chat/clearHistory") {
       clearHistory();
       post(webview, { type: "chat/history", messages: [] });
+    } else if (msg.type === "debug/log") {
+      const { log } = await import("./log.js");
+      log(msg.tag, msg.message);
+      // Also stream to stdout so the extension-host tsx watch terminal
+      // shows the line in real time (same stream as [protege-wake] logs).
+      // eslint-disable-next-line no-console
+      console.log(`[protege-${msg.tag}] ${msg.message}`);
     } else if (msg.type === "feature/toggle") {
       if (msg.feature === "inlineErrors") {
         const { setInlineErrorsEnabled } = await import("./inlineErrors.js");
@@ -204,6 +244,44 @@ export function mountProtegeWebview(
       // Echo the persisted value back so the webview reflects the
       // authoritative host state (and so new panels in parallel hydrate).
       post(webview, { type: "ai/backend", backend: msg.backend });
+    } else if (msg.type === "explainMode/set") {
+      // Persist to the `protege.explainMode` VS Code setting. The
+      // onDidChangeConfiguration listener in extension.ts will broadcast
+      // `explainMode/state` back to ALL mounted webviews so any open
+      // sidebar mirrors the change.
+      await vscode.workspace
+        .getConfiguration("protege")
+        .update("explainMode", msg.mode, vscode.ConfigurationTarget.Global);
+    } else if (msg.type === "map/request") {
+      // Project Map tab (A1) — file tree + git signals + entry points.
+      const { collectProjectMap } = await import("./projectMap.js");
+      const data = await collectProjectMap();
+      post(webview, { type: "map/data", data });
+    } else if (msg.type === "map/fileSummary") {
+      // MAP tab — fetch (or pull from cache) a 2-sentence summary.
+      const { getFileSummary } = await import("./projectMap.js");
+      const summary = await getFileSummary(msg.path);
+      post(webview, { type: "map/fileSummaryResult", path: msg.path, summary });
+    } else if (msg.type === "map/openFile") {
+      // MAP tab — "Open file" button.
+      const { openMapFile } = await import("./projectMap.js");
+      await openMapFile(msg.path);
+    } else if (msg.type === "tour/start") {
+      // Architecture Tour (A2) — kick off a codebase walkthrough.
+      const { startTour } = await import("./architectureTour.js");
+      await startTour(msg.intent);
+    } else if (msg.type === "tour/next") {
+      const { advanceTour } = await import("./architectureTour.js");
+      await advanceTour();
+    } else if (msg.type === "tour/stop") {
+      const { stopTour } = await import("./architectureTour.js");
+      await stopTour();
+    } else if (msg.type === "explainBack/submit") {
+      const { submitExplanation } = await import("./explainBack.js");
+      await submitExplanation(msg.explanation);
+    } else if (msg.type === "explainBack/stop") {
+      const { stopExplainBack } = await import("./explainBack.js");
+      await stopExplainBack();
     } else if (msg.type === "ai/downloadModel") {
       vscode.commands.executeCommand("protege.downloadOnDeviceModel");
     } else if (msg.type === "openExternal") {
@@ -317,52 +395,10 @@ export function mountProtegeWebview(
       if (isWakeWordListening()) {
         stopWakeWordListener();
         post(webview, { type: "wake/state", active: false });
+        await setWakeEnabled(context, false);
       } else {
-        try {
-          // Immediately tell webview we're loading — the binary takes
-          // ~1-3s to load its three ONNX models before it can detect
-          // anything. The UI renders a "Warming up wake word…" state
-          // until we get WAKE:ready back via onReady.
-          post(webview, { type: "wake/state", active: true, status: "loading" });
-          const threshold = getStoredWakeThreshold(context);
-          await startWakeWordListener(
-            context.extensionUri.fsPath,
-            {
-              onReady: () => {
-                post(webview, { type: "wake/state", active: true, status: "listening" });
-              },
-              onWake: () => {
-                // Wake word detected — tell webview we're recording
-                post(webview, { type: "voice/recording", active: true });
-                post(webview, { type: "wake/state", active: true, status: "recording" });
-              },
-              onRecordingDone: async () => {
-                // Silence after speech — transcribe and chat
-                try {
-                  const wav = collectWakeAudio();
-                  post(webview, { type: "voice/recording", active: false });
-                  post(webview, { type: "wake/state", active: true, status: "listening" });
-                  if (wav.length < 1000) return;
-                  const text = await transcribe(wav);
-                  if (!text.trim()) return;
-                  post(webview, { type: "voice/transcript", text });
-                  await handleChat(webview, userId, text, "voice");
-                } catch (err) {
-                  const errMsg = err instanceof Error ? err.message : String(err);
-                  post(webview, { type: "voice/error", error: errMsg });
-                }
-              },
-              onError: (err) => {
-                post(webview, { type: "wake/state", active: false });
-                post(webview, { type: "voice/error", error: err });
-              },
-            },
-            threshold
-          );
-        } catch (err) {
-          const errMsg = err instanceof Error ? err.message : String(err);
-          post(webview, { type: "voice/error", error: errMsg });
-        }
+        await setWakeEnabled(context, true);
+        await startWakeListenerForWebview(webview, context, userId);
       }
     }
   });
@@ -432,6 +468,63 @@ function post(webview: vscode.Webview, msg: HostToWebview) {
   webview.postMessage(msg);
 }
 
+/** Boot the wake-word listener for a specific webview. Idempotent: if the
+ *  listener is already running, this is a no-op. Used by both the user's
+ *  explicit `wake/toggle` message AND by the `ready` handler so the voice-
+ *  first experience auto-resumes across VS Code reloads. */
+async function startWakeListenerForWebview(
+  webview: vscode.Webview,
+  context: vscode.ExtensionContext,
+  userId: string
+): Promise<void> {
+  if (isWakeWordListening()) {
+    post(webview, { type: "wake/state", active: true, status: "listening" });
+    return;
+  }
+  try {
+    post(webview, { type: "wake/state", active: true, status: "loading" });
+    const threshold = getStoredWakeThreshold(context);
+    await startWakeWordListener(
+      context.extensionUri.fsPath,
+      {
+        onReady: () => {
+          post(webview, { type: "wake/state", active: true, status: "listening" });
+        },
+        onWake: () => {
+          post(webview, { type: "voice/recording", active: true });
+          post(webview, { type: "wake/state", active: true, status: "recording" });
+        },
+        onRecordingDone: async () => {
+          try {
+            const wav = collectWakeAudio();
+            post(webview, { type: "voice/recording", active: false });
+            post(webview, { type: "wake/state", active: true, status: "listening" });
+            if (wav.length < 1000) return;
+            // Fire the filler ack BEFORE we start STT — makes the delay
+            // feel alive while Whisper + Claude + Kokoro run (~3s).
+            post(webview, { type: "voice/fillerPlay" });
+            const text = await transcribe(wav);
+            if (!text.trim()) return;
+            post(webview, { type: "voice/transcript", text });
+            await handleChat(webview, userId, text, "voice");
+          } catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            post(webview, { type: "voice/error", error: errMsg });
+          }
+        },
+        onError: (err) => {
+          post(webview, { type: "wake/state", active: false });
+          post(webview, { type: "voice/error", error: err });
+        },
+      },
+      threshold
+    );
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    post(webview, { type: "voice/error", error: errMsg });
+  }
+}
+
 /** Builds a natural-sounding synthetic user prompt that maps a nudge → Claude request. */
 function buildEngagePrompt(
   triggerId: string,
@@ -468,13 +561,14 @@ async function handleChat(
   webview: vscode.Webview,
   userId: string,
   message: string,
-  mode: "text" | "voice" | "teaching"
+  mode: "text" | "voice" | "voice-dialogue" | "teaching"
 ) {
   // Auto-promote to teaching mode when the user asks to be taught — but
-  // only when we're already in voice mode (teaching is a voice-only UX;
-  // it requires TTS to pace the highlights).
-  let effectiveMode: "text" | "voice" | "teaching" = mode;
-  if (mode === "voice" && TEACH_INTENT_RE.test(message)) {
+  // only when we're already in a voice channel (teaching is a voice-only
+  // UX; it requires TTS to pace the highlights). Both "voice" and the
+  // new "voice-dialogue" can graduate to teaching on the right intent.
+  let effectiveMode: "text" | "voice" | "voice-dialogue" | "teaching" = mode;
+  if ((mode === "voice" || mode === "voice-dialogue") && TEACH_INTENT_RE.test(message)) {
     effectiveMode = "teaching";
   }
 
@@ -492,7 +586,28 @@ async function handleChat(
     createdAt: new Date().toISOString(),
   };
 
+  // Broadcast the user message ONLY for voice turns. In text mode, the
+  // webview already appended the user's message optimistically when
+  // sendMessage() was called — broadcasting here would duplicate it.
+  // Voice transcripts originate host-side with no local append, so the
+  // webview needs this broadcast to show them.
+  const isVoiceTurn = mode === "voice" || mode === "voice-dialogue" || mode === "teaching";
+  if (isVoiceTurn) {
+    post(webview, { type: "chat/append", message: userMsg });
+  }
+
   post(webview, { type: "chat/loading", loading: true });
+
+  // Load the last ~20 messages so Claude has conversation memory across
+  // turns — otherwise every reply is a cold start and voice follow-ups
+  // like "yes, do that" / "explain more" lose their referent.
+  const HISTORY_WINDOW = 20;
+  const recentHistory = getHistory()
+    .slice(-HISTORY_WINDOW)
+    .map((m) => ({
+      role: m.role as "user" | "assistant",
+      content: m.content,
+    }));
 
   try {
     const reply = await runChat(
@@ -508,7 +623,7 @@ async function handleChat(
           });
         },
       },
-      { mode: effectiveMode }
+      { mode: effectiveMode, history: recentHistory }
     );
     const assistant: ChatMessage = {
       id: crypto.randomUUID(),

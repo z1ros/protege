@@ -1,0 +1,512 @@
+/* ==========================================================
+   Skill Constellation — Canvas 2D + d3-force
+   ========================================================== */
+
+.constellation-wrap {
+  position: relative;
+  width: 100%;
+  min-height: 460px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(ellipse at 30% 20%, rgba(74, 158, 255, 0.06), transparent 60%),
+    radial-gradient(ellipse at 70% 80%, rgba(255, 203, 139, 0.04), transparent 55%),
+    rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.constellation-filter-group {
+  flex: 0 0 auto;
+}
+.constellation-canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.constellation-tooltip {
+  position: absolute;
+  z-index: 10;
+  padding: 10px 14px;
+  background: rgba(var(--ink-rgb), 0.92);
+  backdrop-filter: blur(14px) saturate(1.15);
+  -webkit-backdrop-filter: blur(14px) saturate(1.15);
+  border: 1px solid var(--glass-border-strong);
+  border-radius: var(--radius);
+  pointer-events: none;
+  min-width: 140px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.6);
+  animation: msg-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.ct-name {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--glow);
+  margin-bottom: 4px;
+}
+.ct-cluster {
+  margin-bottom: 8px;
+  color: var(--text-faint);
+}
+.ct-bar {
+  height: 3px;
+  background: var(--glass-2);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+.ct-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--electric-deep), var(--electric));
+  border-radius: 999px;
+}
+.ct-meta {
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+.ct-hint {
+  color: var(--electric-soft);
+  font-size: 8px;
+}
+
+.constellation-legend {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--text-faint);
+  font-size: 8px;
+  letter-spacing: 0.16em;
+  background: rgba(var(--ink-rgb), 0.7);
+  padding: 4px 10px;
+  border-radius: 999px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+/* Constellation filter bar */
+.constellation-filters {
+  display: flex;
+  gap: 6px;
+  padding: 8px 10px 4px;
+  align-items: center;
+}
+.constellation-search {
+  flex: 1;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  outline: none;
+}
+.constellation-search:focus {
+  border-color: rgba(var(--electric-rgb), 0.45);
+}
+.constellation-search::placeholder {
+  color: var(--text-faint);
+}
+.constellation-filter-btn {
+  padding: 5px 10px;
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 150ms, border-color 150ms, color 150ms;
+}
+.constellation-filter-btn:hover { color: var(--glow); }
+.constellation-filter-btn.active {
+  background: rgba(var(--electric-rgb), 0.15);
+  border-color: rgba(var(--electric-rgb), 0.45);
+  color: var(--electric-soft);
+}
+
+/* Back-to-tree pill — compact icon + label */
+.constellation-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px 5px 8px;
+}
+.constellation-back-btn svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+}
+.constellation-back-btn:hover {
+  background: rgba(var(--electric-rgb), 0.08);
+  border-color: rgba(var(--electric-rgb), 0.35);
+}
+
+/* ==========================================================
+   Node drawer — slides in from the right when a node is clicked.
+   Constellation stays visible behind, so users never lose their place.
+   ========================================================== */
+.cn-drawer-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  pointer-events: auto;
+  background: rgba(6, 10, 22, 0.0); /* no dim — keep the map readable */
+  animation: cn-backdrop-in 180ms ease-out;
+}
+
+@keyframes cn-backdrop-in {
+  from { background: rgba(6, 10, 22, 0); }
+  to   { background: rgba(6, 10, 22, 0.35); }
+}
+
+.cn-drawer {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 300px;
+  max-width: 82%;
+  background: linear-gradient(180deg, rgba(11, 19, 48, 0.96) 0%, rgba(7, 13, 31, 0.96) 100%);
+  backdrop-filter: blur(14px);
+  box-shadow:
+    -12px 0 30px rgba(0, 0, 0, 0.55),
+    inset 1px 0 0 rgba(130, 170, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  color: var(--text);
+  animation: cn-drawer-slide 280ms cubic-bezier(0.2, 0.9, 0.3, 1);
+  overflow: hidden;
+}
+
+@keyframes cn-drawer-slide {
+  from { transform: translateX(100%); opacity: 0; }
+  to   { transform: translateX(0); opacity: 1; }
+}
+
+.cn-drawer-head {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 14px 14px 12px;
+  border-bottom: 1px solid rgba(74, 158, 255, 0.08);
+}
+.cn-drawer-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-shadow: 0 0 10px currentColor;
+  margin-top: 3px;
+}
+.cn-drawer-title h3 {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.cn-drawer-sub { margin-top: 2px; color: var(--text-faint); }
+.cn-drawer-close {
+  background: transparent;
+  border: none;
+  color: var(--text-faint);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px 7px;
+  border-radius: 5px;
+  transition: color 140ms, background 140ms;
+}
+.cn-drawer-close:hover {
+  color: var(--text);
+  background: var(--glass-1);
+}
+
+.cn-drawer-label { color: var(--text-faint); margin-bottom: 6px; }
+
+.cn-drawer-mastery {
+  padding: 14px 14px 10px;
+  border-bottom: 1px solid rgba(74, 158, 255, 0.06);
+}
+.cn-drawer-bar {
+  position: relative;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+.cn-drawer-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 400ms cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+.cn-drawer-stats {
+  list-style: none;
+  padding: 0;
+  margin: 10px 0 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 14px;
+}
+.cn-drawer-stats li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  color: var(--text-dim);
+}
+.cn-stat-k { color: var(--text-faint); }
+.cn-stat-v { color: var(--text); font-weight: 500; font-size: 11px; letter-spacing: 0.04em; }
+
+.cn-drawer-empty {
+  padding: 18px 16px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-dim);
+  border-bottom: 1px solid rgba(74, 158, 255, 0.06);
+}
+.cn-drawer-empty strong { color: var(--text); }
+
+.cn-drawer-connected {
+  padding: 14px 14px 6px;
+  flex: 1;
+  overflow-y: auto;
+}
+.cn-drawer-connected ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.cn-drawer-connected li {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 9px;
+  align-items: center;
+  padding: 6px 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+.cn-drawer-connected li:last-child { border-bottom: none; }
+.cn-connected-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  box-shadow: 0 0 6px currentColor;
+}
+.cn-connected-name { color: var(--text); }
+.cn-connected-mastery { color: var(--text-faint); }
+
+.cn-drawer-actions {
+  display: flex;
+  gap: 8px;
+  padding: 12px 14px 14px;
+  border-top: 1px solid rgba(74, 158, 255, 0.08);
+}
+.cn-drawer-btn {
+  flex: 1;
+  padding: 8px 12px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 7px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background 140ms, border-color 140ms, color 140ms, transform 140ms;
+}
+.cn-drawer-btn:hover {
+  background: var(--glass-2);
+  border-color: var(--glass-border-strong);
+  transform: translateY(-1px);
+}
+.cn-drawer-btn-primary {
+  background: rgba(var(--electric-rgb), 0.16);
+  border-color: rgba(var(--electric-rgb), 0.4);
+  color: var(--electric-soft);
+}
+.cn-drawer-btn-primary:hover {
+  background: rgba(var(--electric-rgb), 0.24);
+  border-color: rgba(var(--electric-rgb), 0.6);
+}
+
+/* Minimap — bottom-right overlay showing the whole constellation.
+   Click anywhere on it to pan the main camera to that world point. */
+.constellation-minimap {
+  position: absolute;
+  right: 12px;
+  bottom: 34px;
+  border-radius: 7px;
+  box-shadow:
+    0 6px 18px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(74, 158, 255, 0.12);
+  cursor: crosshair;
+  z-index: 3;
+  backdrop-filter: blur(6px);
+  transition: box-shadow 160ms, transform 160ms;
+}
+.constellation-minimap:hover {
+  box-shadow:
+    0 8px 22px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(74, 158, 255, 0.45);
+  transform: translateY(-1px);
+}
+
+/* Domain drill-down chips — appear below the area row when an area is selected.
+   Each chip: colored dot + label + detected/total count, click to fly-fit. */
+.constellation-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 10px 8px;
+}
+.constellation-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 6px;
+  background: var(--glass-1);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-dim);
+  transition: background 150ms, border-color 150ms, color 150ms, transform 140ms;
+}
+.constellation-chip:hover {
+  background: var(--glass-2);
+  color: var(--text);
+  transform: translateY(-1px);
+}
+.constellation-chip.active {
+  background: rgba(var(--electric-rgb), 0.1);
+  color: var(--text);
+}
+.constellation-chip .chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  box-shadow: 0 0 6px currentColor;
+}
+.constellation-chip .chip-label {
+  font-weight: 500;
+}
+.constellation-chip .chip-count {
+  color: var(--text-faint);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+}
+.constellation-chip.active .chip-count {
+  color: var(--text-dim);
+}
+
+/* Home (fit-all) — square icon-only button with reticle corner brackets */
+.constellation-home-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 7px;
+  width: 28px;
+  height: 26px;
+}
+.constellation-home-btn svg {
+  width: 13px;
+  height: 13px;
+  opacity: 0.78;
+  transition: opacity 150ms, transform 180ms;
+}
+.constellation-home-btn:hover {
+  background: rgba(var(--electric-rgb), 0.1);
+  border-color: rgba(var(--electric-rgb), 0.4);
+}
+.constellation-home-btn:hover svg {
+  opacity: 1;
+  transform: scale(1.08);
+}
+.constellation-home-btn:active svg {
+  transform: scale(0.94);
+}
+
+.constellation-domains {
+  display: flex;
+  gap: 4px;
+  padding: 2px 10px 6px;
+  flex-wrap: wrap;
+}
+.constellation-domain-btn {
+  padding: 4px 8px;
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition: background 150ms, border-color 150ms, color 150ms;
+}
+.constellation-domain-btn:hover { color: var(--text); }
+.constellation-domain-btn.active {
+  background: var(--glass-2);
+  border-color: var(--glass-border-strong);
+  color: var(--glow);
+}
+
+.ct-undiscovered {
+  color: var(--text-faint);
+  font-style: italic;
+  margin-bottom: 4px;
+}
+
+/* Constellation fullscreen overlay */
+.constellation-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(var(--ink-rgb), 0.96);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  animation: overlay-in 280ms cubic-bezier(0.16, 1, 0.3, 1);
+  display: flex;
+  flex-direction: column;
+}
+.constellation-fs-inner {
+  flex: 1;
+  height: 100% !important;
+  min-height: 0;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  display: flex;
+  flex-direction: column;
+}
+.constellation-fs-inner .constellation-filter-group {
+  flex: 0 0 auto;
+}
+.constellation-fs-inner .constellation-canvas {
+  flex: 1;
+  height: auto !important;
+  min-height: 0;
+}
+
+/* Area meta-filter buttons — slightly bolder than domain chips */
+.area-btn {
+  font-weight: 600;
+  letter-spacing: 0.14em;
+}
+.area-btn.active {
+  background: rgba(var(--electric-rgb), 0.18);
+  border-color: rgba(var(--electric-rgb), 0.5);
+  color: var(--electric-soft);
+}
+

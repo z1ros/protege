@@ -1,0 +1,721 @@
+/* ==========================================================
+   Dashboard upgrades — animations, trajectory, today, skill map v2
+   ========================================================== */
+
+/* ---- Level card: animated ring fill + pulse dot ---- */
+.level-ring-fill {
+  animation: ringFill 1400ms cubic-bezier(0.16, 1, 0.3, 1) 200ms backwards;
+}
+@keyframes ringFill {
+  from {
+    stroke-dasharray: 0 var(--ring-circ, 240);
+    opacity: 0.4;
+  }
+  to {
+    stroke-dasharray: var(--ring-dash, 120) calc(var(--ring-circ, 240) - var(--ring-dash, 120));
+    opacity: 1;
+  }
+}
+.level-ring-pulse circle:nth-child(2) {
+  transform-origin: center;
+  transform-box: fill-box;
+  animation: ringPulse 2200ms ease-in-out infinite;
+}
+@keyframes ringPulse {
+  0%, 100% { opacity: 0.5; r: 4; }
+  50%      { opacity: 0; r: 8; }
+}
+
+/* ---- Trajectory card ---- */
+/* ---- Trajectory chart (v2 — 365-day, bucketed, animated) ---- */
+.trajectory-card { padding: 14px 10px 8px; }
+.trajectory-svg {
+  display: block;
+  width: 100%;
+  /* Maintain aspect ratio so the viewBox isn't distorted */
+  height: auto;
+  aspect-ratio: 440 / 160;
+  cursor: crosshair;
+}
+.traj-y-label {
+  font-family: var(--font-mono);
+  font-size: 5.5px;
+  fill: var(--text-faint);
+  letter-spacing: 0.08em;
+  user-select: none;
+}
+.traj-x-label {
+  font-family: var(--font-mono);
+  font-size: 5px;
+  fill: var(--text-faint);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  user-select: none;
+}
+.traj-level-label {
+  font-family: var(--font-mono);
+  font-size: 5px;
+  fill: var(--electric-soft);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+/* Animated line draw-in when range changes */
+.traj-line-animated {
+  stroke-dasharray: 2000;
+  stroke-dashoffset: 2000;
+  animation: trajDraw 1200ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+@keyframes trajDraw {
+  to { stroke-dashoffset: 0; }
+}
+.traj-pulse {
+  transform-origin: center;
+  transform-box: fill-box;
+  animation: trajPulse 2200ms ease-in-out infinite;
+}
+@keyframes trajPulse {
+  0%, 100% { opacity: 0.8; }
+  50%      { opacity: 0; }
+}
+
+/* ---- Today card ---- */
+.today-card { padding: 14px 14px; }
+.today-total {
+  font-size: 20px;
+  color: rgba(var(--good-rgb), 0.95);
+  text-shadow: 0 0 20px rgba(var(--good-hi-rgb), 0.45);
+}
+.today-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+.today-row {
+  display: grid;
+  grid-template-columns: 52px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: rgba(var(--text-rgb), 0.018);
+  border: 1px solid rgba(var(--text-rgb), 0.04);
+  border-radius: 8px;
+  transition: background 180ms ease, border-color 180ms ease;
+}
+.today-row:hover {
+  background: rgba(var(--electric-rgb), 0.06);
+  border-color: rgba(var(--electric-rgb), 0.2);
+}
+.today-cluster {
+  font-size: 7px;
+  letter-spacing: 0.16em;
+  color: var(--electric-soft);
+  opacity: 0.75;
+}
+.today-concept {
+  font-size: 11px;
+  color: var(--glow);
+}
+.today-delta {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: rgba(var(--good-rgb), 0.92);
+  font-weight: 500;
+}
+
+/* ---- Skill map v2: pulse + orbit + legend ---- */
+.cluster-core {
+  transform-origin: center;
+  transform-box: fill-box;
+}
+.cluster-core-active {
+  animation: clusterPulse 2400ms ease-in-out infinite;
+}
+@keyframes clusterPulse {
+  0%, 100% { filter: drop-shadow(0 0 1px rgba(var(--sky-rgb), 0.7)); }
+  50%      { filter: drop-shadow(0 0 3px rgba(var(--sky-rgb), 1)); }
+}
+.skill-orbit {
+  transform-origin: var(--orbit-cx, 50px) var(--orbit-cy, 50px);
+  animation: skillOrbit 14s linear infinite;
+}
+@keyframes skillOrbit {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.skill-cluster-label {
+  font-family: var(--font-mono);
+  font-size: 3.6px;
+  fill: var(--text-dim);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+.skill-legend {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px 10px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(var(--text-rgb), 0.05);
+}
+.skill-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--text-dim);
+  opacity: 0.8;
+}
+.skill-legend-item.active {
+  color: var(--glow);
+  opacity: 1;
+}
+.skill-legend-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(var(--electric-rgb), 0.85);
+  box-shadow: 0 0 6px rgba(var(--electric-rgb), 0.6);
+}
+.skill-legend-item.active .skill-legend-dot {
+  background: var(--glow);
+  box-shadow: 0 0 8px rgba(var(--sky-rgb), 0.9);
+}
+.skill-legend-label {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-family: var(--font-mono);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.skill-legend-mastery {
+  font-size: 8px;
+  color: var(--text-faint);
+  letter-spacing: 0.1em;
+}
+
+/* ---- Mistakes card rework: full-width rows, sparkline + from→to ---- */
+.mistakes-card { padding: 14px 12px; }
+.mistakes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.mistake-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  background: rgba(var(--text-rgb), 0.02);
+  border: 1px solid rgba(var(--text-rgb), 0.04);
+  border-radius: 8px;
+}
+.mistake-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.mistake-name {
+  font-size: 11px;
+  color: var(--glow);
+}
+.mistake-delta {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: rgba(var(--good-rgb), 0.92);
+  letter-spacing: 0.04em;
+}
+.mistake-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.mistake-spark {
+  width: 56px;
+  height: 18px;
+  display: block;
+  flex-shrink: 0;
+}
+.mistake-fromto {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.mistake-from {
+  font-size: 9px;
+  color: var(--text-faint);
+  letter-spacing: 0.08em;
+  opacity: 0.7;
+}
+.mistake-arrow {
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.mistake-to {
+  font-size: 18px;
+  color: var(--glow);
+  line-height: 1;
+}
+
+/* ---- Percentile peer marker ---- */
+.pct-bar {
+  position: relative;
+  overflow: visible;
+}
+.pct-bar-peer {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 1.5px;
+  background: rgba(var(--text-rgb), 0.55);
+  border-radius: 1px;
+  transform: translateX(-50%);
+}
+.pct-bar-you {
+  position: absolute;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--glow);
+  transform: translateY(-50%);
+  box-shadow: 0 0 8px rgba(var(--sky-rgb), 0.9);
+}
+
+/* ---- Radar: subtle draw-in for polygon ---- */
+.radar-polygon {
+  transform-origin: center;
+  transform-box: fill-box;
+  animation: radarIn 900ms cubic-bezier(0.16, 1, 0.3, 1) 400ms backwards;
+}
+@keyframes radarIn {
+  from { opacity: 0; transform: scale(0.7); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.radar-label {
+  font-family: var(--font-mono);
+  font-size: 7.5px;
+  fill: var(--text-dim);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+
+/* ---- Dim utility used in dash card titles ---- */
+.dash-card-title .dim { color: var(--text-faint); opacity: 0.8; }
+
+/* ==========================================================
+   Dashboard v2 — fixes + interactive upgrades
+   ========================================================== */
+
+/* ---- Cinematic backgrounds on cards (faint, desaturated) ----
+   The actual image URL is passed inline from ConceptsDashboard.tsx via the
+   --bg-img CSS custom property, so Vite resolves + hashes each image through
+   its asset pipeline. Keeps the CSS free of relative asset paths that would
+   break during PNG→WebP conversion. */
+.has-cinema-bg { position: relative; isolation: isolate; overflow: hidden; }
+.has-cinema-bg::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: var(--bg-img);
+  background-size: cover;
+  background-position: center;
+  opacity: 0.1;
+  mix-blend-mode: screen;
+  pointer-events: none;
+  z-index: 0;
+  filter: saturate(0.7) contrast(1.05);
+}
+.has-cinema-bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 50%, transparent 30%, rgba(var(--ink-rgb), 0.6) 100%);
+  pointer-events: none;
+  z-index: 1;
+}
+.has-cinema-bg > * { position: relative; z-index: 2; }
+
+/* ---- FIX: ring number is now inside the SVG (perfectly centered) ---- */
+.level-ring-num-svg {
+  font-family: var(--font-display);
+  font-style: normal;
+  font-weight: 600;
+  font-size: 30px;
+  fill: var(--glow);
+  letter-spacing: -0.03em;
+}
+.level-left { width: 100px; height: 100px; }
+
+/* ---- Level trend grid slightly roomier ---- */
+.level-trend { gap: 10px 12px; }
+.trend-val { font-size: 13px; }
+
+/* ---- Trajectory v2: range selector + hover tooltip ---- */
+.traj-range {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: rgba(var(--text-rgb), 0.04);
+  border: 1px solid var(--glass-border);
+  border-radius: 7px;
+}
+.traj-range-btn {
+  padding: 3px 8px;
+  background: transparent;
+  border: none;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: color 150ms ease, background 150ms ease;
+}
+.traj-range-btn:hover { color: var(--text); }
+.traj-range-btn.active {
+  color: var(--glow);
+  background: rgba(var(--electric-rgb), 0.18);
+  box-shadow: inset 0 0 0 1px rgba(var(--electric-rgb), 0.35);
+}
+.traj-delta-note {
+  margin: 4px 0 2px;
+  color: var(--electric-soft);
+  font-size: 8px;
+  letter-spacing: 0.16em;
+}
+
+/* Custom date range picker row */
+.traj-custom-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 2px;
+  animation: dashCardIn 280ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.traj-date-label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 8px;
+  color: var(--text-faint);
+  letter-spacing: 0.14em;
+  flex: 1;
+}
+.traj-month-select {
+  width: 100%;
+  font-size: 10px;
+  padding: 5px 24px 5px 8px;
+}
+.traj-date-sep {
+  color: var(--text-faint);
+  font-size: 12px;
+  margin-top: 14px; /* align with input, not label */
+}
+
+/* Tooltip — follows both X and Y of the hovered data point */
+.traj-svg-wrap { position: relative; overflow: visible; }
+.traj-tooltip {
+  position: absolute;
+  /* left + top set inline from the hovered point's position */
+  transform: translate(-50%, calc(-100% - 14px));
+  min-width: 72px;
+  padding: 7px 12px 8px;
+  background: rgba(var(--ink-rgb), 0.9);
+  border: 1px solid rgba(var(--electric-rgb), 0.42);
+  border-radius: 10px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow:
+    0 4px 20px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(var(--text-rgb), 0.06);
+  pointer-events: none;
+  text-align: center;
+  z-index: 5;
+  white-space: nowrap;
+}
+/* Keep tooltip from overflowing left/right edges */
+.traj-tooltip { max-width: 160px; }
+.traj-tt-date {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  color: var(--text-faint);
+  letter-spacing: 0.12em;
+}
+.traj-tt-value {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 20px;
+  color: var(--glow);
+  line-height: 1;
+  margin: 3px 0 0;
+  letter-spacing: -0.02em;
+}
+.traj-tt-event {
+  font-family: var(--font-mono);
+  font-size: 7px;
+  color: var(--electric-soft);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+
+/* ---- Focus card: full-width, bigger, clearer ---- */
+.focus-card {
+  padding: 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.focus-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.focus-name {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-weight: 500;
+  font-size: 24px;
+  color: var(--glow);
+  letter-spacing: -0.01em;
+  margin-top: 4px;
+}
+.focus-next {
+  margin-top: 4px;
+  font-size: 8px;
+  color: var(--text-faint);
+  letter-spacing: 0.14em;
+}
+.focus-next .dim { color: var(--text); }
+.focus-pct-big {
+  font-size: 36px;
+  color: var(--glow);
+  text-shadow: 0 0 20px rgba(var(--electric-rgb), 0.4);
+  line-height: 1;
+  flex-shrink: 0;
+}
+.focus-bar {
+  height: 5px;
+  background: rgba(var(--text-rgb), 0.06);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.focus-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--electric-deep), var(--electric));
+  box-shadow: 0 0 10px rgba(var(--electric-rgb), 0.55);
+  transition: width 700ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ---- Skill map: expand button + zoom overlay ---- */
+.skill-map-head-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.skill-expand-btn {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(var(--text-rgb), 0.04);
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
+}
+.skill-expand-btn svg { width: 13px; height: 13px; }
+.skill-expand-btn:hover {
+  background: rgba(var(--electric-rgb), 0.1);
+  color: var(--glow);
+  border-color: rgba(var(--electric-rgb), 0.35);
+}
+
+.skill-zoom-overlay {
+  position: fixed;
+  inset: var(--header-h) 0 0 0;
+  z-index: 80;
+  background: rgba(var(--ink-rgb), 0.92);
+  backdrop-filter: blur(24px) saturate(1.1);
+  -webkit-backdrop-filter: blur(24px) saturate(1.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: dashCardIn 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.skill-zoom-inner {
+  width: 100%;
+  max-width: 700px;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.skill-zoom-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.skill-zoom-close {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(var(--text-rgb), 0.05);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 150ms ease, transform 150ms ease;
+}
+.skill-zoom-close svg { width: 14px; height: 14px; }
+.skill-zoom-close:hover { color: var(--glow); transform: rotate(90deg); }
+.skill-zoom-map {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.skill-map.skill-map-large {
+  max-width: none;
+  max-height: none;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  max-height: 60vh;
+}
+.skill-node-label {
+  font-family: var(--font-mono);
+  font-size: 2.2px;
+  fill: rgba(var(--text-rgb), 0.75);
+  letter-spacing: 0.08em;
+  text-transform: lowercase;
+}
+
+/* ---- Mistakes: single-row horizontal layout ---- */
+.mistakes-list { gap: 2px; }
+.mistake-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  border-bottom: 1px solid rgba(var(--text-rgb), 0.045);
+}
+.mistake-row:last-child { border-bottom: none; }
+.mistake-top,
+.mistake-bottom { display: contents; }
+.mistake-name {
+  font-size: 11px;
+  color: var(--glow);
+  white-space: nowrap;
+}
+.mistake-spark {
+  width: 72px;
+  height: 22px;
+  display: block;
+  flex-shrink: 0;
+}
+.mistake-fromto {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--font-mono);
+}
+.mistake-from {
+  font-size: 10px;
+  color: var(--text-faint);
+  opacity: 0.75;
+}
+.mistake-arrow {
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.mistake-to {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-weight: 500;
+  font-size: 20px;
+  color: var(--glow);
+  line-height: 1;
+}
+.mistake-delta {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: rgba(var(--good-rgb), 0.95);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  min-width: 42px;
+  text-align: right;
+}
+
+/* ---- Radar values under labels + hover highlight ---- */
+.radar-value {
+  font-family: var(--font-mono);
+  font-size: 6.5px;
+  fill: var(--electric-soft);
+  letter-spacing: 0.1em;
+  font-weight: 500;
+}
+.radar-label { font-size: 7.5px; }
+
+/* ---- Mode cards: only 2 now — force 2-col even narrow ---- */
+.dash-modes {
+  grid-template-columns: 1fr 1fr;
+}
+@media (max-width: 320px) {
+  .dash-modes { grid-template-columns: 1fr; }
+}
+
+/* Remove the dash-row-2 since Focus and Mistakes are full-width now */
+.dash-row-2 { display: none; }
+
+/* Y-axis IQ labels on trajectory chart */
+.traj-y-label {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  fill: rgba(var(--text-rgb), 0.3);
+  letter-spacing: 0.04em;
+}
+
+/* Tooltip date row */
+.traj-tt-date {
+  color: var(--text-faint);
+  margin-bottom: 2px;
+  font-size: 8px;
+}
+
+/* Trajectory event badge in tooltip */
+.traj-tt-event {
+  margin-top: 4px;
+  padding: 3px 8px;
+  background: rgba(var(--electric-rgb), 0.16);
+  border: 1px solid rgba(var(--electric-rgb), 0.4);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--electric-soft);
+  text-align: center;
+}
+

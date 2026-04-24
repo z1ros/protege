@@ -90,6 +90,14 @@
         "title": "Protege: What does this file do?"
       },
       {
+        "command": "protege.greetCurrentFile",
+        "title": "Protege: Replay file greeting"
+      },
+      {
+        "command": "protege.playCurrentFileOverview",
+        "title": "Protege: Play overview of current file"
+      },
+      {
         "command": "protege.weakSpots",
         "title": "Protege: Show my weak spots"
       },
@@ -164,6 +172,38 @@
       {
         "command": "protege.showStoreDiff",
         "title": "Protege: Show Echo Store Diff"
+      },
+      {
+        "command": "protege.toggleInsetPreview",
+        "title": "Protege: Preview inset-style finding (experimental)"
+      },
+      {
+        "command": "protege.tour.startCodebase",
+        "title": "Protege: Tour this codebase"
+      },
+      {
+        "command": "protege.tour.next",
+        "title": "Protege: Tour — next stop"
+      },
+      {
+        "command": "protege.tour.stop",
+        "title": "Protege: Tour — stop"
+      },
+      {
+        "command": "protege.explainBack.start",
+        "title": "Protege: Explain this code back to me"
+      },
+      {
+        "command": "protege.explainBack.stop",
+        "title": "Protege: Explain-back — stop session"
+      },
+      {
+        "command": "protege.ownership.acceptChip",
+        "title": "Protege: Ownership — open review dispatcher"
+      },
+      {
+        "command": "protege.ownership.dismissChip",
+        "title": "Protege: Ownership — dismiss chip"
       }
     ],
     "configuration": {
@@ -188,6 +228,21 @@
           ],
           "default": "text",
           "description": "How Protege delivers the Ghost Lens \"Explain\" action. `text` (default) opens the sidebar with a chat reply. `voice` speaks a short explanation through Kokoro TTS while your eyes stay on the code. `both` does both at once. Modifier keys still override per-click: hold ⌘ to force voice, ⇧ to force text."
+        },
+        "protege.ownership.invitations": {
+          "type": "string",
+          "enum": [
+            "off",
+            "natural-breaks",
+            "aggressive"
+          ],
+          "default": "natural-breaks",
+          "description": "When Protege nudges you to review auto-inserted (vibecoded) code. `natural-breaks` (default) shows a small status-bar chip at most once per break type per day. `aggressive` drops the per-day dedupe (useful while tuning). `off` disables all ownership nudges."
+        },
+        "protege.ownership.autoTrackingEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Track which lines of each file you typed vs. auto-inserted from AI tools. Required for the ownership score + vibecode-review invitations. Turn off to fully disable Protege's ownership tracking (your typed code is never sent to any server — this is all local)."
         }
       }
     },
@@ -226,6 +281,11 @@
         "command": "protege.showHint",
         "key": "cmd+k h",
         "when": "editorTextFocus"
+      },
+      {
+        "command": "protege.explainBack.start",
+        "key": "cmd+k r",
+        "when": "editorTextFocus && editorHasSelection"
       },
       {
         "command": "protege.toggleMaxPlanBackend",
@@ -280,21 +340,27 @@
     "@protege/types": "workspace:*",
     "@shikijs/langs": "^4.0.2",
     "@shikijs/themes": "^4.0.2",
+    "@shikijs/transformers": "^4.0.2",
+    "@shikijs/twoslash": "^4.0.2",
+    "@typescript/vfs": "^1.6.4",
     "d3-force": "^3.0.0",
-    "highlight.js": "^11.11.1",
     "lucide-react": "^1.8.0",
     "node-llama-cpp": "^3.18.1",
+    "prism-themes": "^1.9.0",
+    "prismjs": "^1.30.0",
     "react-markdown": "^10.1.0",
     "recharts": "^3.8.1",
     "remark-gfm": "^4.0.1",
     "shiki": "^4.0.2",
-    "simple-icons": "^16.16.0"
+    "simple-icons": "^16.16.0",
+    "twoslash": "^0.3.8"
   },
   "devDependencies": {
     "@svgr/core": "^8.1.0",
     "@svgr/plugin-jsx": "^8.1.0",
     "@types/d3-force": "^3.0.10",
     "@types/node": "^22.0.0",
+    "@types/prismjs": "^1.26.6",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
     "@types/vscode": "^1.90.0",
@@ -304,7 +370,7 @@
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "tsup": "^8.3.0",
-    "typescript": "^5.6.0",
+    "typescript": "^5.9.3",
     "unplugin-icons": "^23.0.1",
     "vite": "^5.4.0"
   }
