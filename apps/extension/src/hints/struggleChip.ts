@@ -205,7 +205,7 @@ Sentence 2: the next concrete thing to try.
 NO preamble. NO "Don't worry, this happens." NO metaphors. Start with the noun.
 If you genuinely don't know, return SKIP.`;
 
-  const reply = await aiQuery(prompt, 180, { kind: "teach" });
+  const reply = await aiQuery(prompt, 180, { kind: "scan" });
   if (!reply) return null;
   const cleaned = cleanReply(reply);
   if (!cleaned || /^skip\b/i.test(cleaned)) return null;

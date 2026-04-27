@@ -3,26 +3,27 @@ import Anthropic from "@anthropic-ai/sdk";
 import type {
   ChatRunRequest,
   ChatRunResponse,
+  ChatTier,
   OAITurn,
   ToolCall,
 } from "@protege/types";
-import {
-  anthropic,
-  MODEL,
-  MENTOR_SYSTEM_PROMPT,
-  TOOL_DEFINITIONS,
-} from "../anthropic.js";
+import { MENTOR_SYSTEM_PROMPT } from "../anthropic.js";
+import { callChat, getProvider } from "../llm.js";
+import { githubAuth, resolveUserId } from "../middleware/auth.js";
 import { buildSystemPrompt, buildLearnerBlock } from "../prompts/persona.js";
 import {
-  addMemory,
   removeMemory,
   getMemorySnapshot,
+  getRelevantMemories,
   openSession,
   touchSessionFile,
   type MemoryType,
 } from "../store.js";
+import { reconcileAndStore } from "../memoryReconciler.js";
 
 export const chatRoute = new Hono();
+
+chatRoute.use("*", githubAuth());
 
 /**
  * Tool-enabled chat using Claude Sonnet 4.5 with prompt caching.
@@ -37,15 +38,32 @@ export const chatRoute = new Hono();
  * multi-turn tool rounds per user question.
  */
 /**
- * Map the client-side backend preference to a concrete Anthropic model id.
+ * Map the client-side backend preference + tier to a concrete Anthropic
+ * model id.
  *
- * TEMP (2026-04-18): Sonnet is disabled server-side for cost reasons. Every
- * cloud call — regardless of the client's stated preference — routes to
- * Haiku. To restore Sonnet, bring back the original branch on `backend ===
- * "sonnet"` and re-enable `ANTHROPIC_SONNET_MODEL` in env.
+ * TEMP (2026-04-18): Sonnet is disabled server-side for cost reasons.
+ * Every cloud Anthropic call — regardless of the client's stated
+ * preference — routes to Haiku, so cheap and premium currently collapse
+ * to the same id on the Anthropic side. When Sonnet is re-enabled,
+ * branch on `tier === "premium"` here.
  */
-function resolveModel(_backend: ChatRunRequest["backend"]): string {
+function resolveAnthropicModel(
+  _backend: ChatRunRequest["backend"],
+  _tier: ChatTier
+): string {
   return process.env.ANTHROPIC_HAIKU_MODEL ?? "claude-haiku-4-5";
+}
+
+/**
+ * Map the tier to a concrete OpenAI model id. Cheap → gpt-4.1-mini
+ * ($0.40/$1.60 per MTok). Premium → gpt-4.1 ($2/$8 per MTok). Both can
+ * be overridden via env: OPENAI_CHEAP_MODEL / OPENAI_MODEL.
+ */
+function resolveOpenAIModel(tier: ChatTier): string {
+  if (tier === "cheap") {
+    return process.env.OPENAI_CHEAP_MODEL ?? "gpt-4.1-mini";
+  }
+  return process.env.OPENAI_MODEL ?? "gpt-4.1";
 }
 
 /**
@@ -66,9 +84,11 @@ function maxTokensForMode(mode: string): number {
 
 chatRoute.post("/", async (c) => {
   const body = (await c.req.json()) as ChatRunRequest;
-  const userId = body.userId ?? c.req.header("x-user-id") ?? "local-dev";
+  const userId = resolveUserId(c, body.userId);
   const mode = body.mode ?? "text";
-  const model = resolveModel(body.backend);
+  const tier: ChatTier = body.tier ?? "premium";
+  const anthropicModel = resolveAnthropicModel(body.backend, tier);
+  const openaiModel = resolveOpenAIModel(tier);
   const maxTokens = maxTokensForMode(mode);
 
   let messages: OAITurn[] = body.messages ?? [];
@@ -83,8 +103,28 @@ chatRoute.post("/", async (c) => {
   const isFreshTurn = !hasSystemMessage && !!body.newUserMessage;
 
   if (isFreshTurn) {
+    // Build a query string for contextual retrieval: the new user message
+    // plus a short slice of the active file. This lets cosine ranking pick
+    // memories tied to *this* moment instead of just the most recent ones.
+    // Fallback to the legacy non-semantic snapshot when there's no signal
+    // to retrieve against (rare — fresh turns always carry newUserMessage).
+    const retrievalQuery = [
+      body.newUserMessage ?? "",
+      body.workspace?.activeFile?.path ?? "",
+      body.workspace?.activeFile?.language ?? "",
+      body.workspace?.activeFile?.selection ??
+        body.workspace?.activeFile?.content?.slice(0, 1500) ??
+        "",
+    ]
+      .filter((s) => s)
+      .join("\n");
+
+    const memoriesPromise = retrievalQuery.trim()
+      ? getRelevantMemories(userId, retrievalQuery, 12)
+      : getMemorySnapshot(userId, 12);
+
     const [memories, sessionInfo] = await Promise.all([
-      getMemorySnapshot(userId, 12),
+      memoriesPromise,
       openSession(userId),
     ]);
 
@@ -194,54 +234,32 @@ chatRoute.post("/", async (c) => {
   // read_file before answering. Disabling tools forces a direct reply.
   const useTools = body.noTools !== true;
 
+  // Log the model that will ACTUALLY be used. The Anthropic id and
+  // OpenAI id are resolved separately above; the active provider
+  // decides which one fires.
+  const provider = getProvider();
+  const loggedModel = provider === "openai" ? openaiModel : anthropicModel;
   console.log(
-    `[protege] /chat provider=anthropic model=${model} requestedBackend=${body.backend ?? "default"} tools=${useTools ? "on" : "off"} turns=${messages.length} lastRole=${messages.at(-1)?.role}`
+    `[protege] /chat provider=${provider} model=${loggedModel} tier=${tier} requestedBackend=${body.backend ?? "default"} tools=${useTools ? "on" : "off"} turns=${messages.length} lastRole=${messages.at(-1)?.role}`
   );
 
-  // Two-block system with selective caching:
-  //   [0] stable persona — identical bytes for every user of Protege,
-  //       so the cache entry is shared globally. At any scale >1 call per
-  //       5 min, this is essentially always warm → 90% off on ~3000 tokens.
-  //   [1] dynamic tail — memory + session + workspace, varies per user.
-  //       Not cached (would only help within a single user's session and
-  //       adds write-cost overhead).
-  const systemBlocks: Anthropic.Messages.TextBlockParam[] = [
-    {
-      type: "text",
-      text: systemStable,
-      cache_control: { type: "ephemeral" },
-    },
-  ];
-  if (systemDynamic) {
-    systemBlocks.push({ type: "text", text: systemDynamic });
-  }
-
-  const res = await anthropic.messages.create({
-    model,
-    max_tokens: maxTokens,
-    system: systemBlocks,
-    ...(useTools ? { tools: TOOL_DEFINITIONS } : {}),
-    messages: anthropicMessages,
+  const result = await callChat({
+    anthropicModel,
+    openaiModel,
+    maxTokens,
+    systemStable,
+    systemDynamic,
+    anthropicMessages,
+    useTools,
   });
 
   console.log(
-    `[protege] /chat stop=${res.stop_reason} usage=`,
-    res.usage
+    `[protege] /chat provider=${result.providerUsed} model=${result.modelUsed} stop=${result.stopReason} usage=`,
+    result.usage
   );
 
-  // Parse assistant response into OAITurn-shaped history entry + extract tool calls
-  const textParts: string[] = [];
-  const toolUses: Array<{ id: string; name: string; input: unknown }> = [];
-
-  for (const block of res.content) {
-    if (block.type === "text") {
-      textParts.push(block.text);
-    } else if (block.type === "tool_use") {
-      toolUses.push({ id: block.id, name: block.name, input: block.input });
-    }
-  }
-
-  const assistantText = textParts.join("\n").trim();
+  const toolUses = result.toolUses;
+  const assistantText = result.text;
 
   // Append assistant turn to the running conversation
   messages.push({
@@ -275,12 +293,18 @@ chatRoute.post("/", async (c) => {
       let resultText = "";
       try {
         if (tu.name === "remember") {
-          const row = await addMemory(
+          const result = await reconcileAndStore(
             userId,
             String(args.type ?? "context") as MemoryType,
             String(args.content ?? "")
           );
-          resultText = `Remembered (id=${row.id}, type=${row.type})`;
+          if (result.row) {
+            resultText = `${result.decision.action.toLowerCase()} (id=${result.row.id}, type=${result.row.type})`;
+          } else if (result.decision.action === "DELETE") {
+            resultText = `Removed superseded memory (id=${result.decision.targetId ?? "?"})`;
+          } else {
+            resultText = "Skipped (duplicate of existing memory)";
+          }
         } else if (tu.name === "forget") {
           const ok = await removeMemory(userId, String(args.id ?? ""));
           resultText = ok ? "Forgotten" : "Nothing to forget (id not found)";
@@ -313,33 +337,22 @@ chatRoute.post("/", async (c) => {
       return c.json<ChatRunResponse>({ toolCalls, messages });
     }
 
-    // Pure server-tool round — synthesize a continuation by calling Claude
+    // Pure server-tool round — synthesize a continuation by calling the LLM
     // again with the tool results appended. This keeps the UX instant
-    // (no extra client roundtrip) when Claude is just updating memory.
+    // (no extra client roundtrip) when the model is just updating memory.
     const { systemStable: ss2, systemDynamic: sd2, anthropicMessages: am2 } =
       toAnthropic(messages);
-    const sysBlocks2: Anthropic.Messages.TextBlockParam[] = [
-      { type: "text", text: ss2, cache_control: { type: "ephemeral" } },
-    ];
-    if (sd2) sysBlocks2.push({ type: "text", text: sd2 });
-    const res2 = await anthropic.messages.create({
-      model,
-      max_tokens: maxTokens,
-      system: sysBlocks2,
-      tools: TOOL_DEFINITIONS,
-      messages: am2,
+    const result2 = await callChat({
+      anthropicModel,
+      openaiModel,
+      maxTokens,
+      systemStable: ss2,
+      systemDynamic: sd2,
+      anthropicMessages: am2,
+      useTools: true,
     });
-    const text2 = res2.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as { type: "text"; text: string }).text)
-      .join("\n")
-      .trim();
-    const toolUses2 = res2.content.filter((b) => b.type === "tool_use") as Array<{
-      type: "tool_use";
-      id: string;
-      name: string;
-      input: unknown;
-    }>;
+    const text2 = result2.text;
+    const toolUses2 = result2.toolUses;
 
     messages.push({
       role: "assistant",

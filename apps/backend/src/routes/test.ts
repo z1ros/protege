@@ -1,18 +1,23 @@
 import { Hono } from "hono";
-import { anthropic, MODEL as ANTHROPIC_MODEL } from "../anthropic.js";
+import { callOneShot, getProvider } from "../llm.js";
 
 export const testRoute = new Hono();
 
 testRoute.get("/", async (c) => {
-  const keyPreview = process.env.ANTHROPIC_API_KEY
-    ? `${process.env.ANTHROPIC_API_KEY.slice(0, 11)}…${process.env.ANTHROPIC_API_KEY.slice(-4)}`
+  const provider = getProvider();
+  const apiKey =
+    provider === "openai"
+      ? process.env.OPENAI_API_KEY
+      : process.env.ANTHROPIC_API_KEY;
+  const keyPreview = apiKey
+    ? `${apiKey.slice(0, 11)}…${apiKey.slice(-4)}`
     : "(missing)";
 
   const result = {
-    provider: "anthropic",
-    model: ANTHROPIC_MODEL,
+    provider,
+    model: "" as string,
     key: keyPreview,
-    keyLength: process.env.ANTHROPIC_API_KEY?.length ?? 0,
+    keyLength: apiKey?.length ?? 0,
     ok: false as boolean,
     reply: "" as string,
     error: null as string | null,
@@ -22,15 +27,15 @@ testRoute.get("/", async (c) => {
 
   const started = Date.now();
   try {
-    const res = await anthropic.messages.create({
-      model: ANTHROPIC_MODEL,
-      max_tokens: 64,
-      messages: [{ role: "user", content: "Reply with exactly: pong" }],
+    const { text, usage, modelUsed } = await callOneShot({
+      userText: "Reply with exactly: pong",
+      maxTokens: 64,
+      cacheSystem: false,
     });
     result.ok = true;
-    const textBlock = res.content.find((b) => b.type === "text");
-    result.reply = textBlock && textBlock.type === "text" ? textBlock.text : "";
-    result.usage = res.usage;
+    result.reply = text;
+    result.usage = usage;
+    result.model = modelUsed;
   } catch (err) {
     result.ok = false;
     result.error = err instanceof Error ? err.message : String(err);

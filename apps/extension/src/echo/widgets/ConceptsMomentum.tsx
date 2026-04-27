@@ -36,7 +36,6 @@ export function ConceptsMomentum({
     <section className="echo-widget echo-concepts-momentum" data-widget="W16">
       <header className="echo-widget-head">
         <h2>Concepts momentum</h2>
-        <span className="echo-widget-tag">W16</span>
       </header>
       <div className="echo-widget-body">
         {loading && !data ? (

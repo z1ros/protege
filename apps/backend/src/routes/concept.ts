@@ -1,7 +1,9 @@
 import { Hono } from "hono";
+import { githubAuth, resolveUserId } from "../middleware/auth.js";
 import {
   ensureUser,
   getAuthorshipRatio,
+  readLikelyKnownConcepts,
   recordConcepts,
   setConceptAuthoredFlag,
   setConceptAuthorshipRatio,
@@ -10,6 +12,8 @@ import {
 import { sanitizeLanguage } from "./echo.js";
 
 export const conceptRoute = new Hono();
+
+conceptRoute.use("*", githubAuth());
 
 /** Ratio threshold above which a concept is considered "authored" by the
  *  user in a given file. Rv5.A: shared constant — keep in one place. */
@@ -26,9 +30,20 @@ interface Body {
   language?: string | null;
 }
 
+/** Returns concept names the user is likely to already know, so the
+ *  Did-You-Know tip selector on the extension can skip them before picking
+ *  a concept to teach. Heuristic-only (no LLM); see
+ *  `readLikelyKnownConcepts` for the policy. */
+conceptRoute.get("/known", async (c) => {
+  const userId = resolveUserId(c, undefined);
+  await ensureUser(userId);
+  const known = await readLikelyKnownConcepts(userId);
+  return c.json({ known });
+});
+
 conceptRoute.post("/", async (c) => {
   const body = (await c.req.json()) as Body;
-  const userId = body.userId ?? c.req.header("x-user-id") ?? "local-dev";
+  const userId = resolveUserId(c, body.userId);
   await ensureUser(userId);
 
   const result = await recordConcepts(userId, {

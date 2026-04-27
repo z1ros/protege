@@ -47,4 +47,6 @@
 @import "./overlays/streak-journal.css";
 @import "./overlays/tip-detail.css";
 
+@import "./auth-gate.css";
+
 @import "./responsive.css";

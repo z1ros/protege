@@ -50,7 +50,6 @@ export function LineThatWontDie({
     <section className="echo-widget echo-rewrite" data-widget="W10">
       <header className="echo-widget-head">
         <h2>The line that won&rsquo;t die</h2>
-        <span className="echo-widget-tag">W10</span>
       </header>
       <div className="echo-widget-body">
         {loading ? (

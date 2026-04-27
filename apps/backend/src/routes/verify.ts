@@ -6,7 +6,8 @@ import type {
   Understanding,
   UnderstandingAction,
 } from "@protege/types";
-import { anthropic, MODEL } from "../anthropic.js";
+import { callOneShot } from "../llm.js";
+import { githubAuth } from "../middleware/auth.js";
 import {
   VERIFIER_SYSTEM_PROMPT,
   buildVerifierUserPrompt,
@@ -34,6 +35,8 @@ import {
  */
 
 export const verifyRoute = new Hono();
+
+verifyRoute.use("*", githubAuth());
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const CACHE_MAX_ENTRIES = 200;
@@ -180,16 +183,12 @@ verifyRoute.post("/", async (c) => {
   );
 
   try {
-    const res = await anthropic.messages.create({
-      model: MODEL,
-      max_tokens: 300,
-      system: VERIFIER_SYSTEM_PROMPT,
-      messages: [{ role: "user", content: userPrompt }],
+    const { text } = await callOneShot({
+      systemText: VERIFIER_SYSTEM_PROMPT,
+      userText: userPrompt,
+      maxTokens: 300,
+      cacheSystem: false,
     });
-    const text = res.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as { type: "text"; text: string }).text)
-      .join("\n");
     const understanding = parseVerifierReply(text, forceProceed);
     if (!understanding) {
       console.warn(

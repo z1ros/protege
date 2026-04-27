@@ -169,6 +169,15 @@ const THIRTY_FIVE_DAYS_MS = 35 * 24 * 60 * 60 * 1000;
 const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
 const ISO_DATE_LEN = 10; // "YYYY-MM-DD"
 
+/**
+ * Per-userId guard so two concurrent dashboard requests for the same
+ * not-yet-bootstrapped user don't both run the full hydrate in parallel.
+ * The second caller returns immediately; correctness is preserved because
+ * `markEchoBootstrapped` only flips on success, so a failed first call
+ * will be retried by the next request after this set clears.
+ */
+const coldSyncInFlight = new Set<string>();
+
 /** Date-arithmetic helper for behavior_daily_rollups window. */
 function yyyymmdd(d: Date): string {
   return d.toISOString().slice(0, ISO_DATE_LEN);
@@ -198,8 +207,23 @@ export async function pullFromSupabaseIfCold(
   if (!isSupabaseEnabled()) return;
   if (!userId) return;
 
-  if (await isEchoBootstrapped(userId)) return;
+  // Claim the in-flight marker synchronously BEFORE any await so concurrent
+  // callers can't all pass the has()-check during the bootstrap yield.
+  if (coldSyncInFlight.has(userId)) return;
+  coldSyncInFlight.add(userId);
 
+  try {
+    if (await isEchoBootstrapped(userId)) return;
+    await runColdSync(userId, workspaceRoot);
+  } finally {
+    coldSyncInFlight.delete(userId);
+  }
+}
+
+async function runColdSync(
+  userId: string,
+  workspaceRoot?: string | null
+): Promise<void> {
   const now = Date.now();
   const since30d = now - THIRTY_DAYS_MS;
   const since35d = now - THIRTY_FIVE_DAYS_MS;
@@ -374,8 +398,13 @@ export async function pullFromSupabaseIfCold(
       try {
         const rows = await cloudReadEchoEvents(userId, since35d);
         if (rows.length > 0) {
+          // Carry the cloud row's client_event_id back into the local
+          // store as the row id. This way a future shadow-write that
+          // re-pushes the same event upserts against the existing cloud
+          // row instead of inserting a duplicate.
           const batch: EchoEventInput[] = rows.map((r) => ({
             userId,
+            id: r.clientEventId,
             type: r.type,
             ts: r.ts,
             file: r.file ?? undefined,

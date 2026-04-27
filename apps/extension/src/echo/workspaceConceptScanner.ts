@@ -1,7 +1,7 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { authHeaders } from "../user/auth.js";
-import { BACKEND_URL } from "../user/protegeClient.js";
+import { authHeaders, isSignedIn } from "../user/auth.js";
+import { BACKEND_URL, currentUserIdOrNull } from "../user/protegeClient.js";
 import { detectHybrid } from "../concepts/hybridDetector.js";
 
 /**
@@ -189,7 +189,7 @@ async function postBatch(
         method: "POST",
         headers: {
           "content-type": "application/json",
-          ...authHeaders(userId),
+          ...authHeaders(),
         },
         body: JSON.stringify({ userId, workspaceRoot, batches }),
       });
@@ -226,7 +226,19 @@ export async function scanWorkspace(
     return null;
   }
 
-  const userId = options.userId ?? "local-dev";
+  // Login-first: refuse to start a scan without a session. The /echo/repo-scan
+  // POST is auth-gated server-side anyway, but bailing here avoids file I/O
+  // we'd just throw away.
+  const userId = options.userId ?? currentUserIdOrNull();
+  if (!userId || !isSignedIn()) {
+    options.onStatus?.({
+      state: "done",
+      scannedFiles: 0,
+      totalCandidates: 0,
+      finishedAt: new Date().toISOString(),
+    });
+    return null;
+  }
   const startedAt = new Date().toISOString();
   const startMs = Date.now();
   const startMarker: ScanResult["startedAt"] = startedAt;

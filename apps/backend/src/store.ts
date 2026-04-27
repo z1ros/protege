@@ -123,6 +123,11 @@ export interface MemoryRow {
   createdAt: string;
   lastUsedAt: string;
   useCount: number;
+  /** Embedding of `content` (text-embedding-3-small, 1536 dims). Optional —
+   *  rows written before embeddings shipped, or rows where the embedding
+   *  call failed, omit it and fall back to non-semantic scoring. Backfilled
+   *  lazily when a memory is touched. */
+  embedding?: number[];
 }
 
 export interface SessionRow {
@@ -513,23 +518,71 @@ async function load(): Promise<StoreShape> {
 
 /* ============ Mentor memory (compounding knowledge about the learner) ============ */
 
-const TYPE_WEIGHT: Record<MemoryType, number> = {
-  profile: 10,
-  preference: 9,
-  struggle: 7,
-  decision: 5,
-  win: 4,
-  context: 3,
+/** TYPE_WEIGHT was the sole ranking signal in the legacy snapshot. After the
+ *  hybrid (semantic + decay + recency) score landed, type matters far less —
+ *  it's only used as a normalized 0..1 tiebreaker. Range collapsed accordingly. */
+const TYPE_WEIGHT_RAW: Record<MemoryType, number> = {
+  profile: 1.0,
+  preference: 0.9,
+  struggle: 0.7,
+  decision: 0.5,
+  win: 0.4,
+  context: 0.3,
 };
+
+/** FSRS-style hyperbolic recency on memory: same shape as concept decayFactor
+ *  but tuned for facts (stability scales with `useCount`). Returns 0..1. */
+function memoryRecencyFactor(
+  lastUsedAt: string,
+  useCount: number,
+  nowMs: number
+): number {
+  const last = Date.parse(lastUsedAt);
+  if (Number.isNaN(last)) return 1;
+  const days = Math.max(0, (nowMs - last) / 86_400_000);
+  const stability = 5 + Math.max(0, useCount) * 1.5;
+  return 1 / (1 + days / (9 * stability));
+}
+
+/** Reconciliation candidate: similar existing memories returned by the
+ *  vector lookup so the LLM merge step (Mem0-style) can decide
+ *  ADD/UPDATE/DELETE/NOOP on the incoming content. */
+export interface MemoryCandidate {
+  row: MemoryRow;
+  similarity: number;
+}
+
+/** Find top-N existing memories closest to a candidate `content` string.
+ *  Used by the write-time reconciliation step in the memory route. */
+export async function findSimilarMemories(
+  userId: string,
+  contentEmbedding: number[],
+  topN = 3,
+  threshold = 0.78
+): Promise<MemoryCandidate[]> {
+  const { cosineSimilarity } = await import("./embeddings.js");
+  const s = await load();
+  const mine = s.memories.filter(
+    (m) => m.userId === userId && m.embedding && m.embedding.length > 0
+  );
+  const scored = mine.map((row) => ({
+    row,
+    similarity: cosineSimilarity(row.embedding!, contentEmbedding),
+  }));
+  return scored
+    .filter((x) => x.similarity >= threshold)
+    .sort((a, b) => b.similarity - a.similarity)
+    .slice(0, topN);
+}
 
 export async function addMemory(
   userId: string,
   type: MemoryType,
   content: string
 ): Promise<MemoryRow> {
+  const { embed } = await import("./embeddings.js");
   const s = await load();
   const trimmed = content.trim().slice(0, 500);
-  // Dedupe: if an identical entry exists, refresh it instead of duplicating
   const existing = s.memories.find(
     (m) => m.userId === userId && m.type === type && m.content === trimmed
   );
@@ -537,9 +590,14 @@ export async function addMemory(
   if (existing) {
     existing.lastUsedAt = now;
     existing.useCount += 1;
+    if (!existing.embedding) {
+      const e = await embed(trimmed);
+      if (e) existing.embedding = e;
+    }
     await save();
     return existing;
   }
+  const embedding = await embed(trimmed);
   const row: MemoryRow = {
     id: crypto.randomUUID(),
     userId,
@@ -548,8 +606,31 @@ export async function addMemory(
     createdAt: now,
     lastUsedAt: now,
     useCount: 0,
+    ...(embedding ? { embedding } : {}),
   };
   s.memories.push(row);
+  await save();
+  return row;
+}
+
+/** Apply a Mem0-style reconciliation decision computed by the route layer.
+ *  Keeps store-level invariants (single writer, save-after-mutate) here. */
+export async function applyMemoryUpdate(
+  userId: string,
+  id: string,
+  newContent: string
+): Promise<MemoryRow | null> {
+  const { embed } = await import("./embeddings.js");
+  const s = await load();
+  const row = s.memories.find((m) => m.userId === userId && m.id === id);
+  if (!row) return null;
+  const trimmed = newContent.trim().slice(0, 500);
+  if (trimmed === row.content) return row;
+  row.content = trimmed;
+  row.lastUsedAt = new Date().toISOString();
+  row.useCount += 1;
+  const e = await embed(trimmed);
+  if (e) row.embedding = e;
   await save();
   return row;
 }
@@ -565,21 +646,78 @@ export async function removeMemory(userId: string, id: string): Promise<boolean>
   return false;
 }
 
+/** Legacy snapshot kept for callers that don't have a query (e.g. the GET
+ *  /memory listing route). Hybrid score with no semantic term — pure
+ *  decay × type-weight × use-count. */
 export async function getMemorySnapshot(
   userId: string,
   limit = 12
 ): Promise<MemoryRow[]> {
   const s = await load();
   const mine = s.memories.filter((m) => m.userId === userId);
-  // Relevance = type weight + recency boost (days since last used, capped)
   const now = Date.now();
   const scored = mine.map((m) => {
-    const ageMs = now - Date.parse(m.lastUsedAt);
-    const ageDays = ageMs / (1000 * 60 * 60 * 24);
-    const recencyBoost = Math.max(0, 5 - ageDays * 0.1);
-    return { row: m, score: TYPE_WEIGHT[m.type] + recencyBoost + m.useCount * 0.5 };
+    const recency = memoryRecencyFactor(m.lastUsedAt, m.useCount, now);
+    const type = TYPE_WEIGHT_RAW[m.type] ?? 0.5;
+    const useFactor = Math.min(1, m.useCount / 10);
+    const score = 0.55 * recency + 0.30 * type + 0.15 * useFactor;
+    return { row: m, score };
   });
   scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit).map((x) => x.row);
+}
+
+/** Contextual retrieval — Anthropic-style hybrid score over the user's
+ *  memory bank given a free-text query (e.g. active file content + last
+ *  user turn). Lazy-backfills missing embeddings on the fly so older rows
+ *  participate in semantic ranking after a cold start. */
+export async function getRelevantMemories(
+  userId: string,
+  queryText: string,
+  limit = 12
+): Promise<MemoryRow[]> {
+  const { embed, cosineSimilarity } = await import("./embeddings.js");
+  const s = await load();
+  const mine = s.memories.filter((m) => m.userId === userId);
+  if (mine.length === 0) return [];
+
+  const queryEmbedding = await embed(queryText);
+  let mutated = false;
+
+  if (queryEmbedding) {
+    const stale = mine.filter(
+      (m) => !m.embedding || m.embedding.length === 0
+    );
+    if (stale.length > 0) {
+      const { embedMany } = await import("./embeddings.js");
+      const fills = await embedMany(stale.map((m) => m.content));
+      for (let i = 0; i < stale.length; i++) {
+        const e = fills[i];
+        if (e) {
+          stale[i].embedding = e;
+          mutated = true;
+        }
+      }
+    }
+  }
+
+  const now = Date.now();
+  const scored = mine.map((m) => {
+    const recency = memoryRecencyFactor(m.lastUsedAt, m.useCount, now);
+    const type = TYPE_WEIGHT_RAW[m.type] ?? 0.5;
+    const useFactor = Math.min(1, m.useCount / 10);
+    const semantic =
+      queryEmbedding && m.embedding && m.embedding.length > 0
+        ? Math.max(0, cosineSimilarity(m.embedding, queryEmbedding))
+        : 0;
+    const score = queryEmbedding
+      ? 0.55 * semantic + 0.20 * recency + 0.15 * type + 0.10 * useFactor
+      : 0.55 * recency + 0.30 * type + 0.15 * useFactor;
+    return { row: m, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  if (mutated) await save();
   return scored.slice(0, limit).map((x) => x.row);
 }
 
@@ -666,9 +804,46 @@ export async function touchSessionFile(userId: string, filePath: string) {
   }
 }
 
+let _saveQueue: Promise<void> = Promise.resolve();
+let _batchDepth = 0;
+let _pendingSaveInBatch = false;
+
+function _flushSave(): Promise<void> {
+  if (!cache) return Promise.resolve();
+  const c = cache;
+  _saveQueue = _saveQueue
+    .catch(() => undefined)
+    .then(() => fs.writeFile(FILE, JSON.stringify(c, null, 2)));
+  return _saveQueue;
+}
+
 async function save() {
   if (!cache) return;
-  await fs.writeFile(FILE, JSON.stringify(cache, null, 2));
+  if (_batchDepth > 0) {
+    _pendingSaveInBatch = true;
+    return;
+  }
+  await _flushSave();
+}
+
+/**
+ * Run `fn` with store writes coalesced into a single file write at the end.
+ * Nested/concurrent batches are reference-counted — the flush runs when the
+ * outermost batch exits. Writes within the batch still mutate the in-memory
+ * cache immediately, so subsequent reads inside the batch observe their own
+ * writes.
+ */
+export async function withStoreBatch<T>(fn: () => Promise<T>): Promise<T> {
+  _batchDepth += 1;
+  try {
+    return await fn();
+  } finally {
+    _batchDepth -= 1;
+    if (_batchDepth === 0 && _pendingSaveInBatch) {
+      _pendingSaveInBatch = false;
+      await _flushSave();
+    }
+  }
 }
 
 export async function ensureUser(userId: string, username = "local-dev") {
@@ -1104,7 +1279,7 @@ export async function recordConcepts(
 function iqContribution(row: ConceptState): number {
   const w = conceptWeight(row.conceptName);
   const m = masteryCurve(row.timesUsed);
-  const d = decayFactor(row.lastUsedAt);
+  const d = decayFactor(row.lastUsedAt, Date.now(), row.timesUsed);
   const q = qualityFactor(row.qualityFlags);
   return w * m * d * q * IQ_K;
 }
@@ -1158,7 +1333,7 @@ async function computeSnapshot(
   const rows: ApiConceptRow[] = userConcepts.map((c) => {
     const w = conceptWeight(c.conceptName);
     const raw = masteryCurve(c.timesUsed);
-    const d = decayFactor(c.lastUsedAt, now);
+    const d = decayFactor(c.lastUsedAt, now, c.timesUsed);
     const q = qualityFactor(c.qualityFlags);
     const effective = raw * d * q;
     const iq = w * effective * IQ_K;
@@ -1616,15 +1791,28 @@ export interface EchoEventInput {
   file?: string;
   concept?: string;
   payload: Record<string, unknown>;
+  // Stable client-side dedup id. Optional on emit (locally generated when
+  // omitted). On cold-sync replay the caller MUST supply the id read from
+  // Supabase so the local row matches the cloud row 1:1 — that's what
+  // lets the upsert-with-conflict-key on the cloud side dedupe correctly.
+  id?: string;
 }
 
 export async function appendEchoEvents(events: EchoEventInput[]): Promise<number> {
   if (events.length === 0) return 0;
   const s = await load();
   const now = Date.now();
-  for (const e of events) {
+  // Assign id ONCE per input event so the local row, the shadow-write
+  // snapshot, and any later cold-sync round-trip all share the same
+  // client_event_id. Generating a fresh id at each call site would
+  // break post-restart idempotency.
+  const stamped = events.map((e) => ({
+    ...e,
+    id: e.id ?? crypto.randomUUID(),
+  }));
+  for (const e of stamped) {
     s.echoEvents.push({
-      id: crypto.randomUUID(),
+      id: e.id,
       userId: e.userId,
       type: e.type,
       ts: e.ts,
@@ -1656,14 +1844,15 @@ export async function appendEchoEvents(events: EchoEventInput[]): Promise<number
   // v6 shadow-write — fire-and-forget batch per user. We coalesce the input
   // `events` array (which may contain multiple userIds) into one Supabase
   // insert per user so a big mixed batch isn't N lonely round-trips.
-  const byUser = new Map<string, EchoEventInput[]>();
-  for (const e of events) {
+  const byUser = new Map<string, typeof stamped>();
+  for (const e of stamped) {
     const bucket = byUser.get(e.userId);
     if (bucket) bucket.push(e);
     else byUser.set(e.userId, [e]);
   }
   for (const [uid, batch] of byUser) {
     const snapshot = batch.map((e) => ({
+      clientEventId: e.id,
       type: e.type,
       ts: e.ts,
       file: e.file,
@@ -1880,6 +2069,27 @@ export async function readConceptStates(userId: string): Promise<ConceptState[]>
   return s.concepts.filter((c) => c.userId === userId);
 }
 
+/** Heuristic mastery filter for the Did-You-Know tip selector. A concept is
+ *  treated as "likely known" when any of these signals fire — usage volume,
+ *  authorship (manual write across the threshold), or breadth across files.
+ *  Conservative on purpose: tips are aimed at *new* concepts, so a single
+ *  positive signal is enough to suppress one. Keep these constants colocated
+ *  with the heuristic so the policy lives in one place. */
+const MASTERY_TIMES_USED = 5;
+const MASTERY_DISTINCT_FILES = 2;
+
+export async function readLikelyKnownConcepts(userId: string): Promise<string[]> {
+  const states = await readConceptStates(userId);
+  return states
+    .filter(
+      (c) =>
+        c.timesUsed >= MASTERY_TIMES_USED ||
+        c.hasBeenAuthored ||
+        c.distinctFiles.length >= MASTERY_DISTINCT_FILES
+    )
+    .map((c) => c.conceptName);
+}
+
 /** Read recent GainEvents across all users. The global ring buffer has no
  *  userId field, so callers filter client-side by concept name. */
 export async function readRecentGains(limit = 200): Promise<GainEvent[]> {
@@ -1972,25 +2182,17 @@ export async function bumpFileAuthorship(
   row.aiChars += a;
   row.updatedAt = now;
 
-  // Cap per user — keep the 500 most recently updated files.
-  const perUser = new Map<string, FileAuthorshipCounterRow[]>();
-  for (const r of s.fileAuthorshipCounters) {
-    const bucket = perUser.get(r.userId);
-    if (bucket) bucket.push(r);
-    else perUser.set(r.userId, [r]);
+  // Cap per user inline — only inspect this user's rows, not all users'.
+  const userRows = s.fileAuthorshipCounters.filter((r) => r.userId === userId);
+  if (userRows.length > MAX_FILE_AUTHORSHIP_ROWS_PER_USER) {
+    userRows.sort((x, y) => x.updatedAt.localeCompare(y.updatedAt));
+    const dropCount = userRows.length - MAX_FILE_AUTHORSHIP_ROWS_PER_USER;
+    const drop = new Set<string>();
+    for (let i = 0; i < dropCount; i += 1) drop.add(userRows[i].filePath);
+    s.fileAuthorshipCounters = s.fileAuthorshipCounters.filter(
+      (r) => r.userId !== userId || !drop.has(r.filePath)
+    );
   }
-  const kept: FileAuthorshipCounterRow[] = [];
-  for (const [, bucket] of perUser) {
-    if (bucket.length > MAX_FILE_AUTHORSHIP_ROWS_PER_USER) {
-      bucket.sort((x, y) => x.updatedAt.localeCompare(y.updatedAt));
-      kept.push(
-        ...bucket.slice(bucket.length - MAX_FILE_AUTHORSHIP_ROWS_PER_USER)
-      );
-    } else {
-      kept.push(...bucket);
-    }
-  }
-  s.fileAuthorshipCounters = kept;
   await save();
 
   // v6 shadow-write — delta bump. Cloud helper does read-then-upsert to
@@ -2525,4 +2727,88 @@ export async function getRecentChanges(
     commitStories,
     conceptStatuses,
   };
+}
+
+/* ==========================================================
+   concept_tips — generalized "Did you know?" tip cache.
+   ----------------------------------------------------------
+   User-agnostic: rows are keyed by (language, concept_name,
+   prompt_version). Lookups + writes go through Supabase
+   directly; there is no local-store fallback because the
+   whole point is global sharing. When Supabase is not
+   configured, both helpers no-op.
+   ========================================================== */
+
+export interface ConceptTipRow {
+  tip: string;
+  tokensIn: number;
+  tokensOut: number;
+  model: string;
+}
+
+export async function getConceptTips(
+  language: string,
+  concepts: string[],
+  promptVersion: number
+): Promise<Record<string, string>> {
+  if (concepts.length === 0) return {};
+  const { getSupabase } = await import("./supabase.js");
+  const sb = getSupabase();
+  if (!sb) return {};
+
+  const { data, error } = await sb
+    .from("concept_tips")
+    .select("concept_name, tip")
+    .eq("language", language)
+    .eq("prompt_version", promptVersion)
+    .in("concept_name", concepts);
+
+  if (error) {
+    console.warn("[protege] getConceptTips failed:", error.message);
+    return {};
+  }
+  if (!data) return {};
+
+  const out: Record<string, string> = {};
+  for (const r of data) {
+    const row = r as { concept_name: string; tip: string };
+    out[row.concept_name] = row.tip;
+  }
+  return out;
+}
+
+export async function putConceptTips(
+  language: string,
+  promptVersion: number,
+  rows: Record<string, ConceptTipRow>
+): Promise<void> {
+  const entries = Object.entries(rows);
+  if (entries.length === 0) return;
+
+  const { getSupabase } = await import("./supabase.js");
+  const sb = getSupabase();
+  if (!sb) return;
+
+  const payload = entries.map(([concept_name, r]) => ({
+    language,
+    concept_name,
+    prompt_version: promptVersion,
+    tip: r.tip,
+    model: r.model,
+    tokens_in: r.tokensIn,
+    tokens_out: r.tokensOut,
+  }));
+
+  // Idempotent write: a concurrent first-time view of the same concept
+  // collides on the unique index and we silently skip — first writer wins,
+  // every other writer's row is discarded without an error.
+  const { error } = await sb
+    .from("concept_tips")
+    .upsert(payload, {
+      onConflict: "language,concept_name,prompt_version",
+      ignoreDuplicates: true,
+    });
+  if (error) {
+    console.warn("[protege] putConceptTips failed:", error.message);
+  }
 }

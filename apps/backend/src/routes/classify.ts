@@ -7,7 +7,8 @@ import type {
   TaskShapeKind,
   TaskComplexity,
 } from "@protege/types";
-import { anthropic, MODEL } from "../anthropic.js";
+import { callOneShot } from "../llm.js";
+import { githubAuth } from "../middleware/auth.js";
 import {
   CLASSIFIER_SYSTEM_PROMPT,
   buildClassifierUserPrompt,
@@ -31,6 +32,8 @@ import {
  */
 
 export const classifyRoute = new Hono();
+
+classifyRoute.use("*", githubAuth());
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const CACHE_MAX_ENTRIES = 200;
@@ -166,16 +169,12 @@ classifyRoute.post("/", async (c) => {
   });
 
   try {
-    const res = await anthropic.messages.create({
-      model: MODEL,
-      max_tokens: 300,
-      system: CLASSIFIER_SYSTEM_PROMPT,
-      messages: [{ role: "user", content: userPrompt }],
+    const { text } = await callOneShot({
+      systemText: CLASSIFIER_SYSTEM_PROMPT,
+      userText: userPrompt,
+      maxTokens: 300,
+      cacheSystem: false,
     });
-    const text = res.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as { type: "text"; text: string }).text)
-      .join("\n");
     const shape = parseClassifierReply(text);
     if (!shape) {
       console.warn(

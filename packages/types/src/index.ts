@@ -45,6 +45,68 @@ export interface AnalyzeResponse {
   findings: Finding[];
 }
 
+/* ========== File Walk ==========
+ *
+ * Sequential mentor-narrated walkthrough of a single file. Backend produces
+ * an ordered list of steps in execution order (top-level imports/side
+ * effects → exported entry points → supporting functions). The extension
+ * highlights `lineStart..lineEnd` and renders `body` in an inline comment
+ * thread, with `concepts[]` exposed as Teach buttons that route through
+ * the existing dispatchTeachConcept path. */
+
+export interface WalkStep {
+  /** Zero-based step index, monotonically increasing in the steps[] array. */
+  index: number;
+  /** 1-indexed inclusive line range to highlight in the editor. */
+  lineStart: number;
+  lineEnd: number;
+  /** Short headline (≤ 60 chars). */
+  title: string;
+  /** 2–4 sentences of plain-language explanation, markdown allowed. */
+  body: string;
+  /** Concept names referenced in this step. Rendered as Teach buttons. */
+  concepts: string[];
+}
+
+export interface WalkImportExcerpt {
+  /** Relative-from-active-file path, forward slashes. */
+  path: string;
+  /** Up to ~80 lines of the imported file, truncated. */
+  excerpt: string;
+}
+
+export interface WalkRepoSummary {
+  topConcepts: string[];
+  primaryLanguages: string[];
+  fileCount: number;
+}
+
+export interface WalkRequest {
+  userId?: string;
+  /** Hash is intentionally NOT in this shape — the server derives it from
+   *  `content` so a client cannot poison the cross-user step cache by
+   *  asserting an arbitrary key. */
+  file: { path: string; language: string; content: string };
+  imports?: WalkImportExcerpt[];
+  repoSummary?: WalkRepoSummary;
+}
+
+export interface WalkResponse {
+  fileHash: string;
+  steps: WalkStep[];
+  /** True when the response was served from the (file-hash keyed) backend cache. */
+  cached: boolean;
+}
+
+/** Returned with HTTP 429 when a user exceeds their daily walk quota. */
+export interface WalkQuotaError {
+  error: "daily quota exceeded";
+  used: number;
+  limit: number;
+  /** Epoch ms — when the daily counter resets. */
+  resetAt: number;
+}
+
 export type ConceptLevel = "familiar" | "functional" | "competent" | "expert";
 
 export interface ConceptRow {
@@ -360,6 +422,16 @@ export type VerifyResponse =
  */
 export type ChatBackend = "haiku" | "sonnet";
 
+/**
+ * Quality tier — orthogonal to `backend`. Lets auto-fired background
+ * scans request a cheaper model (gpt-4.1-mini / Haiku) without
+ * sacrificing the premium model for user-triggered calls (chat,
+ * Learning Mode, voice Explain).
+ *
+ * Default is "premium" so existing callers are unaffected.
+ */
+export type ChatTier = "cheap" | "premium";
+
 export interface ChatRunRequest {
   userId?: string;
   workspace?: WorkspaceContext;
@@ -369,6 +441,11 @@ export interface ChatRunRequest {
   mode?: ChatMode; // rendering channel — affects persona + post-processing
   /** Which cloud model the user selected. Server defaults to Sonnet when omitted. */
   backend?: ChatBackend;
+  /**
+   * Quality tier. "cheap" routes to gpt-4.1-mini (OpenAI) or Haiku
+   * (Anthropic). "premium" uses the full model. Defaults to "premium".
+   */
+  tier?: ChatTier;
   /**
    * Disable tool-use entirely for this request. The server omits the
    * `tools` array from the Anthropic call, forcing the model to reply
@@ -438,6 +515,15 @@ export type WebviewToHost =
   | { type: "wake/toggle" }
   | { type: "scan/request" }
   | { type: "auth/login" }
+  | {
+      /** Login-first sign-out. Clears the host-side cached GitHub user
+       *  and persists an opt-out flag so future activations keep the
+       *  signed-out state until the user explicitly signs in again. We
+       *  cannot revoke VS Code's underlying GitHub session — that's
+       *  owned by the Accounts UI. The host responds by broadcasting
+       *  `auth/user` with `null`. */
+      type: "auth/logout";
+    }
   | { type: "liveReview/toggle"; active: boolean }
   | { type: "ai/setBackend"; backend: "on-device" | "haiku" | "sonnet" | "auto" }
   | { type: "ai/downloadModel" }
@@ -473,7 +559,8 @@ export type WebviewToHost =
       goal: string;
       messageId: string;
     }
-  | { type: "debug/log"; tag: string; message: string };
+  | { type: "debug/log"; tag: string; message: string }
+  | { type: "echo/msg"; payload: EchoWebviewToHost };
 
 export type HostToWebview =
   | { type: "chat/append"; message: ChatMessage }
@@ -634,7 +721,8 @@ export type HostToWebview =
       type: "learning/devTrace";
       trace: LearningSessionTrace | null;
     }
-  | { type: "ownership/changed"; path: string; summary: OwnershipSummary };
+  | { type: "ownership/changed"; path: string; summary: OwnershipSummary }
+  | { type: "echo/msg"; payload: EchoHostToWebview };
 
 /* ========== Echo — behavior observation dashboard ========== */
 
@@ -1127,6 +1215,14 @@ export type EchoWebviewToHost =
       status: ConceptKnownStatus;
     }
   | {
+      /** Batched persist for the "Save changes" flow. Webview buffers all
+       *  concept mastery edits locally, then commits them in one RPC so
+       *  tiles don't reshuffle between every click. Host POSTs each
+       *  concept, then refetches the dashboard ONCE at the end. */
+      type: "echo_saveConceptStatuses";
+      changes: Array<{ concept: string; status: ConceptKnownStatus }>;
+    }
+  | {
       /** Rv5.C: persist the shared language picker selection. `null`
        *  means "All languages". Applies to both W15 and W17. */
       type: "echo_setConceptLanguage";
@@ -1138,6 +1234,13 @@ export type EchoWebviewToHost =
        *  invokes scanWorkspace with `force: true`. Used by W17's re-scan
        *  button. */
       type: "echo_rescanRepo";
+    }
+  | {
+      /** Login-first: emitted by the Echo webview's sign-in gate when the
+       *  user clicks "Sign in with GitHub". The host pops the OAuth dialog
+       *  via `getGitHubUser({ createIfNone: true })` and re-runs the
+       *  dashboard fetch when the session resolves. */
+      type: "echo_signIn";
     };
 
 export type EchoHostToWebview =
@@ -1161,6 +1264,13 @@ export type EchoHostToWebview =
       scannedFiles?: number;
       totalCandidates?: number;
       finishedAt?: string;
+    }
+  | {
+      /** Login-first: emitted by the host when the Echo webview tries to
+       *  hit the backend without a GitHub session. The webview renders a
+       *  sign-in gate; clicking the button posts back `auth/login` (on the
+       *  main HostToWebview channel) so the host can pop the OAuth dialog. */
+      type: "echo_authRequired";
     };
 
 /* ========== Project Map (A1) ========== */

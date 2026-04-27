@@ -322,7 +322,6 @@ export function PolarClock({
     <section className="echo-widget echo-polar" data-widget="W2">
       <header className="echo-widget-head">
         <h2>When you code</h2>
-        <span className="echo-widget-tag">W2</span>
       </header>
       {/* Archetype strip — lifted out of the center hole so arc crowding
           never overlaps the label. Always rendered (skeleton placeholder

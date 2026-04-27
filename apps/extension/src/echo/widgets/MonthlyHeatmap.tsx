@@ -72,7 +72,6 @@ export function MonthlyHeatmap({
     <section className="echo-widget echo-heatmap" data-widget="W5">
       <header className="echo-widget-head">
         <h2>30-day activity</h2>
-        <span className="echo-widget-tag">W5</span>
       </header>
       <div className="echo-widget-body">
         {loading && !data ? (

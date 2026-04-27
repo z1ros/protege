@@ -18,13 +18,17 @@ export { getEventStreamChannel } from "./eventStream.js";
  * Wires every extension-side Echo subsystem: batcher, session tracker,
  * line differ, paste classifier, git commit watcher. Returns a single
  * disposable so extension.ts keeps its registration list tidy.
+ *
+ * Login-first: the userId may be `null` at activation. Subsystems buffer
+ * locally and only post when the user signs in — see `batcher.ts` for
+ * the per-flush auth check. Pass null pre-auth.
  */
 export function initEcho(
   context: vscode.ExtensionContext,
-  userId: string,
+  userId: string | null,
   log: vscode.OutputChannel
 ): vscode.Disposable {
-  startBatcher(context, userId, log);
+  startBatcher(context, userId ?? null, log);
   // Event stream tail — must start AFTER startBatcher so getBatcher() is
   // non-null when the subscription is attached. Pure diagnostic, no
   // network or store writes.

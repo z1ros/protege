@@ -8,11 +8,11 @@ import type {
   EchoWebviewToHost,
   EchoWindow,
 } from "@protege/types";
-import { authHeaders } from "../user/auth.js";
-import { BACKEND_URL, getUserId } from "../user/protegeClient.js";
+import { authHeaders, isSignedIn, getGitHubUser, onAuthChange } from "../user/auth.js";
+import { BACKEND_URL, currentUserIdOrNull } from "../user/protegeClient.js";
 import { devPortMapping, isDevMode, renderDevHtml } from "../devMode.js";
 import { getBatcher } from "./batcher.js";
-import { isEchoMessage, postToEchoPanel } from "./rpc.js";
+import { isEchoMessage, postToEchoPanel, type EchoPoster } from "./rpc.js";
 import {
   clearScannedWorkspace,
   currentWorkspaceRoot,
@@ -21,6 +21,22 @@ import {
 } from "./workspaceConceptScanner.js";
 
 let current: vscode.WebviewPanel | undefined;
+
+/** Additional broadcast targets (e.g. the main Protege sidebar webview when
+ *  Echo is mounted as an inline tab). The separate Echo panel is always
+ *  included via `current`; these are extra fan-out sinks. */
+const broadcastTargets = new Set<EchoPoster>();
+
+/**
+ * Register a post callback that will receive every `broadcastToEcho` fan-out
+ * in addition to the standalone panel. Returns a disposer.
+ */
+export function registerEchoBroadcastTarget(post: EchoPoster): () => void {
+  broadcastTargets.add(post);
+  return () => {
+    broadcastTargets.delete(post);
+  };
+}
 
 /**
  * Opens (or reveals) the Echo webview panel in the active editor column.
@@ -50,35 +66,58 @@ export function openEchoPanel(context: vscode.ExtensionContext): vscode.WebviewP
   panel.iconPath = vscode.Uri.joinPath(context.extensionUri, "media", "icon.svg");
   panel.webview.html = renderEchoHtml(panel.webview, context.extensionUri, context.extensionMode);
 
-  const userId = getUserId(context);
   // The host-side currentWindow mirror lets concept-status / filter RPCs
   // refetch the dashboard for the window the user is actually looking at
   // instead of always snapping back to "today".
   const state: PanelState = { currentWindow: "today", context };
 
+  const post: EchoPoster = (msg) => postToEchoPanel(panel, msg);
+
   const sub = panel.webview.onDidReceiveMessage(async (raw) => {
     if (!isEchoMessage(raw)) return;
-    await handleEchoMessage(panel, userId, raw, state);
+    // Sign-in escape hatch: the gate UI posts this when the user clicks
+    // the OAuth button. Pop the native dialog; on success the auth-state
+    // listener below replays `echo_ready` so the dashboard fetches.
+    if (raw.type === "echo_signIn") {
+      const u = await getGitHubUser({ createIfNone: true });
+      if (!u) post({ type: "echo_authRequired" });
+      return;
+    }
+    // Resolve the userId per-message so a sign-in mid-session starts
+    // serving real data on the next webview RPC.
+    const userId = currentUserIdOrNull();
+    if (!userId || !isSignedIn()) {
+      post({ type: "echo_authRequired" });
+      return;
+    }
+    await handleEchoRpc(post, userId, raw, state, context);
+  });
+
+  // When auth lands while the panel is open, re-seed the dashboard so the
+  // user doesn't have to manually re-trigger.
+  const offAuth = onAuthChange((snap) => {
+    if (snap.state !== "signed-in" || !snap.user) return;
+    void handleEchoRpc(post, snap.user.githubId, { type: "echo_ready" }, state, context);
   });
 
   panel.onDidDispose(() => {
     sub.dispose();
+    offAuth();
     current = undefined;
   });
 
   current = panel;
 
-  // Rv5.B: kick off a workspace concept scan on first Echo open per
-  // workspace. Fire-and-forget; the scanner itself broadcasts status
-  // updates back into the panel via `repo_scan_status`.
-  void maybeKickWorkspaceScan(context, panel, userId);
+  // Rv5.B: workspace scan is kicked inside the `echo_ready` RPC handler,
+  // which fires the first time the webview mounts. That keeps parity with
+  // the sidebar-hosted Echo tab (no duplicate kicks, one code path).
 
   return panel;
 }
 
 async function maybeKickWorkspaceScan(
   context: vscode.ExtensionContext,
-  panel: vscode.WebviewPanel,
+  post: EchoPoster,
   userId: string,
   force = false
 ): Promise<void> {
@@ -86,7 +125,7 @@ async function maybeKickWorkspaceScan(
   if (!root) return;
   if (!force && isWorkspaceScanned(context, root)) {
     // Already scanned — let W17 know it can rely on whatever's in the DB.
-    postToEchoPanel(panel, { type: "repo_scan_status", state: "idle" });
+    post({ type: "repo_scan_status", state: "idle" });
     return;
   }
   try {
@@ -94,7 +133,7 @@ async function maybeKickWorkspaceScan(
       force,
       userId,
       onStatus: (info) => {
-        postToEchoPanel(panel, {
+        post({
           type: "repo_scan_status",
           state: info.state,
           scannedFiles: info.scannedFiles,
@@ -105,11 +144,11 @@ async function maybeKickWorkspaceScan(
     });
   } catch (err) {
     console.warn("[protege] workspace scan failed:", err);
-    postToEchoPanel(panel, { type: "repo_scan_status", state: "idle" });
+    post({ type: "repo_scan_status", state: "idle" });
   }
 }
 
-interface PanelState {
+export interface PanelState {
   currentWindow: EchoWindow;
   context: vscode.ExtensionContext;
 }
@@ -119,27 +158,40 @@ export function isEchoPanelOpen(): boolean {
 }
 
 export function broadcastToEcho(msg: EchoHostToWebview): void {
-  if (!current) return;
-  postToEchoPanel(current, msg);
+  if (current) postToEchoPanel(current, msg);
+  for (const post of broadcastTargets) {
+    try {
+      post(msg);
+    } catch {
+      // Target is best-effort; a failed post should never break the caller.
+    }
+  }
 }
 
-async function handleEchoMessage(
-  panel: vscode.WebviewPanel,
+/** Public entry point for modules (e.g. the main sidebar webview host) that
+ *  need to process Echo RPC without owning a WebviewPanel. Handler writes
+ *  outgoing messages via `post`; scan state uses the supplied `context`. */
+export async function handleEchoRpc(
+  post: EchoPoster,
   userId: string,
   msg: EchoWebviewToHost,
-  state: PanelState
+  state: PanelState,
+  context: vscode.ExtensionContext
 ): Promise<void> {
   switch (msg.type) {
     case "echo_ready": {
       // Seed with today's dashboard + preferences on first mount.
       state.currentWindow = "today";
-      await sendDashboard(panel, userId, "today");
-      await sendPreferences(panel, userId);
+      await sendDashboard(post, userId, "today");
+      await sendPreferences(post, userId);
+      // Kick the workspace concept scan once per mount. The helper is a
+      // no-op when the workspace is already scanned.
+      void maybeKickWorkspaceScan(context, post, userId);
       return;
     }
     case "echo_request": {
       state.currentWindow = msg.window;
-      await sendDashboard(panel, userId, msg.window);
+      await sendDashboard(post, userId, msg.window);
       return;
     }
     case "echo_setSubPage": {
@@ -200,17 +252,17 @@ async function handleEchoMessage(
       try {
         await fetch(`${BACKEND_URL}/echo/preferences?userId=${encodeURIComponent(userId)}`, {
           method: "POST",
-          headers: { ...authHeaders(userId) },
+          headers: { ...authHeaders() },
           body: JSON.stringify({ storyModeNotify: msg.enabled }),
         });
       } catch {
         // Offline — preference updates will retry next time the panel opens.
       }
-      await sendPreferences(panel, userId);
+      await sendPreferences(post, userId);
       return;
     }
     case "echo_refreshPreferences": {
-      await sendPreferences(panel, userId);
+      await sendPreferences(post, userId);
       return;
     }
     case "echo_setConceptStatus": {
@@ -235,7 +287,7 @@ async function handleEchoMessage(
           `${BACKEND_URL}/echo/concepts/status?userId=${encodeURIComponent(userId)}`,
           {
             method: "POST",
-            headers: { "content-type": "application/json", ...authHeaders(userId) },
+            headers: { "content-type": "application/json", ...authHeaders() },
             body: JSON.stringify({ concept: msg.concept, status: msg.status }),
           }
         );
@@ -243,7 +295,51 @@ async function handleEchoMessage(
         // Offline — swallow. The tile stays in its current visual state
         // until the next successful round-trip.
       }
-      await sendDashboard(panel, userId, state.currentWindow);
+      await sendDashboard(post, userId, state.currentWindow);
+      return;
+    }
+    case "echo_saveConceptStatuses": {
+      // Bulk commit from the "Save changes" button. POST each validated
+      // change sequentially, then refetch the dashboard ONCE so tiles
+      // reshuffle in a single repaint instead of per-click.
+      const changes = Array.isArray(msg.changes) ? msg.changes : [];
+      for (const change of changes) {
+        if (
+          !change ||
+          typeof change.concept !== "string" ||
+          change.concept.length === 0 ||
+          change.concept.length > 200
+        ) {
+          continue;
+        }
+        if (
+          change.status !== "unset" &&
+          change.status !== "known" &&
+          change.status !== "not_known"
+        ) {
+          continue;
+        }
+        try {
+          await fetch(
+            `${BACKEND_URL}/echo/concepts/status?userId=${encodeURIComponent(userId)}`,
+            {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                ...authHeaders(),
+              },
+              body: JSON.stringify({
+                concept: change.concept,
+                status: change.status,
+              }),
+            }
+          );
+        } catch {
+          // Offline — skip this one; the Save button's optimistic state
+          // persists in memory until the next successful round-trip.
+        }
+      }
+      await sendDashboard(post, userId, state.currentWindow);
       return;
     }
     case "echo_setConceptLanguage": {
@@ -267,7 +363,7 @@ async function handleEchoMessage(
           `${BACKEND_URL}/echo/preferences?userId=${encodeURIComponent(userId)}`,
           {
             method: "POST",
-            headers: { "content-type": "application/json", ...authHeaders(userId) },
+            headers: { "content-type": "application/json", ...authHeaders() },
             body: JSON.stringify({ echoConceptLanguage: next }),
           }
         );
@@ -275,19 +371,19 @@ async function handleEchoMessage(
         // Offline — the picker will show the old value; the user can
         // retry when the network comes back.
       }
-      await sendDashboard(panel, userId, state.currentWindow);
+      await sendDashboard(post, userId, state.currentWindow);
       return;
     }
     case "echo_rescanRepo": {
       const root = currentWorkspaceRoot();
       if (!root) return;
       try {
-        await clearScannedWorkspace(state.context, root);
+        await clearScannedWorkspace(context, root);
       } catch {
         // Non-fatal — if the globalState write fails, the forced scan
         // below still overrides the cached flag in memory.
       }
-      void maybeKickWorkspaceScan(state.context, panel, userId, true);
+      void maybeKickWorkspaceScan(context, post, userId, true);
       return;
     }
     default:
@@ -295,17 +391,41 @@ async function handleEchoMessage(
   }
 }
 
+const DASHBOARD_FLUSH_TIMEOUT_MS = 5_000;
+const DASHBOARD_FETCH_TIMEOUT_MS = 15_000;
+
+/** Race a promise against a wall-clock timeout. Resolves/rejects with
+ *  whichever wins. Used so a hung backend can't leave the Echo panel
+ *  stuck on its loader skeleton forever. */
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label} timed out`)), ms);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (err) => {
+        clearTimeout(t);
+        reject(err);
+      }
+    );
+  });
+}
+
 async function sendDashboard(
-  panel: vscode.WebviewPanel,
+  post: EchoPoster,
   userId: string,
   window: EchoWindow
 ): Promise<void> {
-  postToEchoPanel(panel, { type: "echo_dashboardLoading", window });
+  post({ type: "echo_dashboardLoading", window });
   // Flush pending events before asking the backend to aggregate — without
   // this, dashboard queries race the 2-min flush interval and show stale
-  // numbers. Flush failures are non-fatal; events stay queued for next try.
+  // numbers. Bounded so a hung backend can't block the dashboard forever;
+  // flush failures are non-fatal either way.
   try {
-    await getBatcher()?.flush();
+    const pending = getBatcher()?.flush();
+    if (pending) await withTimeout(pending, DASHBOARD_FLUSH_TIMEOUT_MS, "batcher flush");
   } catch {
     // Silently continue — the dashboard still works with whatever events
     // already made it to the backend.
@@ -318,13 +438,15 @@ async function sendDashboard(
     workspaceRoot !== null
       ? `&workspaceRoot=${encodeURIComponent(workspaceRoot)}`
       : "";
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), DASHBOARD_FETCH_TIMEOUT_MS);
   try {
     const res = await fetch(
       `${BACKEND_URL}/echo/dashboard?window=${window}&userId=${encodeURIComponent(userId)}${workspaceParam}`,
-      { headers: { ...authHeaders(userId) } }
+      { headers: { ...authHeaders() }, signal: ac.signal }
     );
     if (!res.ok) {
-      postToEchoPanel(panel, {
+      post({
         type: "echo_dashboardError",
         window,
         error: `HTTP ${res.status}`,
@@ -332,34 +454,38 @@ async function sendDashboard(
       return;
     }
     const data = (await res.json()) as DashboardResponse;
-    postToEchoPanel(panel, { type: "echo_dashboard", window, data });
+    post({ type: "echo_dashboard", window, data });
   } catch (err) {
-    postToEchoPanel(panel, {
+    post({
       type: "echo_dashboardError",
       window,
       error: err instanceof Error ? err.message : String(err),
     });
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 async function sendPreferences(
-  panel: vscode.WebviewPanel,
+  post: EchoPoster,
   userId: string
 ): Promise<void> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), DASHBOARD_FETCH_TIMEOUT_MS);
   try {
     const res = await fetch(
       `${BACKEND_URL}/echo/preferences?userId=${encodeURIComponent(userId)}`,
-      { headers: { ...authHeaders(userId) } }
+      { headers: { ...authHeaders() }, signal: ac.signal }
     );
     if (!res.ok) {
-      postToEchoPanel(panel, {
+      post({
         type: "echo_preferences",
         preferences: { storyModeNotify: false },
       });
       return;
     }
     const body = (await res.json()) as { preferences?: Partial<EchoUserPreferences> };
-    postToEchoPanel(panel, {
+    post({
       type: "echo_preferences",
       preferences: {
         storyModeNotify: !!body.preferences?.storyModeNotify,
@@ -367,10 +493,12 @@ async function sendPreferences(
       },
     });
   } catch {
-    postToEchoPanel(panel, {
+    post({
       type: "echo_preferences",
       preferences: { storyModeNotify: false },
     });
+  } finally {
+    clearTimeout(timer);
   }
 }
 

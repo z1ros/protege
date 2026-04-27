@@ -41,7 +41,6 @@ export function Hero({ data, loading }: HeroProps): JSX.Element {
     <section className="echo-widget echo-hero" data-widget="W1">
       <header className="echo-widget-head">
         <h2>Today at a glance</h2>
-        <span className="echo-widget-tag">W1</span>
       </header>
       <div className="echo-widget-body">
         {loading && !data ? (

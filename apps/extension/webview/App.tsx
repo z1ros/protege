@@ -25,6 +25,7 @@ import { VoiceMode } from "./VoiceMode.js";
 import { ConceptsTab } from "./ConceptsTab.js";
 import { LiveTab } from "./LiveTab.js";
 import { MapTab } from "./MapTab.js";
+import { EchoTab } from "./EchoTab.js";
 import { SessionStrip } from "./SessionStrip.js";
 import { ExplainBackPanel } from "./ExplainBackPanel.js";
 import { LearningSessionPanel } from "./LearningSessionPanel.js";
@@ -58,7 +59,7 @@ import {
 } from "./icons.js";
 import protegeLogoUrl from "./protege-logo.svg";
 
-type Mode = "chat" | "concepts" | "live" | "map";
+type Mode = "chat" | "concepts" | "live" | "map" | "echo";
 type ChatInputMode = "text" | "voice";
 
 // Legacy Code IQ route is hidden behind a dev flag — see the "Archive CodeIQ"
@@ -655,6 +656,44 @@ export function App() {
 
   const isEmpty = messages.length === 0;
 
+  // Login-first gate. The host warms the GitHub session at activation; if
+  // the user has signed in to VS Code's GitHub provider, `authUser` will
+  // arrive within ~50ms of `ready` and we render the full UI. Otherwise we
+  // show a sign-in wall and refuse to render the chat / Echo / live tabs.
+  // The gate is the ONLY surface that can hit the backend pre-auth.
+  if (authUser === null) {
+    return (
+      <div className="app auth-gate">
+        <div className="auth-gate-card">
+          <div className="auth-gate-brand">
+            <img src={protegeLogoUrl} alt="Protege" />
+            <div className="auth-gate-wordmark">Protege</div>
+          </div>
+          <div className="auth-gate-title">Sign in to get started</div>
+          <div className="auth-gate-body">
+            Protege keeps your Code IQ, concepts, and Echo activity tied to
+            your GitHub account. We use it for sign-in only — no repo access,
+            no posts, nothing else.
+          </div>
+          <button
+            type="button"
+            className="auth-gate-button"
+            onClick={() => vscode.postMessage({ type: "auth/login" })}
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+              <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" />
+            </svg>
+            Sign in with GitHub
+          </button>
+          <div className="auth-gate-foot">
+            VS Code's built-in GitHub provider handles the OAuth flow. Your
+            token never touches our servers — we verify it via GitHub's API.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className="app"
@@ -805,13 +844,14 @@ export function App() {
             Chat
           </button>
           <button
-            className="tab"
+            className={`tab ${mode === "echo" && !overlay && !streakOpen ? "active" : ""}`}
             onClick={() => {
-              // Echo lives in its own editor-tab webview — clicking this
-              // strip entry dispatches the host command that opens it.
-              vscode.postMessage({ type: "echo/open" });
+              setMode("echo");
+              setOverlay(null);
+              setStreakOpen(false);
             }}
           >
+            {mode === "echo" && !overlay && !streakOpen && <span className="tab-dot" />}
             Echo
           </button>
           {SHOW_CODEIQ_TAB && (
@@ -1243,6 +1283,8 @@ export function App() {
               : null
           }
         />
+      ) : mode === "echo" ? (
+        <EchoTab />
       ) : null}
 
       {/* Single persistent overlay — the backdrop stays mounted across panel

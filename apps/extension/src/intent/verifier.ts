@@ -5,6 +5,7 @@ import type {
   VerifyResponse,
 } from "@protege/types";
 import { BACKEND_URL } from "../user/protegeClient.js";
+import { authHeaders } from "../user/auth.js";
 import { log } from "../log.js";
 
 /**
@@ -135,7 +136,7 @@ export async function verifyUnderstanding(
   try {
     const res = await fetch(`${BACKEND_URL}/verify`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { ...authHeaders() },
       body: JSON.stringify({ message, shape, context, forceProceed }),
       signal: controller.signal,
     });

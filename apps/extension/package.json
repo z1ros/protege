@@ -25,6 +25,11 @@
           "type": "webview",
           "id": "protege.launcher",
           "name": "Protege"
+        },
+        {
+          "type": "webview",
+          "id": "protege.fileWalk",
+          "name": "File Walk"
         }
       ]
     },
@@ -86,12 +91,24 @@
         "title": "Protege: Explain selection"
       },
       {
-        "command": "protege.summarizeFile",
-        "title": "Protege: What does this file do?"
+        "command": "protege.why",
+        "title": "Protege: Why — git intent behind the selection"
       },
       {
-        "command": "protege.greetCurrentFile",
-        "title": "Protege: Replay file greeting"
+        "command": "protege.findSimilar",
+        "title": "Protege: Find similar code in this workspace"
+      },
+      {
+        "command": "protege.trace",
+        "title": "Protege: Trace symbol (definition + callers)"
+      },
+      {
+        "command": "protege.compare",
+        "title": "Protege: Compare — senior-style rewrite of the selection"
+      },
+      {
+        "command": "protege.summarizeFile",
+        "title": "Protege: What does this file do?"
       },
       {
         "command": "protege.playCurrentFileOverview",
@@ -284,8 +301,59 @@
       {
         "command": "protege.aiBlocks.dismissAllInFile",
         "title": "Protege: AI blocks — dismiss all in this file"
+      },
+      {
+        "command": "protege.startFileWalk",
+        "title": "Protege: Walk this file",
+        "icon": "$(debug-step-into)"
+      },
+      {
+        "command": "protege.fileWalk.next",
+        "title": "Protege: File Walk — next step",
+        "icon": "$(arrow-right)"
+      },
+      {
+        "command": "protege.fileWalk.prev",
+        "title": "Protege: File Walk — previous step",
+        "icon": "$(arrow-left)"
+      },
+      {
+        "command": "protege.fileWalk.exit",
+        "title": "Protege: File Walk — exit",
+        "icon": "$(close)"
       }
     ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "protege.startFileWalk",
+          "when": "!protege.fileWalk.active && resourceLangId =~ /^(typescript|typescriptreact|javascript|javascriptreact|python|go|rust|java|cpp|c|csharp|ruby|php|swift)$/",
+          "group": "navigation@97"
+        },
+        {
+          "command": "protege.fileWalk.prev",
+          "when": "protege.fileWalk.active",
+          "group": "navigation@97"
+        },
+        {
+          "command": "protege.fileWalk.next",
+          "when": "protege.fileWalk.active",
+          "group": "navigation@98"
+        },
+        {
+          "command": "protege.fileWalk.exit",
+          "when": "protege.fileWalk.active",
+          "group": "navigation@99"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "protege.startFileWalk",
+          "when": "resourceLangId =~ /^(typescript|typescriptreact|javascript|javascriptreact|python|go|rust|java|cpp|c|csharp|ruby|php|swift)$/",
+          "group": "9_protege"
+        }
+      ]
+    },
     "configuration": {
       "title": "Protege",
       "properties": {
@@ -348,6 +416,83 @@
           "type": "boolean",
           "default": true,
           "description": "AI Block Highlighter: every auto-inserted (vibecoded) region gets a subtle blue line-wash + a CodeLens '◎ <summary> · ✿ Teach me this block'. Click to open a rich hover with a short What + a One thing to know + Got it / Tell me more / Dismiss. Replaces the old comment-thread briefing with a browsable ambient artifact — review whenever you want."
+        },
+        "protege.autoBudgetPerHour": {
+          "type": "number",
+          "default": 30,
+          "minimum": 0,
+          "maximum": 1000,
+          "description": "Hourly cap on AUTO-FIRED cloud LLM calls (file-open greeter, vibe brief, struggle chip — anything that fires without you clicking). User-triggered actions (chat, ⌘K P, Learning Mode, voice Explain) bypass this cap. In `auto` backend mode these route on-device first, so this only kicks in when you've explicitly picked a cloud backend like Haiku. Set to 0 to disable all auto-fired cloud calls; raise it if you want a chattier hint surface."
+        },
+        "protege.codeReview.liveReview": {
+          "type": "boolean",
+          "default": true,
+          "description": "Live Review — analyze code as you type, surface defect findings as blue underlines and lens hints. Master switch for the Code Review group; turning it off silences findings without disabling other categories."
+        },
+        "protege.codeReview.smartFix": {
+          "type": "boolean",
+          "default": true,
+          "description": "Smart Fix — one-click bug repairs offered next to detected defects."
+        },
+        "protege.codeReview.errorLineHighlight": {
+          "type": "boolean",
+          "default": true,
+          "description": "Error-line highlight — subtle line tint on rows containing diagnostics so they read at a glance."
+        },
+        "protege.codeReview.underlineWhispers": {
+          "type": "boolean",
+          "default": true,
+          "description": "Underline whispers — soft inline annotations that elaborate on diagnostic squiggles without opening a panel."
+        },
+        "protege.codeReview.statusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Status bar summary — live counter in the status bar showing finding totals and IQ deltas."
+        },
+        "protege.teaching.didYouKnow": {
+          "type": "boolean",
+          "default": true,
+          "description": "Did You Know? — proactive teaching tips above lines containing concepts you have not seen before. Triggers at natural pauses (idle, file switch, save). Tip text is pulled from a shared cache so the LLM call happens once per concept across all users."
+        },
+        "protege.teaching.patternSpotter": {
+          "type": "boolean",
+          "default": true,
+          "description": "Pattern spotter — recognises common patterns inline and tags them for review."
+        },
+        "protege.teaching.ghostMentor": {
+          "type": "boolean",
+          "default": false,
+          "description": "Ghost mentor — proactive coaching messages that surface as you work. Off by default; some users find it chatty."
+        },
+        "protege.teaching.fileOpenGreeter": {
+          "type": "boolean",
+          "default": false,
+          "description": "File-open greeter — short welcome popover summarising a file when you open it. Off by default to keep file-switching fast."
+        },
+        "protege.teaching.struggleChip": {
+          "type": "boolean",
+          "default": false,
+          "description": "Struggle chip — surfaces a hover signal when Protege detects you are stuck on the same area for a while. Experimental."
+        },
+        "protege.aiHighlights.chatHighlights": {
+          "type": "boolean",
+          "default": true,
+          "description": "Chat-driven highlights — lens decorations painted by AI tool calls during a chat session, with Apply fix / Teach me / Dismiss actions."
+        },
+        "protege.recap.saveRecap": {
+          "type": "boolean",
+          "default": true,
+          "description": "Save recap — brief toast after a meaningful save summarising what changed and what you learned."
+        },
+        "protege.recap.conceptTrail": {
+          "type": "boolean",
+          "default": true,
+          "description": "Concept trail — strip showing concepts you touched today, useful for spotting your daily learning surface."
+        },
+        "protege.recap.projectMap": {
+          "type": "boolean",
+          "default": true,
+          "description": "Project map — architecture overview view with file groupings and dependency hints."
         }
       }
     },
@@ -386,6 +531,8 @@
     "build": "tsup && vite build",
     "build:ext": "tsup",
     "build:webview": "vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -428,6 +575,7 @@
     "tsup": "^8.3.0",
     "typescript": "^5.9.3",
     "unplugin-icons": "^23.0.1",
-    "vite": "^5.4.0"
+    "vite": "^5.4.0",
+    "vitest": "^2.1.0"
   }
 }

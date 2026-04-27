@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import type { ChatTier } from "@protege/types";
 import { generateLocal, isOnDeviceReady } from "./onDeviceModel.js";
 import { runSingleQuery } from "../chat/chatRunner.js";
 
@@ -24,6 +25,44 @@ export type ActualBackend = "on-device" | "haiku" | "sonnet";
 
 const STATE_KEY = "protege.aiBackend";
 
+/**
+ * Per-hour budget for AUTO-FIRED cloud calls (kind === "scan" reaching
+ * the cloud path because the user picked an explicit cloud backend like
+ * "haiku"). User-triggered teach calls (chat, ⌘K P, learning mode,
+ * voice Explain) bypass this cap entirely.
+ *
+ * Configurable via the `protege.autoBudgetPerHour` setting. Default 30 ≈
+ * one auto-fire every 2 minutes — plenty for the hint surface to feel
+ * alive, hard ceiling on bills. Set to 0 to disable auto-fired cloud
+ * calls entirely.
+ */
+const AUTO_BUDGET_DEFAULT = 30;
+const AUTO_BUDGET_WINDOW_MS = 60 * 60_000;
+let autoBudgetWindowStart = Date.now();
+let autoBudgetSpent = 0;
+
+function getAutoBudgetPerHour(): number {
+  const raw = vscode.workspace
+    .getConfiguration("protege")
+    .get<number>("autoBudgetPerHour", AUTO_BUDGET_DEFAULT);
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) {
+    return AUTO_BUDGET_DEFAULT;
+  }
+  return Math.floor(raw);
+}
+
+function consumeAutoBudget(): { ok: boolean; cap: number; spent: number } {
+  const cap = getAutoBudgetPerHour();
+  const now = Date.now();
+  if (now - autoBudgetWindowStart >= AUTO_BUDGET_WINDOW_MS) {
+    autoBudgetWindowStart = now;
+    autoBudgetSpent = 0;
+  }
+  if (autoBudgetSpent >= cap) return { ok: false, cap, spent: autoBudgetSpent };
+  autoBudgetSpent++;
+  return { ok: true, cap, spent: autoBudgetSpent };
+}
+
 let currentBackend: AiBackend = "auto";
 let ctx: vscode.ExtensionContext | null = null;
 
@@ -39,6 +78,15 @@ export interface LastCallInfo {
   ok: boolean;
   /** Set when the user's selected backend couldn't run so we fell back. */
   fallback?: { requested: AiBackend; reason: string };
+  /** Optional caller tag for cost analysis (e.g. "liveReview.healthTimer",
+   *  "vibeBrief", "patternSpotter"). Backwards-compatible — older record
+   *  sites omit it and dashboards treat as "uncategorized". */
+  feature?: string;
+  /** Optional outcome label for the call. For LLM scans this is typically
+   *  "llm-scan"; for render-only refreshes triggered through the same
+   *  recordCall pipeline (e.g. Live Review V2 timer) this is "render-only".
+   *  Lets us prove cost reduction in production without inferring intent. */
+  outcome?: "llm-scan" | "render-only" | "cache-hit" | "static-fallback" | "error";
 }
 let lastCall: LastCallInfo | null = null;
 const callListeners: Array<(info: LastCallInfo) => void> = [];
@@ -231,10 +279,15 @@ export type AiIntent = "scan" | "teach";
 export async function aiQuery(
   prompt: string,
   maxTokens = 256,
-  opts: { kind?: AiIntent } = {}
+  opts: { kind?: AiIntent; tier?: ChatTier } = {}
 ): Promise<string | null> {
   const backend = currentBackend;
   const kind: AiIntent = opts.kind ?? "scan";
+  // Default tier follows kind: auto-fired scans get the cheap model
+  // (gpt-4.1-mini / Haiku), user-triggered teach calls get the premium
+  // model (gpt-4.1 / Sonnet-when-enabled). Callers can override.
+  const tier: ChatTier =
+    opts.tier ?? (kind === "scan" ? "cheap" : "premium");
   let fallback: { requested: AiBackend; reason: string } | undefined;
 
   // ---- Smart mix ("auto") ----
@@ -323,9 +376,60 @@ export async function aiQuery(
   // user pick. Easy revert: change `"haiku"` back to
   // `backend === "sonnet" ? "sonnet" : "haiku"`.
   const cloudBackend: ActualBackend = "haiku";
+
+  // Budget gate: cap auto-fired cloud calls (kind === "scan") at the
+  // user-configured `protege.autoBudgetPerHour`. User-triggered "teach"
+  // calls bypass — those are explicit user actions and shouldn't be
+  // silently dropped.
+  if (kind === "scan") {
+    const budget = consumeAutoBudget();
+    if (!budget.ok) {
+      recordCall({
+        backend: cloudBackend,
+        atMs: Date.now(),
+        durationMs: 0,
+        ok: false,
+        fallback: {
+          requested: backend,
+          reason: `auto-fire budget exhausted (${budget.cap}/h)`,
+        },
+      });
+      console.log(
+        `[protege] aiQuery(scan) → skipped · auto-fire budget exhausted (${budget.spent}/${budget.cap} this hour)`
+      );
+      return null;
+    }
+  }
+
+  // Caller-trace diagnostic: capture the first stack frame outside of
+  // aiBackend.ts so the backend log line tells us WHICH feature fired
+  // this LLM call. Without this the only signal in /chat logs is "tier
+  // and tools-off shape" which matches ~10 callers — useless for
+  // pinpointing a regression. `new Error().stack` is cheap (~µs) and
+  // Node's V8 already collects it on construction. We slice past the
+  // aiBackend frames to find the caller.
+  const callerTrace = (() => {
+    const stack = new Error().stack ?? "";
+    const lines = stack.split("\n").slice(1); // drop "Error" header
+    for (const line of lines) {
+      // Skip frames inside this file and runSingleQuery's wrapper
+      if (line.includes("aiBackend") || line.includes("chatRunner")) continue;
+      // Trim to "    at fnName (file:line:col)" → "fnName · file:line"
+      const m = line.match(/at (\S+) \(.*?([^/\\]+:\d+):\d+\)/) ??
+                line.match(/at .*?([^/\\]+:\d+):\d+/);
+      if (m) return m.length === 3 ? `${m[1]} · ${m[2]}` : m[1];
+      return line.trim();
+    }
+    return "unknown caller";
+  })();
+  const promptPreview = prompt.slice(0, 60).replace(/\s+/g, " ");
+  console.log(
+    `[protege] aiQuery FIRE · ${kind}/${tier} · caller=${callerTrace} · prompt="${promptPreview}…"`
+  );
+
   const start = Date.now();
   try {
-    const result = await runSingleQuery(prompt);
+    const result = await runSingleQuery(prompt, { tier });
     const duration = Date.now() - start;
     recordCall({
       backend: cloudBackend,
@@ -335,7 +439,7 @@ export async function aiQuery(
       fallback,
     });
     console.log(
-      `[protege] aiQuery(${kind}) → ${cloudBackend} (Claude) · ${duration}ms${
+      `[protege] aiQuery(${kind}, ${tier}) → ${cloudBackend} (Claude) · ${duration}ms · caller=${callerTrace}${
         fallback ? ` · fallback from ${fallback.requested} (${fallback.reason})` : ""
       }`
     );
@@ -349,6 +453,9 @@ export async function aiQuery(
       ok: false,
       fallback,
     });
+    console.log(
+      `[protege] aiQuery FAIL · ${kind}/${tier} · caller=${callerTrace} · ${err instanceof Error ? err.message : String(err)}`
+    );
     console.error("[protege] Cloud AI query failed:", err);
     return null;
   }

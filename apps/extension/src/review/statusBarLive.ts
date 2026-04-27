@@ -181,6 +181,11 @@ async function showQuickPick(): Promise<void> {
       label: `$(list-tree) ${fileConcepts.length} concepts in this file`,
       description: fileConcepts.slice(0, 5).join(", ") + (fileConcepts.length > 5 ? "..." : ""),
     });
+
+    items.push({
+      label: "$(debug-step-into) Walk this file",
+      description: "Step-by-step mentor walkthrough of the active file",
+    });
   }
 
   items.push({
@@ -205,6 +210,8 @@ async function showQuickPick(): Promise<void> {
     vscode.commands.executeCommand("protege.toggle");
   } else if (picked.label.includes("Teach:")) {
     vscode.commands.executeCommand("protege.teachThis");
+  } else if (picked.label.includes("Walk this file")) {
+    vscode.commands.executeCommand("protege.startFileWalk");
   } else if (picked.label.includes("Live Review")) {
     vscode.commands.executeCommand("protege.toggleLiveReview");
   } else if (picked.label.includes("Code IQ")) {

@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
 import { authHeaders } from "../user/auth.js";
-import { BACKEND_URL } from "../user/protegeClient.js";
+import { BACKEND_URL, currentUserIdOrNull } from "../user/protegeClient.js";
 
 /**
  * Diagnostic command: prompt for a time window, hit the backend's
@@ -63,13 +63,20 @@ let channel: vscode.OutputChannel | null = null;
 
 export function startStoreDiff(
   context: vscode.ExtensionContext,
-  userId: string
+  _userId: string | null
 ): vscode.Disposable {
   channel = vscode.window.createOutputChannel("Protege Echo Store Diff");
 
   const cmd = vscode.commands.registerCommand(
     "protege.showStoreDiff",
     async () => {
+      const userId = currentUserIdOrNull();
+      if (!userId) {
+        vscode.window.showInformationMessage(
+          "Sign in with GitHub to view the Echo store diff."
+        );
+        return;
+      }
       const raw = await vscode.window.showInputBox({
         prompt: "Show store changes since how many minutes ago?",
         value: "5",
@@ -88,7 +95,7 @@ export function startStoreDiff(
         const url = `${BACKEND_URL}/echo/debug/recent?since=${sinceMs}&userId=${encodeURIComponent(userId)}`;
         const res = await fetch(url, {
           method: "GET",
-          headers: { ...authHeaders(userId) },
+          headers: { ...authHeaders() },
         });
         if (!res.ok) {
           vscode.window.showErrorMessage(

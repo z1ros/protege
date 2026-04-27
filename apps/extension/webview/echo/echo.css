@@ -18,6 +18,16 @@ body,
   line-height: 1.5;
 }
 
+/* Embedded variant: when Echo renders inside the main Protege sidebar the
+   standalone panel's `body` scroll context is gone, so the root itself has
+   to claim the remaining flex height and own the scroll. */
+.echo-root--embedded {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
 .echo-header {
   display: flex;
   align-items: center;
@@ -44,6 +54,14 @@ body,
   display: flex;
   justify-content: flex-end;
   padding: 12px 24px;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--echo-bg);
+  /* Soft separator that fades in once the toolbar starts covering scrolled
+     content, so widgets don't appear to slide under a floating island
+     with no anchor. */
+  box-shadow: 0 1px 0 var(--echo-border);
 }
 
 .echo-history-chip {
@@ -1207,6 +1225,63 @@ body,
   gap: 8px;
 }
 
+/* Right-side action cluster — Save-changes controls + language picker. */
+.echo-widget-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* ===== Pending concept-status save controls ===== */
+.echo-pending-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.echo-pending-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(88, 166, 255, 0.12);
+  color: var(--echo-accent);
+  border: 1px solid rgba(88, 166, 255, 0.45);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.echo-pending-save:hover {
+  background: rgba(88, 166, 255, 0.22);
+  border-color: rgba(88, 166, 255, 0.7);
+}
+
+.echo-pending-discard {
+  background: transparent;
+  color: var(--echo-muted);
+  border: 1px solid var(--echo-border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.echo-pending-discard:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--echo-text);
+}
+
+/* Unsaved edit marker on the status pill itself — subtle dashed ring so
+   you can see which tiles are pending without squinting. */
+.echo-ccov-status-btn.pending {
+  border-style: dashed;
+}
+
 /* ===== Language picker (shared W15/W17) ===== */
 .echo-lang-picker {
   position: relative;
@@ -1610,4 +1685,56 @@ body,
   margin-top: 4px;
   color: var(--echo-muted);
   font-size: 11px;
+}
+
+/* ========== Login-first sign-in gate ========== */
+.echo-auth-gate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-height: 50vh;
+  padding: 32px 16px;
+}
+
+.echo-auth-gate-card {
+  width: 100%;
+  max-width: 380px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 14px;
+  padding: 28px 24px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.echo-auth-gate-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.echo-auth-gate-body {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--echo-muted);
+}
+
+.echo-auth-gate-button {
+  padding: 9px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.echo-auth-gate-button:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.28);
 }

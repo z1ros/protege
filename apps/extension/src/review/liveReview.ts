@@ -10,6 +10,7 @@ import {
 import {
   shouldSuppress as gateShouldSuppress,
   noteFindingShown as gateNoteFindingShown,
+  onGateChanged,
 } from "./findingGate.js";
 
 /**
@@ -48,6 +49,7 @@ let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let changeListener: vscode.Disposable | null = null;
 let editorListener: vscode.Disposable | null = null;
 let healthTimer: ReturnType<typeof setInterval> | null = null;
+let gateSubscription: vscode.Disposable | null = null;
 let currentSuggestions: Suggestion[] = [];
 let scanSeq = 0;
 let pendingChangeSize = 0;
@@ -56,6 +58,12 @@ let isScanning = false;
 
 // Per-URI cache so the InlayHintsProvider can respond to VS Code's pulls
 const suggestionsByUri = new Map<string, Suggestion[]>();
+// Per-URI text snapshot of the last LLM scan, keyed by uri.toString().
+// Used by the tab-switch path to avoid re-scanning a file whose content
+// hasn't changed since we last saw it. Without this, switching to a
+// file you visited 30s ago always fires a fresh LLM call even though
+// the cached suggestions are still correct.
+const lastScannedTextByUri = new Map<string, string>();
 
 // Session-scoped dismiss log. Keyed by `${uri}` → Set<`${ruleId}@${line}`>.
 // When the user clicks "✕ Dismiss" on a finding, we remember its key so
@@ -288,7 +296,15 @@ function broadcastState(): void {
   } catch {}
 }
 
-function notifyLiveReviewOn(): void {
+// Re-paints every Live Review surface from the in-memory suggestion cache.
+// No LLM call. The gate (findingGate.ts) is a render-time filter, so once
+// its LINE_EDIT_WINDOW_MS expires for a touched line, calling this surfaces
+// any findings the gate had been hiding. Used by:
+//   - notifyLiveReviewOn (toggle-on handler, since the toggle wants the
+//     same render fan-out)
+//   - the V2 health timer body (replaces the old LLM-firing scan)
+//   - the onGateChanged subscriber (gate-clear event re-render)
+function refreshAllSurfaces(): void {
   try {
     const mod = require("./inlineErrors.js") as {
       refreshInlineDecorations: () => void;
@@ -305,6 +321,11 @@ function notifyLiveReviewOn(): void {
   } catch {}
   inlayProvider?.refresh();
 }
+
+function notifyLiveReviewOn(): void {
+  refreshAllSurfaces();
+}
+
 
 function notifyLiveReviewOff(): void {
   try {
@@ -354,23 +375,71 @@ function startLiveReview(): void {
 
   editorListener = vscode.window.onDidChangeActiveTextEditor((editor) => {
     if (!editor) return;
+    // Per-URI dedup: if we've scanned this exact text before, the cache
+    // already has the right suggestions. Skip the LLM call and just
+    // refresh surfaces. Without this, every tab switch re-scans even
+    // unchanged files — common pattern (jump to a file, jump back) used
+    // to fire two LLM calls for zero new info.
+    const uriKey = editor.document.uri.toString();
+    const text = editor.document.getText();
+    const cached = lastScannedTextByUri.get(uriKey);
+    if (cached !== undefined && cached === text && suggestionsByUri.has(uriKey)) {
+      // Sync the global lastScannedText so a follow-up keystroke-debounced
+      // scan still sees the dedup guard at runReview entry.
+      lastScannedText = text;
+      pendingChangeSize = 0;
+      currentSuggestions = suggestionsByUri.get(uriKey) ?? [];
+      log(
+        "liveReview",
+        `tab-switch dedup HIT · ${editor.document.fileName.split(/[\\/]/).pop()} · ${currentSuggestions.length} cached findings`
+      );
+      refreshAllSurfaces();
+      updateStatusBar();
+      broadcastState();
+      return;
+    }
     lastScannedText = null;
     pendingChangeSize = Infinity;
     void runReview(editor);
   });
 
   if (vscode.window.activeTextEditor) {
-    pendingChangeSize = Infinity;
-    void runReview(vscode.window.activeTextEditor);
-  }
-
-  healthTimer = setInterval(() => {
     const editor = vscode.window.activeTextEditor;
-    if (editor && active && !isScanning) {
+    const uriKey = editor.document.uri.toString();
+    const text = editor.document.getText();
+    const cached = lastScannedTextByUri.get(uriKey);
+    if (cached !== undefined && cached === text && suggestionsByUri.has(uriKey)) {
+      lastScannedText = text;
+      pendingChangeSize = 0;
+      currentSuggestions = suggestionsByUri.get(uriKey) ?? [];
+      refreshAllSurfaces();
+    } else {
       pendingChangeSize = Infinity;
       void runReview(editor);
     }
+  }
+
+  // The legacy "force a full LLM rescan every 12s" timer was deleted —
+  // it bypassed runReview's same-content dedup with pendingChangeSize =
+  // Infinity, burning ~$4/day per idle user re-scanning unchanged code.
+  //
+  // The timer's only legitimate job is to re-render surfaces after
+  // findingGate's LINE_EDIT_WINDOW_MS expires. The gate is a render-time
+  // filter — once its window clears, the existing suggestion cache is
+  // already correct. We just need a paint pass. Zero LLM tokens.
+  //
+  // We subscribe to onGateChanged so most re-renders happen immediately
+  // on cursor moves and on the time-based gate-clear emission from
+  // findingGate.ts (scheduled per touched line, fires LINE_EDIT_WINDOW_MS
+  // + 500ms after the edit). The interval below is a belt-and-suspenders
+  // safety net for any recovery case the event channel misses.
+  healthTimer = setInterval(() => {
+    const editor = vscode.window.activeTextEditor;
+    if (editor && active) refreshAllSurfaces();
   }, HEALTH_CHECK_MS);
+  gateSubscription = onGateChanged(() => {
+    if (active) refreshAllSurfaces();
+  });
 
   updateStatusBar();
   broadcastState();
@@ -390,6 +459,8 @@ function stopLiveReview(): void {
   editorListener?.dispose();
   editorListener = null;
   if (healthTimer) { clearInterval(healthTimer); healthTimer = null; }
+  gateSubscription?.dispose();
+  gateSubscription = null;
 
   scanSeq++;
   isScanning = false;
@@ -401,6 +472,7 @@ function stopLiveReview(): void {
     if (gutterInfo) editor.setDecorations(gutterInfo, []);
   }
   suggestionsByUri.clear();
+  lastScannedTextByUri.clear();
   inlayProvider?.refresh();
 
   currentSuggestions = [];
@@ -483,6 +555,9 @@ async function runReview(editor: vscode.TextEditor): Promise<void> {
 
   pendingChangeSize = 0;
   lastScannedText = text;
+  // Stamp the per-URI snapshot too so a future tab-switch back to this
+  // URI can short-circuit the LLM call when content is unchanged.
+  lastScannedTextByUri.set(editor.document.uri.toString(), text);
 
   const mySeq = ++scanSeq;
   const cancelSignal = { cancelled: false };

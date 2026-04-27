@@ -427,7 +427,7 @@ async function generateBriefing(
         contextBlock: context.join("\n"),
       });
 
-  const raw = await aiQuery(prompt, BRIEFING_MAX_TOKENS, { kind: "teach" });
+  const raw = await aiQuery(prompt, BRIEFING_MAX_TOKENS, { kind: "scan" });
   if (!raw) return null;
   return parseBriefing(raw);
 }

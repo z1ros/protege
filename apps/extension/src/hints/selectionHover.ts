@@ -2,22 +2,28 @@ import * as vscode from "vscode";
 import { log } from "../log.js";
 
 /**
- * Selection Hover — when the user highlights code, Protege auto-opens a
- * small hover popup with three actions:
+ * Selection Hover — when the user highlights code, Protege attaches a
+ * hover popup to the selection with five actions:
  *
- *     ◎ Explain  ·  ✿ Teach me  ·  ✿ Explain back
+ *     ◎ Explain  ·  ⌘ Find similar  ·  → Trace  ·  ✿ Compare  ·  ? Why
  *
  * Cursor's own "Add to Chat · Quick Edit" floating bar is proprietary
  * and can't be extended, so this reproduces the same vibe via the
  * stable VS Code hover API: attach a decoration with a `hoverMessage`
- * to the selection range and programmatically fire
- * `editor.action.showHover`.
+ * to the selection range. The popup surfaces when the user hovers the
+ * mouse over their selection — VS Code's native mouse-hover does NOT
+ * steal keyboard focus, so backspace/typing on the selection still
+ * works as expected.
+ *
+ * We deliberately do NOT call `editor.action.showHover` to auto-pop the
+ * widget. That command focuses the hover, which traps the next
+ * keystroke (e.g. backspace would dismiss the hover instead of
+ * deleting the selected code).
  *
  * Triggers:
- *   • Selection changes from empty → non-empty (mouse or keyboard drag),
- *     debounced 400ms so rapid multi-cursor jitters don't flash the UI.
+ *   • Mouse-hover over a non-empty selection — natural VS Code hover.
  *   • Manual: `Cmd+K S` fires `protege.showSelectionActions` on the
- *     current selection.
+ *     current selection (this one DOES focus, by user intent).
  *
  * Skips:
  *   • Selections under 3 chars (cursor blips, single-word word-highlight).
@@ -105,7 +111,7 @@ export function registerSelectionHover(
           return;
         }
         const key = keyFor(editor.document.uri, editor.selection);
-        showHoverNow(editor, editor.selection, key);
+        showHoverFocused(editor, editor.selection, key);
       }
     )
   );
@@ -158,11 +164,13 @@ function showHoverNow(
   md.appendMarkdown(
     `**[◎ Explain](command:protege.explainSelection "Quick explanation in chat")**` +
       ` · ` +
-      `**[? Predict](command:protege.predict.fromSelection "Test your mental model — predict what this does before the reveal")**` +
+      `**[⌘ Find similar](command:protege.findSimilar "Find sister-patterns elsewhere in this workspace")**` +
       ` · ` +
-      `**[✿ Teach me](command:protege.teachThis "Deep-dive lesson in the sidebar")**` +
+      `**[→ Trace](command:protege.trace "Jump to where this is defined and every place it's called")**` +
       ` · ` +
-      `**[✿ Explain back](command:protege.explainBack.start "Reverse teach — you explain it, Protege grades")**`
+      `**[✿ Compare](command:protege.compare "Side-by-side: how a senior engineer would write this")**` +
+      ` · ` +
+      `**[? Why](command:protege.why "Git blame + commit body + linked PR — the intent behind this code")**`
   );
 
   // Invisible decoration — we're not drawing anything on the code, just
@@ -193,18 +201,22 @@ function showHoverNow(
   activeDecoration = decoration;
   lastShownKey = key;
 
-  // Programmatically pop the hover at the current cursor position.
-  // Guarded only by the earlier `curr !== editor` check in scheduleHover,
-  // which ensures the active editor is still the one we captured. If
-  // the user tab-switched during the 400ms debounce, that check bailed
-  // and we never got here.
-  void vscode.commands.executeCommand("editor.action.showHover");
-
   const lineCount = selection.end.line - selection.start.line + 1;
   log(
     "selectionHover",
-    `shown · ${editor.document.fileName.split("/").pop()} · ${lineCount}L`
+    `armed · ${editor.document.fileName.split("/").pop()} · ${lineCount}L`
   );
+}
+
+function showHoverFocused(
+  editor: vscode.TextEditor,
+  selection: vscode.Selection,
+  key: string
+): void {
+  showHoverNow(editor, selection, key);
+  // Manual Cmd+K S path: user explicitly asked for the popup, so
+  // focusing the hover widget is the right thing here.
+  void vscode.commands.executeCommand("editor.action.showHover");
 }
 
 function clearHover(): void {

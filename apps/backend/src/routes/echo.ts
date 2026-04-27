@@ -5,6 +5,7 @@ import type {
   EchoEvent,
   EchoWindow,
 } from "@protege/types";
+import { githubAuth, resolveUserId } from "../middleware/auth.js";
 import {
   appendConceptEncounter,
   appendEchoEvents,
@@ -20,6 +21,7 @@ import {
   upsertCommitStory,
   upsertLineRewriteCounters,
   upsertRepoConceptIndex,
+  withStoreBatch,
   type EchoEventInput,
 } from "../store.js";
 import { runRollupNow } from "../echo/jobs.js";
@@ -50,6 +52,8 @@ import { assembleRepoConceptsPayload } from "../echo/widgets/w17_repoConcepts.js
  */
 
 export const echoRoute = new Hono();
+
+echoRoute.use("*", githubAuth());
 
 // ===== Simple per-user rate limit =====
 // Not production-grade. Enough to keep a runaway extension from flooding
@@ -95,16 +99,6 @@ function checkRepoScanRateLimit(bucket: string): boolean {
   return true;
 }
 
-function resolveUserId(
-  bodyUserId: string | undefined,
-  header: string | undefined,
-  query: string | undefined
-): string {
-  const candidate = bodyUserId ?? header ?? query ?? "local-dev";
-  if (typeof candidate !== "string" || candidate.length === 0) return "local-dev";
-  if (candidate.length > 200) return "local-dev";
-  return candidate;
-}
 
 function validateEchoEvent(value: unknown): value is EchoEvent {
   if (!value || typeof value !== "object") return false;
@@ -144,7 +138,7 @@ echoRoute.post("/events", async (c) => {
     return c.json({ error: "body must be an object" }, 400);
   }
   const typed = body as { userId?: string; events?: unknown };
-  const userId = resolveUserId(typed.userId, c.req.header("x-user-id"), c.req.query("userId"));
+  const userId = resolveUserId(c, typed.userId);
   await ensureUser(userId);
 
   const rawEvents = Array.isArray(typed.events) ? typed.events : [];
@@ -302,47 +296,53 @@ echoRoute.post("/events", async (c) => {
     }
   }
 
-  if (accepted.length > 0) {
-    await appendEchoEvents(accepted);
-  }
-  for (const [filePath, touches] of rewriteTouchesByFile) {
-    await upsertLineRewriteCounters(userId, filePath, touches);
-  }
-  for (const enr of commitEnrichments) {
-    try {
-      await enrichAndStoreCommit({ userId, ...enr });
-    } catch (err) {
-      console.warn("[echo] commit enrichment failed:", err);
+  // Coalesce every store mutation below into a single JSON write at the
+  // end. Without this, a batch of 20 rewrite files + 5 commits + 20
+  // authorship bumps + 30 concept encounters triggers ~75 full-store
+  // writes before the handler returns.
+  await withStoreBatch(async () => {
+    if (accepted.length > 0) {
+      await appendEchoEvents(accepted);
     }
-  }
+    for (const [filePath, touches] of rewriteTouchesByFile) {
+      await upsertLineRewriteCounters(userId, filePath, touches);
+    }
+    for (const enr of commitEnrichments) {
+      try {
+        await enrichAndStoreCommit({ userId, ...enr });
+      } catch (err) {
+        console.warn("[echo] commit enrichment failed:", err);
+      }
+    }
 
-  // Flush aggregated authorship bumps — one write per file per POST.
-  for (const [filePath, delta] of authorshipBumps) {
-    try {
-      await bumpFileAuthorship(userId, filePath, delta);
-    } catch (err) {
-      console.warn("[echo] authorship bump failed:", err);
+    // Flush aggregated authorship bumps — one write per file per POST.
+    for (const [filePath, delta] of authorshipBumps) {
+      try {
+        await bumpFileAuthorship(userId, filePath, delta);
+      } catch (err) {
+        console.warn("[echo] authorship bump failed:", err);
+      }
     }
-  }
 
-  // Flush concept encounters. Authorship bumps above are flushed FIRST so
-  // the ratio we stamp on each encounter reflects chars from the same
-  // batch (otherwise a first-ever save would always stamp null).
-  for (const ev of conceptEncounterEvents) {
-    try {
-      const ratio = await getAuthorshipRatio(userId, ev.file);
-      await appendConceptEncounter({
-        userId,
-        concept: ev.concept,
-        filePath: ev.file,
-        seenAt: new Date(ev.ts).toISOString(),
-        authorshipRatioAtTime: ratio,
-        language: ev.language,
-      });
-    } catch (err) {
-      console.warn("[echo] concept encounter append failed:", err);
+    // Flush concept encounters. Authorship bumps above are flushed FIRST so
+    // the ratio we stamp on each encounter reflects chars from the same
+    // batch (otherwise a first-ever save would always stamp null).
+    for (const ev of conceptEncounterEvents) {
+      try {
+        const ratio = await getAuthorshipRatio(userId, ev.file);
+        await appendConceptEncounter({
+          userId,
+          concept: ev.concept,
+          filePath: ev.file,
+          seenAt: new Date(ev.ts).toISOString(),
+          authorshipRatioAtTime: ratio,
+          language: ev.language,
+        });
+      } catch (err) {
+        console.warn("[echo] concept encounter append failed:", err);
+      }
     }
-  }
+  });
 
   return c.json({ ok: true, accepted: accepted.length });
 });
@@ -401,7 +401,7 @@ echoRoute.post("/commits", async (c) => {
     return c.json({ error: "body must be an object" }, 400);
   }
   const typed = body as { userId?: string; story?: CommitStory };
-  const userId = resolveUserId(typed.userId, c.req.header("x-user-id"), c.req.query("userId"));
+  const userId = resolveUserId(c, typed.userId);
   const story = typed.story;
   if (
     !story ||
@@ -502,11 +502,7 @@ echoRoute.post("/repo-scan", async (c) => {
     workspaceRoot?: unknown;
     batches?: unknown;
   };
-  const userId = resolveUserId(
-    typed.userId,
-    c.req.header("x-user-id"),
-    c.req.query("userId")
-  );
+  const userId = resolveUserId(c, typed.userId);
   if (typeof typed.workspaceRoot !== "string" || !isSafeWorkspacePath(typed.workspaceRoot)) {
     return c.json({ error: "workspaceRoot missing or malformed" }, 400);
   }
@@ -651,11 +647,7 @@ echoRoute.get("/sync/stats", (c) => {
 });
 
 echoRoute.get("/debug/recent", async (c) => {
-  const userId = resolveUserId(
-    undefined,
-    c.req.header("x-user-id"),
-    c.req.query("userId")
-  );
+  const userId = resolveUserId(c, undefined);
   await ensureUser(userId);
   const rawSince = c.req.query("since");
   const parsed = rawSince !== undefined ? parseInt(rawSince, 10) : NaN;
@@ -670,7 +662,7 @@ echoRoute.get("/dashboard", async (c) => {
   if (window !== "today" && window !== "week" && window !== "month") {
     return c.json({ error: "window must be today|week|month" }, 400);
   }
-  const userId = resolveUserId(undefined, c.req.header("x-user-id"), c.req.query("userId"));
+  const userId = resolveUserId(c, undefined);
   await ensureUser(userId);
 
   // v6 Rv6.C cold-sync — the FIRST dashboard request per user after a
@@ -806,7 +798,7 @@ echoRoute.get("/dashboard", async (c) => {
 });
 
 echoRoute.get("/preferences", async (c) => {
-  const userId = resolveUserId(undefined, c.req.header("x-user-id"), c.req.query("userId"));
+  const userId = resolveUserId(c, undefined);
   await ensureUser(userId);
   const prefs = await getEchoPreferences(userId);
   return c.json({
@@ -818,7 +810,7 @@ echoRoute.get("/preferences", async (c) => {
 });
 
 echoRoute.post("/preferences", async (c) => {
-  const userId = resolveUserId(undefined, c.req.header("x-user-id"), c.req.query("userId"));
+  const userId = resolveUserId(c, undefined);
   await ensureUser(userId);
   let body: unknown;
   try {
@@ -894,9 +886,8 @@ echoRoute.post("/concepts/status", async (c) => {
     status?: unknown;
   };
   const userId = resolveUserId(
-    typeof typed.userId === "string" ? typed.userId : undefined,
-    c.req.header("x-user-id"),
-    c.req.query("userId")
+    c,
+    typeof typed.userId === "string" ? typed.userId : undefined
   );
   if (
     typeof typed.concept !== "string" ||

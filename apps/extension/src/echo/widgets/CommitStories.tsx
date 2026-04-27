@@ -39,7 +39,6 @@ export function CommitStories({
     <section className="echo-widget echo-commits" data-widget="W11">
       <header className="echo-widget-head">
         <h2>Commit stories</h2>
-        <span className="echo-widget-tag">W11</span>
       </header>
       <div className="echo-widget-body">
         {loading && !data ? (

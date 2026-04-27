@@ -108,14 +108,18 @@ export const CLUSTER_LABELS: Record<Cluster, string> = {
  * Mastery curve: exponential — first uses feel rewarding, then taper.
  *   m(times) = 1 - exp(-times / 5)  → 63% @ 5, 86% @ 10, 95% @ 15
  *
- * Decay: linear over 60 days since last use, floor 30%.
- *   d(days) = max(0.3, 1 - days / 60)
+ * Decay: FSRS-style hyperbolic retrievability.
+ *   R(t, S) = 1 / (1 + t / (9 · S))
+ *   S grows with timesUsed (proxy for stability) so well-practiced
+ *   concepts decay slowly while fresh ones fade fast. Power-law tail
+ *   matches the Ebbinghaus curve better than the prior linear model
+ *   and never floors — a long-unused concept keeps a thin trace.
  *
  * Quality penalty: each save that had errors on this concept costs 10%,
  * floor 40%. So a user who consistently produces buggy code can't coast.
  *   q(flags) = max(0.4, 1 - flags * 0.1)
  *
- * IQ = round( sum( weight[c] * m(t) * d(days) * q(flags) ) * K )
+ * IQ = round( sum( weight[c] * m(t) * d(days, S) * q(flags) ) * K )
  *      K = 1000 / TOTAL_WEIGHT       (calibrated so max reachable = 1000)
  */
 
@@ -127,11 +131,22 @@ export function masteryCurve(timesUsed: number): number {
   return 1 - Math.exp(-timesUsed / 5);
 }
 
-export function decayFactor(lastUsedAt: string, nowMs = Date.now()): number {
+/** Stability grows with practice. Fresh concept: S=2 (9·S=18 → R=0.5 at 18d).
+ *  After 30 uses: S≈11, half-life ≈ 99 days. Power-law long tail past that. */
+export function stabilityFor(timesUsed: number): number {
+  return 2 + Math.max(0, timesUsed) * 0.3;
+}
+
+export function decayFactor(
+  lastUsedAt: string,
+  nowMs: number = Date.now(),
+  timesUsed: number = 0
+): number {
   const last = Date.parse(lastUsedAt);
   if (Number.isNaN(last)) return 1;
   const days = Math.max(0, (nowMs - last) / 86_400_000);
-  return Math.max(0.3, 1 - days / 60);
+  const stability = stabilityFor(timesUsed);
+  return 1 / (1 + days / (9 * stability));
 }
 
 export function qualityFactor(qualityFlags: number): number {

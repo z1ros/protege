@@ -26,3 +26,6 @@ voice/*.m4a
 voice/*.wav
 voice/*.mp3
 voice/elevanlabs/
+
+# Per-developer handoff log written by Claude — see .claude/SKILLS/engineering.md
+.claude/HANDOFF.md

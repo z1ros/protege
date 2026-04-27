@@ -25,7 +25,6 @@ let state: SessionState = {
 };
 
 let timer: ReturnType<typeof setInterval> | null = null;
-let subscriptions: vscode.Disposable[] = [];
 
 function hasEditorFocus(): boolean {
   return !!vscode.window.activeTextEditor;
@@ -87,6 +86,7 @@ export function startSessionTracker(
     inSession: false,
   };
 
+  const subscriptions: vscode.Disposable[] = [];
   subscriptions.push(
     vscode.workspace.onDidChangeTextDocument((e) => {
       if (e.document.uri.scheme !== "file") return;
@@ -141,7 +141,7 @@ export function startSessionTracker(
     if (timer) clearInterval(timer);
     timer = null;
     for (const s of subscriptions) s.dispose();
-    subscriptions = [];
+    subscriptions.length = 0;
     const b = getBatcher();
     if (b && state.inSession && state.activeStartedAt != null) {
       b.push({

@@ -133,6 +133,10 @@ function makeUserRow(userId: string, nowIso: string): UserRow {
     longestStreak: 0,
     velocityLog: [],
     pillarSnapshots: [],
+    // Skip cold-sync on next dashboard open. The seed has already put
+    // rows into the local JSON (and optionally Supabase via --pushCloud),
+    // so the first read doesn't need to re-hydrate.
+    echoBootstrapped: true,
   };
 }
 

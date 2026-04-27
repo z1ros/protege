@@ -5,8 +5,8 @@ import type {
   ChatMessage,
   Finding,
 } from "@protege/types";
-import { getUserId, fetchMe } from "../user/protegeClient.js";
-import { getGitHubUser } from "../user/auth.js";
+import { currentUserIdOrNull, fetchMe } from "../user/protegeClient.js";
+import { getGitHubUser, isSignedIn, onAuthChange, signOut } from "../user/auth.js";
 import { runChat } from "./chatRunner.js";
 import { getActiveFileEditor } from "../workspace/activeFile.js";
 import { classifyResponse, dispatchRouterActions } from "./responseRouter.js";
@@ -36,6 +36,12 @@ import {
 import { setVoiceState, flashVoiceError } from "../voice/voiceStatusBar.js";
 import { shapeTask, buildShapeContext, verifyUnderstanding } from "../intent/index.js";
 import { devPortMapping, isDevMode, renderDevHtml } from "../devMode.js";
+import {
+  handleEchoRpc,
+  registerEchoBroadcastTarget,
+  type PanelState as EchoPanelState,
+} from "../echo/panel.js";
+import type { EchoHostToWebview } from "@protege/types";
 
 /**
  * Registry so outside code (analyzer, status bar) can broadcast messages
@@ -199,7 +205,60 @@ export function mountProtegeWebview(
   webview.html = renderHtml(webview, context.extensionUri, context.extensionMode);
   mountedWebviews.add(webview);
 
-  const userId = getUserId(context);
+  // Login-first: track the userId in a let-binding kept in sync with the
+  // GitHub session via the authState change feed. Pre-auth it's "" — every
+  // backend-touching handler MUST gate on `requireUserIdOrToast()` (or its
+  // null-returning sibling) before sending. Sign-in mid-session updates
+  // the binding so subsequent handlers see the real id without remounting.
+  let userId: string = currentUserIdOrNull() ?? "";
+  const resolveUserId = (): string | null => currentUserIdOrNull();
+  const requireUserIdOrToast = (): string | null => {
+    const id = resolveUserId();
+    if (!id) {
+      try {
+        webview.postMessage({
+          type: "chat/error",
+          error: "Sign in with GitHub to use Protege.",
+        } satisfies HostToWebview);
+      } catch {
+        /* webview disposed */
+      }
+    }
+    return id;
+  };
+  const offAuth = onAuthChange((snap) => {
+    userId = snap.user?.githubId ?? "";
+    try {
+      webview.postMessage({
+        type: "auth/user",
+        user: snap.user
+          ? {
+              githubId: snap.user.githubId,
+              login: snap.user.login,
+              email: snap.user.email,
+              avatarUrl: snap.user.avatarUrl,
+            }
+          : null,
+      } satisfies HostToWebview);
+    } catch {
+      /* webview disposed */
+    }
+  });
+
+  // Echo RPC bridge: the main webview hosts Echo inline (see EchoTab). The
+  // post callback wraps every outgoing Echo message in an `echo/msg`
+  // envelope on the shared HostToWebview channel. Registering as a
+  // broadcast target lets host-side event streams (commit enrichment,
+  // scan status) fan out here too.
+  const echoState: EchoPanelState = { currentWindow: "today", context };
+  const echoPost = (payload: EchoHostToWebview): void => {
+    try {
+      webview.postMessage({ type: "echo/msg", payload } satisfies HostToWebview);
+    } catch {
+      // Webview disposed between fan-out and delivery; ignore.
+    }
+  };
+  const unregisterEcho = registerEchoBroadcastTarget(echoPost);
 
   const sub = webview.onDidReceiveMessage(async (msg: WebviewToHost) => {
     if (msg.type === "chat/send") {
@@ -230,15 +289,17 @@ export function mountProtegeWebview(
         vscode.window.showInformationMessage("Try one more time! Use Cmd+K H for a hint.");
         return;
       }
+      const sendId = requireUserIdOrToast();
+      if (!sendId) return;
       await handleChat(
         webview,
-        userId,
+        sendId,
         msg.message,
         msg.mode ?? "text",
         msg.contextMessages
       );
     } else if (msg.type === "ready") {
-      sendInitialState(webview, userId);
+      sendInitialState(webview, resolveUserId());
 
       // Hydrate the AI backend choice + last-call info so the Live tab
       // reflects persisted state instead of defaulting to "auto".
@@ -334,16 +395,46 @@ export function mountProtegeWebview(
             }
           : null,
       });
+    } else if (msg.type === "auth/logout") {
+      // In-app sign-out. Confirmation runs host-side because
+      // `window.confirm` is blocked inside VS Code webviews and returns
+      // undefined silently — confirming there would no-op the click.
+      const choice = await vscode.window.showWarningMessage(
+        "Sign out of Protege? Your data stays in the cloud — you can sign back in anytime.",
+        { modal: true },
+        "Sign out"
+      );
+      if (choice !== "Sign out") return;
+      // Clears our cached user and persists the opt-out flag so we don't
+      // silently re-hydrate from VS Code's still-live GitHub session on
+      // the next activation. The `onAuthChange` listener wired above
+      // broadcasts `auth/user: null` to every mounted webview, which
+      // flips the gate on across all open panels at once.
+      await signOut();
+      // Hint about the Accounts panel — only way to fully revoke the
+      // underlying GitHub OAuth session.
+      void vscode.window.showInformationMessage(
+        "Signed out of Protege. To revoke your GitHub session in VS Code entirely, open the Accounts panel (bottom-left) → GitHub → Sign Out."
+      );
     } else if (msg.type === "watcher/engage") {
       // User clicked "Help me" on a proactive nudge — escalate to Claude
+      const id = requireUserIdOrToast();
+      if (!id) return;
       const synthetic = buildEngagePrompt(msg.triggerId, msg.context);
-      await handleChat(webview, userId, synthetic, "text");
+      await handleChat(webview, id, synthetic, "text");
     } else if (msg.type === "scan/request") {
       vscode.commands.executeCommand("protege.scanActiveFile");
     } else if (msg.type === "liveReview/toggle") {
       vscode.commands.executeCommand("protege.toggleLiveReview");
     } else if (msg.type === "echo/open") {
       vscode.commands.executeCommand("protege.openEcho");
+    } else if (msg.type === "echo/msg") {
+      const id = resolveUserId();
+      if (!id) {
+        echoPost({ type: "echo_authRequired" });
+        return;
+      }
+      await handleEchoRpc(echoPost, id, msg.payload, echoState, context);
     } else if (msg.type === "chat/search") {
       const results = searchHistory(msg.query);
       post(webview, { type: "chat/searchResults", results });
@@ -475,7 +566,9 @@ export function mountProtegeWebview(
         console.warn("[protege] openExternal failed:", err);
       }
     } else if (msg.type === "voice/openInBrowser") {
-      const url = `http://localhost:8787/voice?userId=${encodeURIComponent(userId)}`;
+      const id = requireUserIdOrToast();
+      if (!id) return;
+      const url = `http://localhost:8787/voice?userId=${encodeURIComponent(id)}`;
       try {
         await vscode.env.openExternal(vscode.Uri.parse(url));
       } catch (err) {
@@ -499,7 +592,9 @@ export function mountProtegeWebview(
               return;
             }
             post(webview, { type: "voice/transcript", text });
-            await handleChat(webview, userId, text, "voice");
+            const id = requireUserIdOrToast();
+            if (!id) return;
+            await handleChat(webview, id, text, "voice");
           } catch (err) {
             post(webview, { type: "voice/recording", active: false });
             const stopErr = err instanceof Error ? err.message : String(err);
@@ -526,7 +621,9 @@ export function mountProtegeWebview(
           return;
         }
         post(webview, { type: "voice/transcript", text });
-        await handleChat(webview, userId, text, "voice");
+        const id = requireUserIdOrToast();
+        if (!id) return;
+        await handleChat(webview, id, text, "voice");
       } catch (err) {
         post(webview, { type: "voice/recording", active: false });
         const stopErr = err instanceof Error ? err.message : String(err);
@@ -589,7 +686,9 @@ export function mountProtegeWebview(
         }, 500);
       }
     } else if (msg.type === "wake/toggle") {
-      await toggleGlobalWake(context, userId);
+      const id = requireUserIdOrToast();
+      if (!id) return;
+      await toggleGlobalWake(context, id);
     } else if (msg.type === "learning/forkChosen") {
       if (msg.choice === "learn") {
         // Fire Learning Mode with the user's original ask as the
@@ -607,20 +706,24 @@ export function mountProtegeWebview(
         // fresh fork since the synthetic message contains "implement").
         // CORE_PERSONA's "don't re-ask" rule makes Claude act instead
         // of asking "are you sure".
+        const id = requireUserIdOrToast();
+        if (!id) return;
         suppressNextFork = true;
         const synthetic = `Yes, go ahead — please ${msg.goal}. Apply the changes directly.`;
-        await handleChat(webview, userId, synthetic, "text");
+        await handleChat(webview, id, synthetic, "text");
       }
     }
   });
 
   return vscode.Disposable.from(
     sub,
+    new vscode.Disposable(unregisterEcho),
+    new vscode.Disposable(offAuth),
     new vscode.Disposable(() => mountedWebviews.delete(webview))
   );
 }
 
-async function sendInitialState(webview: vscode.Webview, userId: string) {
+async function sendInitialState(webview: vscode.Webview, userId: string | null) {
   // Send current active file info (using sticky last-real-editor)
   const editor = getActiveFileEditor();
   webview.postMessage({
@@ -646,7 +749,9 @@ async function sendInitialState(webview: vscode.Webview, userId: string) {
     downloadProgress: modelStatus.downloadProgress,
   } satisfies HostToWebview);
 
-  // Send current Code IQ
+  // Send current Code IQ — only when signed in. Pre-auth this is a no-op;
+  // the gate UI in the webview is what the user sees instead.
+  if (!userId) return;
   try {
     const me = await fetchMe(userId);
     webview.postMessage({
@@ -788,7 +893,16 @@ export async function startGlobalWakeListener(
               flashVoiceError();
               return;
             }
-            await handleChat(target, userId, text, "voice");
+            // Resolve userId at fire time — the wake listener may have been
+            // started under a stale id that has since signed out.
+            const liveId = currentUserIdOrNull();
+            if (!liveId) {
+              broadcast({ type: "voice/error", error: "Sign in with GitHub to use voice." });
+              flashVoiceError();
+              setVoiceState("idle");
+              return;
+            }
+            await handleChat(target, liveId, text, "voice");
             // Speaking→idle transition is driven by voice/speaking:false
             // below when TTS playback ends. Leaving state alone here.
           } catch (err) {
@@ -1332,7 +1446,7 @@ function renderHtml(
   // (TextMate regex compiled to WebAssembly). Without it the webview's
   // CSP silently kills the syntax-highlight pipeline and every code block
   // renders as monochrome plain text.
-  const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline' https://fonts.googleapis.com; script-src 'nonce-${nonce}' 'wasm-unsafe-eval' 'strict-dynamic'; img-src ${webview.cspSource} data: blob:; font-src ${webview.cspSource} https://fonts.gstatic.com; connect-src ${webview.cspSource} http://localhost:8787 http://127.0.0.1:8787; media-src ${webview.cspSource} blob: data: http://localhost:8787 http://127.0.0.1:8787;`;
+  const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline' https://fonts.googleapis.com; script-src 'nonce-${nonce}' 'wasm-unsafe-eval' 'strict-dynamic'; img-src ${webview.cspSource} data: blob: https://avatars.githubusercontent.com; font-src ${webview.cspSource} https://fonts.gstatic.com; connect-src ${webview.cspSource} http://localhost:8787 http://127.0.0.1:8787; media-src ${webview.cspSource} blob: data: http://localhost:8787 http://127.0.0.1:8787;`;
 
   return `<!DOCTYPE html>
 <html lang="en">

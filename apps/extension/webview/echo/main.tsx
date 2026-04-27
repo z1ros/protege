@@ -31,6 +31,11 @@ function EchoApp(): JSX.Element {
   const [data, setData] = useState<DashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Login-first: when the host can't fulfill an RPC because the user is
+  // signed-out, it posts `echo_authRequired`. We render a sign-in gate
+  // instead of the dashboard; clicking the button posts `echo_signIn`,
+  // the host pops OAuth, and on success the host replays echo_ready.
+  const [authBlocked, setAuthBlocked] = useState(false);
   const [preferences, setPreferences] = useState<EchoUserPreferences>({
     storyModeNotify: false,
   });
@@ -43,12 +48,19 @@ function EchoApp(): JSX.Element {
     const listener = (event: MessageEvent<EchoHostToWebview>) => {
       const msg = event.data;
       switch (msg.type) {
+        case "echo_authRequired":
+          setAuthBlocked(true);
+          setLoading(false);
+          setError(null);
+          break;
         case "echo_dashboard":
+          setAuthBlocked(false);
           setData(msg.data);
           setLoading(false);
           setError(null);
           break;
         case "echo_dashboardLoading":
+          setAuthBlocked(false);
           setLoading(true);
           setError(null);
           break;
@@ -131,6 +143,32 @@ function EchoApp(): JSX.Element {
     notify: preferences.storyModeNotify,
     nextDrop: null,
   };
+
+  if (authBlocked) {
+    return (
+      <div className="echo-root">
+        <header className="echo-header">
+          <div className="echo-brand">Echo</div>
+        </header>
+        <div className="echo-auth-gate">
+          <div className="echo-auth-gate-card">
+            <div className="echo-auth-gate-title">Sign in to view Echo</div>
+            <div className="echo-auth-gate-body">
+              Echo tracks your coding activity against your GitHub account.
+              Sign in once and the dashboard hydrates automatically.
+            </div>
+            <button
+              type="button"
+              className="echo-auth-gate-button"
+              onClick={() => vscode.postMessage({ type: "echo_signIn" })}
+            >
+              Sign in with GitHub
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="echo-root">

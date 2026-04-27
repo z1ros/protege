@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { githubAuth, resolveUserId } from "../middleware/auth.js";
 import {
   getCloudPreferences,
   saveCloudPreferences,
@@ -20,9 +21,10 @@ import {
 
 export const preferencesRoute = new Hono();
 
+preferencesRoute.use("*", githubAuth());
+
 preferencesRoute.get("/", async (c) => {
-  const userId =
-    c.req.query("userId") ?? c.req.header("x-user-id") ?? "local-dev";
+  const userId = resolveUserId(c, undefined);
 
   if (!isSupabaseEnabled()) {
     return c.json({ preferences: {} });
@@ -38,8 +40,7 @@ preferencesRoute.get("/", async (c) => {
 });
 
 preferencesRoute.patch("/", async (c) => {
-  const userId =
-    c.req.query("userId") ?? c.req.header("x-user-id") ?? "local-dev";
+  const userId = resolveUserId(c, undefined);
 
   let body: unknown;
   try {

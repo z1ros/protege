@@ -1,0 +1,87 @@
+/**
+ * Login-first sign-in wall. Rendered when the webview's `authUser` is null
+ * — replaces the entire app body until the user signs in with GitHub.
+ */
+
+.auth-gate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+  box-sizing: border-box;
+}
+
+.auth-gate-card {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 16px;
+  padding: 28px 24px;
+  border-radius: 14px;
+  background: var(--surface, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+}
+
+.auth-gate-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.auth-gate-brand img {
+  width: 28px;
+  height: 28px;
+}
+
+.auth-gate-wordmark {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.auth-gate-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.auth-gate-body {
+  font-size: 13px;
+  line-height: 1.5;
+  opacity: 0.78;
+}
+
+.auth-gate-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.18));
+  background: var(--button-bg, rgba(255, 255, 255, 0.06));
+  color: inherit;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.auth-gate-button:hover {
+  background: var(--button-bg-hover, rgba(255, 255, 255, 0.12));
+  border-color: var(--border-strong-hover, rgba(255, 255, 255, 0.28));
+}
+
+.auth-gate-button:active {
+  transform: translateY(1px);
+}
+
+.auth-gate-foot {
+  font-size: 11px;
+  line-height: 1.5;
+  opacity: 0.55;
+  margin-top: 4px;
+}

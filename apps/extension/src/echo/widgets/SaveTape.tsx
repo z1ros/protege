@@ -24,7 +24,6 @@ export function SaveTape({
     <section className="echo-widget echo-save-tape" data-widget="W12">
       <header className="echo-widget-head">
         <h2>Recent saves</h2>
-        <span className="echo-widget-tag">W12</span>
       </header>
       <div className="echo-widget-body">
         {loading && !data ? (

@@ -5,7 +5,7 @@ import {
   analyzeFile,
   recordConcepts,
   fetchMe,
-  getUserId,
+  currentUserIdOrNull,
 } from "../user/protegeClient.js";
 import { detectConcepts } from "../concepts/detector.js";
 import { detectHybrid } from "../concepts/hybridDetector.js";
@@ -58,13 +58,17 @@ export function registerAnalyzer(
   onGain: OnGain,
   log: vscode.OutputChannel
 ): AnalyzerHandle {
-  const userId = getUserId(context);
   const debouncers = new Map<string, NodeJS.Timeout>();
   protegeDiagnostics = diagnostics;
 
   const run = async (doc: vscode.TextDocument) => {
     if (!SUPPORTED_LANGS.has(doc.languageId)) return;
     if (doc.uri.scheme !== "file") return;
+    // Login-first: skip silently when there's no GitHub session. The
+    // analyzer is a save-time observer; users will get a fresh run on
+    // the next save after they sign in.
+    const userId = currentUserIdOrNull();
+    if (!userId) return;
 
     const content = doc.getText();
     const fileHash = sha256(content);

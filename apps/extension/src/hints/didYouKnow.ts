@@ -2,6 +2,8 @@ import * as vscode from "vscode";
 import { detectConcepts } from "../concepts/detector.js";
 import { aiGenerateTip } from "../ai/aiExplain.js";
 import { renderProtegeHover } from "./hoverTemplate.js";
+import { fetchKnownConcepts } from "../user/protegeClient.js";
+import { log } from "../log.js";
 
 /**
  * "Did You Know?" — Protege's proactive teaching layer.
@@ -35,18 +37,28 @@ class DidYouKnowCodeLensProvider implements vscode.CodeLensProvider {
   provideCodeLenses(doc: vscode.TextDocument): vscode.CodeLens[] {
     if (!activeTip || activeTip.docUri !== doc.uri.toString()) return [];
     const lensRange = new vscode.Range(activeTip.line, 0, activeTip.line, 0);
+    // Single lens with the tip preview baked into the title — the user reads
+    // a glance-sized version inline and only clicks for the full body.
+    // Dismiss stays available via the hover popover (and any keystroke).
     return [
       new vscode.CodeLens(lensRange, {
-        title: `◎ Protege tip · Learn more`,
-        command: "protege.teachConcept",
+        title: `◎ ${previewTip(activeTip.tipText)}`,
+        command: "protege.tipLearnMore",
         arguments: [activeTip.concept],
-      }),
-      new vscode.CodeLens(lensRange, {
-        title: `✘ Dismiss`,
-        command: "protege.dismissTip",
       }),
     ];
   }
+}
+
+/** Truncate the tip body to a single line that fits comfortably as a lens
+ *  title. Whitespace is collapsed so the AI-generated newlines do not
+ *  break the preview. ~80 chars matches what reads cleanly above a code
+ *  line at typical editor widths. */
+const PREVIEW_MAX = 80;
+function previewTip(text: string): string {
+  const oneLine = text.replace(/\s+/g, " ").trim();
+  if (oneLine.length <= PREVIEW_MAX) return oneLine;
+  return oneLine.slice(0, PREVIEW_MAX - 1).trimEnd() + "…";
 }
 
 let tipLensProvider: DidYouKnowCodeLensProvider | null = null;
@@ -57,7 +69,10 @@ export function registerDidYouKnowCodeLens(): vscode.Disposable {
 }
 
 const shownTips = new Set<string>();
-let lastTipTime = 0;
+/** Last-shown timestamp keyed by document URI. Per-file rather than global
+ *  so opening a fresh file gets a fresh budget — the previous design
+ *  silently swallowed every tip in a 5-minute window across all files. */
+const lastTipPerDoc = new Map<string, number>();
 let idleTimer: ReturnType<typeof setTimeout> | null = null;
 let active = false;
 
@@ -66,11 +81,63 @@ interface ActiveTip {
   docUri: string;
   line: number;
   concept: string;
+  tipText: string;
 }
 let activeTip: ActiveTip | null = null;
 
-const COOLDOWN_MS = 5 * 60 * 1000;
+/** Engagement-aware cooldown. The default 5-minute floor scales to 10
+ *  after a dismiss (user actively rejected the last tip — back off) and
+ *  shrinks to 1 after a Learn-more click (user wants more — feed them).
+ *  The signal lives until the next engagement event overwrites it. */
+type EngagementKind = "dismiss" | "learn";
+let lastEngagement: { ts: number; kind: EngagementKind } | null = null;
+
+const COOLDOWN_BASE_MS = 5 * 60 * 1000;
+const COOLDOWN_AFTER_DISMISS_MS = 10 * 60 * 1000;
+const COOLDOWN_AFTER_LEARN_MS = 60 * 1000;
 const IDLE_THRESHOLD_MS = 8_000;
+
+function currentCooldownMs(): number {
+  if (!lastEngagement) return COOLDOWN_BASE_MS;
+  return lastEngagement.kind === "dismiss"
+    ? COOLDOWN_AFTER_DISMISS_MS
+    : COOLDOWN_AFTER_LEARN_MS;
+}
+
+/** Cached "likely-known" concept set from the backend mastery heuristic.
+ *  Refreshed lazily — one fetch per KNOWN_TTL_MS, regardless of how many
+ *  files trigger the tip pipeline. We accept stale-by-a-few-minutes data:
+ *  worst case, a tip slips through for a freshly-mastered concept and gets
+ *  suppressed on the next refresh. Network failure → empty set, which
+ *  preserves the legacy behaviour of relying on `shownTips` alone. */
+const KNOWN_TTL_MS = 10 * 60 * 1000;
+let knownCache: { set: Set<string>; fetchedAt: number } | null = null;
+let knownInflight: Promise<Set<string>> | null = null;
+
+async function getKnownConcepts(): Promise<Set<string>> {
+  const now = Date.now();
+  if (knownCache && now - knownCache.fetchedAt < KNOWN_TTL_MS) {
+    return knownCache.set;
+  }
+  if (knownInflight) return knownInflight;
+  knownInflight = (async () => {
+    try {
+      const list = await fetchKnownConcepts();
+      const set = new Set(list);
+      knownCache = { set, fetchedAt: Date.now() };
+      return set;
+    } catch (err) {
+      log("didYouKnow", `mastery fetch failed: ${String(err)}`);
+      // Cache the empty set briefly so we don't hammer a failing endpoint.
+      const set = new Set<string>();
+      knownCache = { set, fetchedAt: Date.now() };
+      return set;
+    } finally {
+      knownInflight = null;
+    }
+  })();
+  return knownInflight;
+}
 
 export function setDidYouKnowEnabled(enabled: boolean): void {
   active = enabled;
@@ -116,8 +183,23 @@ export function registerDidYouKnow(
 
   disposables.push(
     vscode.commands.registerCommand("protege.dismissTip", () => {
+      lastEngagement = { ts: Date.now(), kind: "dismiss" };
       clearActiveTip();
     })
+  );
+
+  // Bridge command for the lens click — records "learn more" engagement
+  // (shrinks the next-tip cooldown) and forwards to the existing
+  // teachConcept handler. Lens title click hits this command, not
+  // teachConcept directly, so the engagement signal isn't lost.
+  disposables.push(
+    vscode.commands.registerCommand(
+      "protege.tipLearnMore",
+      async (concept: string) => {
+        lastEngagement = { ts: Date.now(), kind: "learn" };
+        await vscode.commands.executeCommand("protege.teachConcept", concept);
+      }
+    )
   );
 
   disposables.push(
@@ -144,22 +226,32 @@ async function maybeShowTip(editor: vscode.TextEditor): Promise<void> {
   const { isLiveReviewActive } = await import("../review/liveReview.js");
   if (!isLiveReviewActive()) return;
 
-  if (Date.now() - lastTipTime < COOLDOWN_MS) return;
   if (activeTip) return;
 
   const doc = editor.document;
+  const docUri = doc.uri.toString();
+  const lastForDoc = lastTipPerDoc.get(docUri) ?? 0;
+  if (Date.now() - lastForDoc < currentCooldownMs()) return;
+
   const lang = doc.languageId;
   const content = doc.getText();
 
   const concepts = detectConcepts(lang, content);
-  const untipped = concepts.filter((c) => !shownTips.has(c));
+  const knownByMastery = await getKnownConcepts();
+  // Two suppression layers: `shownTips` blocks repeats within a session,
+  // `knownByMastery` blocks concepts the user has already demonstrated they
+  // can ship (heuristic from backend usage / authorship signal). The
+  // mastery filter is what fixes the "stop teaching me useState" complaint.
+  const candidates = concepts.filter(
+    (c) => !shownTips.has(c) && !knownByMastery.has(c)
+  );
 
-  if (untipped.length === 0) {
+  if (candidates.length === 0) {
     if (shownTips.size > 20) shownTips.clear();
     return;
   }
 
-  const concept = untipped[Math.floor(Math.random() * untipped.length)];
+  const concept = candidates[Math.floor(Math.random() * candidates.length)];
   const snippet = content.slice(0, 500);
 
   const raw = await aiGenerateTip(concept, snippet, lang);
@@ -169,7 +261,7 @@ async function maybeShowTip(editor: vscode.TextEditor): Promise<void> {
   if (!tipText) return;
 
   shownTips.add(concept);
-  lastTipTime = Date.now();
+  lastTipPerDoc.set(doc.uri.toString(), Date.now());
 
   showRichTip(editor, concept, tipText);
 }
@@ -228,7 +320,13 @@ function showRichTip(
   });
 
   editor.setDecorations(tipDecoration, [{ range, hoverMessage: md }]);
-  activeTip = { editor, docUri: doc.uri.toString(), line: targetLine, concept };
+  activeTip = {
+    editor,
+    docUri: doc.uri.toString(),
+    line: targetLine,
+    concept,
+    tipText,
+  };
   tipLensProvider?.refresh();
 
   // If the cursor is already on the tip line, auto-pop the hover so the user

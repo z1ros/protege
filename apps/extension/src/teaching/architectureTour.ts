@@ -161,6 +161,7 @@ export async function startTour(intent: "codebase"): Promise<void> {
 
   // Fetch all narrations in parallel. First one usually lands before
   // the user has finished reading the file open, so it feels instant.
+  console.log(`[protege] tour narration fetch · ${steps.length} stops`);
   void fetchAllNarrations(map.root, steps, abort);
   log("tour", `start codebase · ${picks.length} stops`);
 }

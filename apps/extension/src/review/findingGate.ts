@@ -84,6 +84,43 @@ const ruleCooldownByUri = new Map<string, Map<string, RuleCooldownEntry>>();
 const gateEmitter = new vscode.EventEmitter<void>();
 export const onGateChanged: vscode.Event<void> = gateEmitter.event;
 
+// Time-based gate-clear scheduling. Without this, a typed-then-idle line
+// stayed suppressed until the user moved the cursor or another doc-change
+// event fired — which is exactly the gap the Live Review health timer was
+// papering over with full LLM rescans every 12s. With this, each touched
+// line gets a one-shot setTimeout that fires gateEmitter when its
+// LINE_EDIT_WINDOW_MS expires, so subscribers (Live Review surfaces,
+// ghostMentor, underlineWhisper) can re-render exactly when the gate
+// clears — zero LLM cost.
+//
+// Capped at GATE_CLEAR_TIMER_CAP entries with FIFO eviction so a
+// pathological keystroke storm cannot grow the map unbounded.
+const GATE_CLEAR_TIMER_CAP = 200;
+const GATE_CLEAR_FIRE_BUFFER_MS = 500;
+const pendingGateClearTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function scheduleGateClearFire(uriKey: string, line: number): void {
+  const timerKey = `${uriKey}:${line}`;
+  const existing = pendingGateClearTimers.get(timerKey);
+  if (existing) clearTimeout(existing);
+  if (pendingGateClearTimers.size >= GATE_CLEAR_TIMER_CAP) {
+    // FIFO eviction — drop the oldest pending timer. Map iteration order
+    // is insertion order, so the first key is the oldest.
+    const firstKey = pendingGateClearTimers.keys().next().value;
+    if (firstKey !== undefined) {
+      const t = pendingGateClearTimers.get(firstKey);
+      if (t) clearTimeout(t);
+      pendingGateClearTimers.delete(firstKey);
+    }
+  }
+  const handle = setTimeout(() => {
+    pendingGateClearTimers.delete(timerKey);
+    gateEmitter.fire();
+  }, LINE_EDIT_WINDOW_MS + GATE_CLEAR_FIRE_BUFFER_MS);
+  pendingGateClearTimers.set(timerKey, handle);
+}
+
+
 export type SuppressReason =
   | "line-still-being-edited"
   | "cursor-near-line"
@@ -134,6 +171,7 @@ export function registerFindingGate(
         // exist so there's nothing for findings to land on.
         for (let i = startLine; i <= endLine; i++) {
           map.set(i, now);
+          scheduleGateClearFire(key, i);
         }
       }
 
@@ -208,6 +246,8 @@ export function registerFindingGate(
     dispose() {
       lineTouchedAt.clear();
       ruleCooldownByUri.clear();
+      for (const handle of pendingGateClearTimers.values()) clearTimeout(handle);
+      pendingGateClearTimers.clear();
       gateEmitter.dispose();
     },
   });

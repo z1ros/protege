@@ -12,6 +12,7 @@ import {
   statusBadgeGlyph,
   statusLabel,
 } from "./shared/conceptControls.js";
+import { PendingStatusControls } from "./ConceptsCovered.js";
 
 export interface RepoConceptsProps {
   data: RepoConceptsPayload | null;
@@ -20,7 +21,10 @@ export interface RepoConceptsProps {
    *  non-null it overrides payload.scanState so the user sees the pulse
    *  the moment the scan starts, not after the next backend round-trip. */
   liveScan: LiveScanState | null;
+  pendingStatus?: Record<string, ConceptKnownStatus>;
   onSetConceptStatus: (concept: string, status: ConceptKnownStatus) => void;
+  onSaveConceptStatuses?: () => void;
+  onDiscardConceptStatuses?: () => void;
   onSetConceptLanguage: (language: string | null) => void;
   onRescanRepo: () => void;
 }
@@ -41,28 +45,40 @@ export function RepoConcepts({
   data,
   loading,
   liveScan,
+  pendingStatus,
   onSetConceptStatus,
+  onSaveConceptStatuses,
+  onDiscardConceptStatuses,
   onSetConceptLanguage,
   onRescanRepo,
 }: RepoConceptsProps): JSX.Element {
   const effectiveScanState: RepoScanState = liveScan
     ? liveScan.state
     : data?.scanState ?? "idle";
+  const pendingCount = pendingStatus ? Object.keys(pendingStatus).length : 0;
 
   return (
     <section className="echo-widget echo-repo-concepts" data-widget="W17">
       <header className="echo-widget-head echo-widget-head-with-actions">
         <div className="echo-widget-head-left">
           <h2>Repo concepts</h2>
-          <span className="echo-widget-tag">W17</span>
         </div>
-        {data ? (
-          <LanguagePicker
-            languages={data.languages}
-            selected={data.selectedLanguage}
-            onSelect={onSetConceptLanguage}
-          />
-        ) : null}
+        <div className="echo-widget-head-actions">
+          {pendingCount > 0 && onSaveConceptStatuses ? (
+            <PendingStatusControls
+              count={pendingCount}
+              onSave={onSaveConceptStatuses}
+              onDiscard={onDiscardConceptStatuses}
+            />
+          ) : null}
+          {data ? (
+            <LanguagePicker
+              languages={data.languages}
+              selected={data.selectedLanguage}
+              onSelect={onSetConceptLanguage}
+            />
+          ) : null}
+        </div>
       </header>
       <div className="echo-widget-body">
         <ScanHeader
@@ -77,6 +93,7 @@ export function RepoConcepts({
           <RepoBody
             data={data}
             effectiveState={effectiveScanState}
+            pendingStatus={pendingStatus}
             onSetConceptStatus={onSetConceptStatus}
           />
         ) : null}
@@ -165,10 +182,12 @@ const REPO_TILE_CAP = 9;
 function RepoBody({
   data,
   effectiveState,
+  pendingStatus,
   onSetConceptStatus,
 }: {
   data: RepoConceptsPayload;
   effectiveState: RepoScanState;
+  pendingStatus?: Record<string, ConceptKnownStatus>;
   onSetConceptStatus: (concept: string, status: ConceptKnownStatus) => void;
 }): JSX.Element {
   const reduced = useMemo(() => prefersReducedMotion(), []);
@@ -223,6 +242,7 @@ function RepoBody({
             index={i}
             mounted={mounted}
             reduced={reduced}
+            pendingStatus={pendingStatus}
             onSetConceptStatus={onSetConceptStatus}
           />
         ))}
@@ -245,12 +265,14 @@ function RepoTile({
   index,
   mounted,
   reduced,
+  pendingStatus,
   onSetConceptStatus,
 }: {
   tile: RepoConceptTile;
   index: number;
   mounted: boolean;
   reduced: boolean;
+  pendingStatus?: Record<string, ConceptKnownStatus>;
   onSetConceptStatus: (concept: string, status: ConceptKnownStatus) => void;
 }): JSX.Element {
   const style = reduced
@@ -261,13 +283,19 @@ function RepoTile({
         transform: mounted ? "translateY(0)" : "translateY(4px)",
       };
 
+  const override = pendingStatus?.[tile.name];
+  const effective = override ?? tile.status;
+  const isPending = override !== undefined && override !== tile.status;
+
   const onCycle = (): void => {
-    onSetConceptStatus(tile.name, cycleStatus(tile.status));
+    onSetConceptStatus(tile.name, cycleStatus(effective));
   };
 
   return (
     <div
-      className={`echo-ccov-tile bucket-repo status-${tile.status}`}
+      className={`echo-ccov-tile bucket-repo status-${effective}${
+        isPending ? " has-pending" : ""
+      }`}
       style={style}
     >
       <div className="echo-ccov-tile-head">
@@ -289,15 +317,21 @@ function RepoTile({
       <div className="echo-ccov-tile-actions">
         <button
           type="button"
-          className={`echo-ccov-status-btn status-${tile.status}`}
+          className={`echo-ccov-status-btn status-${effective}${
+            isPending ? " pending" : ""
+          }`}
           onClick={onCycle}
-          title={`Mark as ${statusLabel(cycleStatus(tile.status))}`}
-          aria-label={`Status for ${tile.name}: ${statusLabel(tile.status)}. Click to cycle.`}
+          title={`Mark as ${statusLabel(cycleStatus(effective))}${
+            isPending ? " (unsaved)" : ""
+          }`}
+          aria-label={`Status for ${tile.name}: ${statusLabel(effective)}${
+            isPending ? " (unsaved)" : ""
+          }. Click to cycle.`}
         >
           <span className="echo-ccov-status-glyph" aria-hidden>
-            {statusBadgeGlyph(tile.status)}
+            {statusBadgeGlyph(effective)}
           </span>
-          <span className="echo-ccov-status-text">{statusLabel(tile.status)}</span>
+          <span className="echo-ccov-status-text">{statusLabel(effective)}</span>
         </button>
       </div>
     </div>

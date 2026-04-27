@@ -1,12 +1,14 @@
 import { Hono } from "hono";
 import type { MeResponse } from "@protege/types";
+import { githubAuth, resolveUserId } from "../middleware/auth.js";
 import { ensureUser, getUserSnapshot, RULE_COUNT, MAX_IQ } from "../store.js";
 
 export const meRoute = new Hono();
 
+meRoute.use("*", githubAuth());
+
 meRoute.get("/", async (c) => {
-  const userId =
-    c.req.query("userId") ?? c.req.header("x-user-id") ?? "local-dev";
+  const userId = resolveUserId(c, undefined);
   await ensureUser(userId);
   const snap = await getUserSnapshot(userId);
 

@@ -168,7 +168,7 @@ ${preview}
 
 Return ONLY the JSON object. No prose, no markdown fences.`;
 
-  const raw = await aiQuery(prompt, 220, { kind: "teach" });
+  const raw = await aiQuery(prompt, 220, { kind: "scan" });
   if (!raw) return null;
 
   const parsed = parsePitch(raw);

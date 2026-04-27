@@ -29,7 +29,6 @@ export function LinesWritten({ data, loading }: LinesWrittenProps): JSX.Element 
     <section className="echo-widget echo-lines" data-widget="W8">
       <header className="echo-widget-head">
         <h2>Lines written</h2>
-        <span className="echo-widget-tag">W8</span>
       </header>
       <div className="echo-widget-body">
         {loading && !data ? (

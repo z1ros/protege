@@ -52,7 +52,6 @@ export function IndependenceTrend({
     <section className="echo-widget echo-independence" data-widget="W14">
       <header className="echo-widget-head">
         <h2>Independence trend</h2>
-        <span className="echo-widget-tag">W14</span>
       </header>
       <div className="echo-widget-body">
         {loading && !data ? (

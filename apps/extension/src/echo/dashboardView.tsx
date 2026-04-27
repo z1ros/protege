@@ -24,11 +24,20 @@ export interface DashboardViewProps {
   loading: boolean;
   error: string | null;
   liveScan: LiveScanState | null;
+  /** Unsaved concept-status edits keyed by concept name. Widgets merge
+   *  these over each tile's `status` at render time so pills update
+   *  optimistically without the dashboard reshuffling between clicks. */
+  pendingStatus?: Record<string, ConceptKnownStatus>;
   onWindowChange: (window: EchoWindow) => void;
   onOpenStory: () => void;
   onToggleNotify: (enabled: boolean) => void;
   onOpenMoment: (file: string, line?: number, ts?: number) => void;
   onSetConceptStatus: (concept: string, status: ConceptKnownStatus) => void;
+  /** Commit every buffered mastery edit in one RPC. Host POSTs each and
+   *  refetches the dashboard exactly once when the whole batch lands. */
+  onSaveConceptStatuses?: () => void;
+  /** Drop all buffered edits without committing. */
+  onDiscardConceptStatuses?: () => void;
   onSetConceptLanguage: (language: string | null) => void;
   onRescanRepo: () => void;
 }
@@ -41,11 +50,14 @@ export function DashboardView({
   loading,
   error,
   liveScan,
+  pendingStatus,
   onWindowChange,
   onOpenStory,
   onToggleNotify,
   onOpenMoment,
   onSetConceptStatus,
+  onSaveConceptStatuses,
+  onDiscardConceptStatuses,
   onSetConceptLanguage,
   onRescanRepo,
 }: DashboardViewProps): JSX.Element {
@@ -87,7 +99,10 @@ export function DashboardView({
         <ConceptsCovered
           data={data?.conceptsCovered ?? null}
           loading={loading}
+          pendingStatus={pendingStatus}
           onSetConceptStatus={onSetConceptStatus}
+          onSaveConceptStatuses={onSaveConceptStatuses}
+          onDiscardConceptStatuses={onDiscardConceptStatuses}
           onSetConceptLanguage={onSetConceptLanguage}
         />
 
@@ -95,7 +110,10 @@ export function DashboardView({
           data={data?.repoConcepts ?? null}
           loading={loading}
           liveScan={liveScan}
+          pendingStatus={pendingStatus}
           onSetConceptStatus={onSetConceptStatus}
+          onSaveConceptStatuses={onSaveConceptStatuses}
+          onDiscardConceptStatuses={onDiscardConceptStatuses}
           onSetConceptLanguage={onSetConceptLanguage}
           onRescanRepo={onRescanRepo}
         />

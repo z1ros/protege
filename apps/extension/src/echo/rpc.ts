@@ -13,6 +13,11 @@ import type {
 export type EchoMessageFromWebview = EchoWebviewToHost;
 export type EchoMessageToWebview = EchoHostToWebview;
 
+/** Callback that delivers host→webview Echo messages to a specific webview
+ *  target (a standalone panel, the main sidebar, etc.). Lets the Echo RPC
+ *  handler stay decoupled from the concrete Webview object. */
+export type EchoPoster = (msg: EchoMessageToWebview) => void;
+
 export function postToEchoPanel(
   panel: vscode.WebviewPanel,
   msg: EchoMessageToWebview
@@ -36,6 +41,7 @@ export function isEchoMessage(value: unknown): value is EchoWebviewToHost {
     t === "echo_notifyStoryMode" ||
     t === "echo_refreshPreferences" ||
     t === "echo_setConceptStatus" ||
+    t === "echo_saveConceptStatuses" ||
     t === "echo_setConceptLanguage" ||
     t === "echo_rescanRepo"
   );

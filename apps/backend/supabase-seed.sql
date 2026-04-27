@@ -124,24 +124,26 @@ alter table gains enable row level security;
 alter table memories enable row level security;
 alter table chat_messages enable row level security;
 
--- Service role (used by the backend) can do everything.
--- These policies allow the service_role key full access.
--- If you add anon/authenticated access later, add more restrictive policies.
+-- Service role (used by the backend) can do everything. The `to service_role`
+-- clause is what actually gates this — without it, the policy applies to the
+-- default `public` role and any anon-key caller satisfies it via PostgREST.
+-- If you add anon/authenticated access later, add more restrictive policies
+-- keyed on `auth.uid()` with `to authenticated`.
 
 drop policy if exists "service_role_users" on users;
-create policy "service_role_users" on users for all using (true) with check (true);
+create policy "service_role_users" on users for all to service_role using (true) with check (true);
 
 drop policy if exists "service_role_concepts" on concepts;
-create policy "service_role_concepts" on concepts for all using (true) with check (true);
+create policy "service_role_concepts" on concepts for all to service_role using (true) with check (true);
 
 drop policy if exists "service_role_gains" on gains;
-create policy "service_role_gains" on gains for all using (true) with check (true);
+create policy "service_role_gains" on gains for all to service_role using (true) with check (true);
 
 drop policy if exists "service_role_memories" on memories;
-create policy "service_role_memories" on memories for all using (true) with check (true);
+create policy "service_role_memories" on memories for all to service_role using (true) with check (true);
 
 drop policy if exists "service_role_chat" on chat_messages;
-create policy "service_role_chat" on chat_messages for all using (true) with check (true);
+create policy "service_role_chat" on chat_messages for all to service_role using (true) with check (true);
 
 -- ===== TRIGGER: auto-update updated_at =====
 

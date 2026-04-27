@@ -227,7 +227,7 @@ NO exclamation marks. NO "important!" urgency. A fact + a gentle offer.
 Return ONLY the chip string.`;
 
   try {
-    const raw = await aiQuery(prompt, 80, { kind: "teach" });
+    const raw = await aiQuery(prompt, 80, { kind: "scan" });
     if (!raw) return fallback;
     const cleaned = raw
       .trim()

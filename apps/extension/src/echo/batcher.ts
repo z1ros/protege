@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import type { EchoEvent } from "@protege/types";
-import { authHeaders } from "../user/auth.js";
-import { BACKEND_URL } from "../user/protegeClient.js";
+import { authHeaders, isSignedIn } from "../user/auth.js";
+import { BACKEND_URL, currentUserIdOrNull } from "../user/protegeClient.js";
 
 /**
  * Offline-safe event batcher. Collects EchoEvent instances in memory,
@@ -31,9 +31,15 @@ export function getBatcher(): BatcherHandle | null {
   return instance;
 }
 
+/**
+ * @param userId  unused; retained for source-compat with old call sites.
+ *                The userId is resolved per-flush from the current GitHub
+ *                session so a sign-in mid-session starts flushing the
+ *                buffered events under the right identity.
+ */
 export function startBatcher(
   context: vscode.ExtensionContext,
-  userId: string,
+  _userId: string | null,
   log: vscode.OutputChannel
 ): BatcherHandle {
   if (instance) return instance;
@@ -93,6 +99,18 @@ export function startBatcher(
       await context.globalState.update(QUEUE_KEY, []);
       return;
     }
+    // Login-first: hold events until the user has a session. The buffer
+    // is already capped + persisted, so a long signed-out streak just
+    // drops the oldest events at the cap, never spams 401s.
+    if (!isSignedIn()) {
+      await persist();
+      return;
+    }
+    const activeUserId = currentUserIdOrNull();
+    if (!activeUserId) {
+      await persist();
+      return;
+    }
     flushing = true;
     try {
       // Drain in chunks so a single POST doesn't carry 5000 events.
@@ -100,8 +118,8 @@ export function startBatcher(
         const chunk = buffer.slice(0, MAX_POST_BATCH);
         const res = await fetch(`${BACKEND_URL}/echo/events`, {
           method: "POST",
-          headers: { ...authHeaders(userId) },
-          body: JSON.stringify({ userId, events: chunk }),
+          headers: { ...authHeaders() },
+          body: JSON.stringify({ userId: activeUserId, events: chunk }),
         });
         if (!res.ok) {
           log.appendLine(

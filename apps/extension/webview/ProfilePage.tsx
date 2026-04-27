@@ -6,6 +6,7 @@ import type {
 } from "@protege/types";
 import { CinematicPlate } from "./CinematicPlate.js";
 import { IconStar, IconCheck, IconPlus } from "./icons.js";
+import { vscode } from "./vscode.js";
 
 /**
  * Profile page — merged with Settings.
@@ -153,7 +154,12 @@ export function ProfilePage({
         <button className="ghost-btn" disabled>
           Edit profile
         </button>
-        <button className="ghost-btn" disabled>
+        <button
+          className="ghost-btn"
+          onClick={() => {
+            vscode.postMessage({ type: "auth/logout" });
+          }}
+        >
           Sign out
         </button>
       </section>

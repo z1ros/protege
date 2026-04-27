@@ -37,7 +37,7 @@ export function renderDevHtml(
     `style-src ${VITE_DEV_ORIGIN} ${webview.cspSource} 'unsafe-inline' https://fonts.googleapis.com`,
     `script-src ${VITE_DEV_ORIGIN} 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'`,
     `connect-src ${VITE_DEV_ORIGIN} ${VITE_DEV_WS} ${webview.cspSource} http://localhost:8787 http://127.0.0.1:8787`,
-    `img-src ${VITE_DEV_ORIGIN} ${webview.cspSource} data: blob:`,
+    `img-src ${VITE_DEV_ORIGIN} ${webview.cspSource} data: blob: https://avatars.githubusercontent.com`,
     `font-src ${VITE_DEV_ORIGIN} ${webview.cspSource} https://fonts.gstatic.com`,
     `media-src ${webview.cspSource} blob: data: http://localhost:8787 http://127.0.0.1:8787`,
   ].join("; ");

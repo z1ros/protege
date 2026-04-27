@@ -6,9 +6,12 @@ import { LauncherProvider, updateLauncherStats } from "./launcher.js";
 import { registerAnalyzer } from "./review/analyzer.js";
 import { FindingCodeLensProvider } from "./review/codeLens.js";
 import { broadcast, pushTeachFinding, toggleGlobalWake } from "./chat/webviewHost.js";
+import { isSignedIn, getCachedGitHubUser, installAuthSessionListener, onAuthChange, getGitHubUser, bindAuthOptOutContext, isOptedOut } from "./user/auth.js";
 import { registerHighlightCodeLens } from "./ai/tools.js";
-import { registerDidYouKnowCodeLens } from "./hints/didYouKnow.js";
-import { getUserId, fetchMe } from "./user/protegeClient.js";
+import { registerDidYouKnowCodeLens, registerDidYouKnow } from "./hints/didYouKnow.js";
+import { setTipCachePersistence } from "./ai/aiExplain.js";
+import { gated } from "./settings/featureFlags.js";
+import { fetchMe, currentUserIdOrNull } from "./user/protegeClient.js";
 import { initActiveFileTracker } from "./workspace/activeFile.js";
 import { startWatcher, type DispatchedNudge } from "./watcher/index.js";
 // Editor-surface UI modules paused — imports removed so the bundle doesn't
@@ -19,7 +22,6 @@ import { registerLiveReview } from "./review/liveReview.js";
 import { registerStatusBarLive, updateStatusBarData } from "./review/statusBarLive.js";
 import { registerUnderlineWhisper } from "./hints/underlineWhisper.js";
 import { registerGhostMentor } from "./hints/ghostMentor.js";
-import { registerFileOpenGreeter } from "./hints/fileOpenGreeter.js";
 import { registerPatternSpotter } from "./detection/patternSpotter.js";
 import { registerStruggleChip, showStruggleChip } from "./hints/struggleChip.js";
 import { registerSaveRecap } from "./detection/saveRecap.js";
@@ -68,6 +70,8 @@ import { runWakeCalibration, hasCompletedWakeCalibration, getWakeEnabled as getW
 import { stopWakeWordListener, isWakeWordListening } from "./voice/voiceCapture.js";
 import { registerVoiceStatusBar, setVoiceState } from "./voice/voiceStatusBar.js";
 import { initEcho, openEchoPanel, getEventStreamChannel } from "./echo/index.js";
+import { registerFileWalk } from "./walk/fileWalk.js";
+import { WalkViewProvider } from "./walk/walkView.js";
 
 let output: vscode.OutputChannel;
 
@@ -102,7 +106,44 @@ export async function activate(context: vscode.ExtensionContext) {
   // "Protege" twice and split our logs across them.
   const { getOutputChannel, log: logLine } = await import("./log.js");
   output = getOutputChannel();
-  logLine("extension", `activated — user ${getUserId(context)}`);
+
+  // Persist the opt-out flag against this extension's globalState so the
+  // signOut helper can survive restarts. MUST happen before the warmup
+  // probe so the probe respects the flag.
+  bindAuthOptOutContext(context);
+
+  // Warm up the GitHub session cache BEFORE anything else runs. VS Code
+  // returns the existing signed-in session silently with
+  // createIfNone: false; no OAuth dialog. Login-first: when the warmup
+  // returns null we stay in the signed-out state and every backend-touching
+  // surface short-circuits until the user signs in via the webview gate.
+  //
+  // If the user explicitly signed out earlier, skip the silent warmup
+  // entirely — otherwise VS Code's still-cached GitHub session would
+  // re-hydrate Protege right back to signed-in on every reload.
+  if (!isOptedOut()) {
+    try {
+      await getGitHubUser(false);
+    } catch {
+      // Non-fatal — user will sign in later via the webview prompt.
+    }
+  }
+
+  // Wire VS Code's session-change event so an external sign-out (from the
+  // accounts UI) propagates to our auth state and the gate re-renders.
+  installAuthSessionListener(context);
+
+  // One-time chore: drop the abandoned per-machine UUID from globalState.
+  // It's never reused; lingering writes are confusing during debugging.
+  void context.globalState.update("protege.userId", undefined);
+
+  const initialUser = getCachedGitHubUser();
+  logLine(
+    "extension",
+    initialUser
+      ? `activated — user ${initialUser.githubId} (${initialUser.login})`
+      : `activated — signed out (login-first gate active)`
+  );
 
   // ===== Chat history persistence =====
   initChatHistory(context);
@@ -111,7 +152,10 @@ export async function activate(context: vscode.ExtensionContext) {
   // Starts the batcher, session tracker, line differ, paste classifier, and
   // git commit watcher. Widget agents will fill in visualizations against
   // the data these subsystems produce.
-  initEcho(context, getUserId(context), output);
+  //
+  // Login-first: pass null when signed-out — every subsystem buffers locally
+  // and only posts when the user signs in (see batcher.ts auth gate).
+  initEcho(context, currentUserIdOrNull(), output);
 
   // ===== Editor Inset proposed API — opt-in via command only =====
   // Cursor's runtime doesn't expose `createWebviewTextEditorInset`, so the
@@ -156,7 +200,9 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 
   // ===== Status bar (context-aware, JARVIS Layer 4) =====
-  const statusBarDisposables = registerStatusBarLive(context);
+  const statusBarDisposables = [
+    gated("codeReview.statusBar", () => registerStatusBarLive(context)),
+  ];
 
   // Voice state chip in the status bar — visible even when the sidebar
   // is closed, so the user always knows whether Protege is listening /
@@ -184,8 +230,19 @@ export async function activate(context: vscode.ExtensionContext) {
   // Did-You-Know tip row above the line — replaces the old right-side
   // `💡 tip` after-decoration so the Learn more / Dismiss actions are
   // always visible, not buried behind a mouseover.
-  const dykLensSub = registerDidYouKnowCodeLens();
-  context.subscriptions.push(dykLensSub);
+  // Did You Know? — the lens renderer + the idle/file-switch/save
+  // triggers are gated together. Without registerDidYouKnow the lens
+  // is a dead shell; without registerDidYouKnowCodeLens the triggers
+  // produce activeTip state but nothing renders. Bind them as a unit.
+  context.subscriptions.push(
+    gated("teaching.didYouKnow", () => [
+      registerDidYouKnowCodeLens(),
+      ...registerDidYouKnow(context),
+    ])
+  );
+  // Hydrate the tip-text cache from globalState so a fresh session
+  // starts warm. The cache itself lives in ai/aiExplain.ts.
+  setTipCachePersistence(context);
 
   // ===== Analyzer (file save → concepts + bugs + IQ update) =====
   const analyzer = registerAnalyzer(
@@ -297,7 +354,9 @@ export async function activate(context: vscode.ExtensionContext) {
   // Live review scan pipeline stays on so the sidebar keeps getting data,
   // but its editor surfaces (gutter/inlay/codelens/comment thread) are
   // neutralised inside registerLiveReview itself.
-  const liveReviewDisposables = registerLiveReview(context);
+  const liveReviewDisposables = [
+    gated("codeReview.liveReview", () => registerLiveReview(context)),
+  ];
 
   // ===== Ambient Coach — in-editor surfaces =====
   // Two in-code surfaces that together teach while the user codes, without
@@ -422,23 +481,37 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   });
   const ownershipInviterDisposables = registerOwnershipInviter(context);
-  const whisperDisposables = registerUnderlineWhisper(context);
-  const ghostDisposables = registerGhostMentor(context);
-  // File-Open Greeter — fires a 2-sentence voice overview the first time
-  // the user opens each file. Silence is fine; `SKIP` is a valid reply.
-  // See Architecture plan in ~/.claude/plans/also-chekc-our-wondrous-blum.md.
-  const fileOpenGreeterDisposables = registerFileOpenGreeter(context);
+  const whisperDisposables = [
+    gated("codeReview.underlineWhispers", () => registerUnderlineWhisper(context)),
+  ];
+  const ghostDisposables = [
+    gated("teaching.ghostMentor", () => registerGhostMentor(context)),
+  ];
+  // File-Open Greeter retired 2026-04-26. The voice-intro surface fired
+  // a 700-1200 token LLM call on every tab switch to play a generic
+  // 2-sentence file synopsis through TTS. Cost was disproportionate to
+  // the value — narration is not mentor guidance. The file-open moment
+  // is still served by the cross-user concept-tips path (didYouKnow.ts)
+  // and Live Review's per-line findings. Module file kept on disk in
+  // case we revive any of its sub-features (ownership-aware nudge, voice
+  // overview command) under a redesign.
   // Proactive Pattern Spotter — after long activity + a pause, surfaces
   // ONE learning-moment pitch as a native notification. Silence-biased;
   // 15min cooldown, 24h per-concept dedup.
-  const patternSpotterDisposables = registerPatternSpotter(context);
+  const patternSpotterDisposables = [
+    gated("teaching.patternSpotter", () => registerPatternSpotter(context)),
+  ];
   // Struggle Chip — watcher nudges now render as a CodeLens row above
   // the friction line instead of force-opening the sidebar. The
   // registered command fetches a 2-sentence hint; "Learn more" is the
   // ONLY path to the sidebar. See ~/.claude/plans/learn-in-flow-audit.md.
-  const struggleChipDisposables = registerStruggleChip(context, () => {
-    openProtegePanel(context);
-  });
+  const struggleChipDisposables = [
+    gated("teaching.struggleChip", () =>
+      registerStruggleChip(context, () => {
+        openProtegePanel(context);
+      })
+    ),
+  ];
   // Save-time retrospective recap — on each save, render a 4s status-bar
   // toast summarizing concepts newly appearing since last save. Positive
   // reinforcement at a natural break, no interrupt. Move 2 of
@@ -463,10 +536,14 @@ export async function activate(context: vscode.ExtensionContext) {
   // Smart Fix — replaces the pre-stored `fix` string with a fresh Haiku
   // round-trip when the user clicks Fix. Better quality, worth the ~1s
   // and ~$0.0001 per click.
-  const smartFixDisposables = registerSmartFix(context);
+  const smartFixDisposables = [
+    gated("codeReview.smartFix", () => registerSmartFix(context)),
+  ];
   // Error-line highlight — subtle white wash on every line with an error
   // diagnostic (TS/ESLint/Protege). Ambient; no AI calls, no commands.
-  const errorLineHighlightDisposables = registerErrorLineHighlight();
+  const errorLineHighlightDisposables = [
+    gated("codeReview.errorLineHighlight", () => registerErrorLineHighlight()),
+  ];
   // Selection Hover — when the user highlights code, auto-open a tiny
   // popup with [◎ Explain · ✿ Teach me · ✿ Explain back]. Matches the
   // vibe of Cursor's floating "Add to Chat" bar but carries Protege's
@@ -510,6 +587,11 @@ export async function activate(context: vscode.ExtensionContext) {
   const workspaceIndexDisposables = registerWorkspaceIndex(context);
   const findingDiagnosticsDisposables = registerFindingDiagnostics(context);
 
+  // ===== File Walk — sequential mentor walkthrough =====
+  // Triggered from the editor title bar icon or the explorer context menu.
+  // Backend caches by file hash + caps at 5 fresh walks/user/day.
+  const fileWalkDisposables = registerFileWalk(context);
+
   // ===== JARVIS Layer 5: Command palette commands =====
   const commandDisposables = registerCommands(context);
 
@@ -533,7 +615,6 @@ export async function activate(context: vscode.ExtensionContext) {
     ...ownershipInviterDisposables,
     ...whisperDisposables,
     ...ghostDisposables,
-    ...fileOpenGreeterDisposables,
     ...patternSpotterDisposables,
     ...struggleChipDisposables,
     ...saveRecapDisposables,
@@ -550,6 +631,7 @@ export async function activate(context: vscode.ExtensionContext) {
     ...lessonCommentDisposables,
     ...workspaceIndexDisposables,
     ...findingDiagnosticsDisposables,
+    ...fileWalkDisposables,
     ...didYouKnowDisposables,
     ...findingHoverDisposables,
     registerInsetWizardCommand(context),
@@ -559,15 +641,26 @@ export async function activate(context: vscode.ExtensionContext) {
     ...registerOnDeviceModel(context),
     ...registerExerciseEngine(context),
     vscode.window.registerWebviewViewProvider("protege.launcher", launcher),
+    vscode.window.registerWebviewViewProvider(
+      "protege.fileWalk",
+      new WalkViewProvider()
+    ),
     vscode.commands.registerCommand("protege.toggle", () =>
       openProtegePanel(context)
     ),
     // Status bar voice chip fires this; webview's "Protege ON" chip also
     // fires this (via wake/toggle message). Both paths update all
     // mounted webviews + the status bar via broadcast + setVoiceState.
-    vscode.commands.registerCommand("protege.toggleWake", () =>
-      toggleGlobalWake(context, getUserId(context))
-    ),
+    vscode.commands.registerCommand("protege.toggleWake", () => {
+      const id = currentUserIdOrNull();
+      if (!id) {
+        vscode.window.showInformationMessage(
+          "Sign in with GitHub to use voice mode."
+        );
+        return;
+      }
+      return toggleGlobalWake(context, id);
+    }),
     vscode.commands.registerCommand("protege.openInNewTab", () =>
       openProtegePanel(context)
     ),
@@ -647,8 +740,10 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
     // toggleFlowScan removed — IDLE scan tier retired 2026-04-23.
     vscode.commands.registerCommand("protege.refreshIQ", async () => {
+      const id = currentUserIdOrNull();
+      if (!id) return;
       try {
-        const me = await fetchMe(getUserId(context));
+        const me = await fetchMe(id);
         updateStatusBarData({ codeIq: me.codeIq, streakDays: me.streak.current, totalConcepts: me.totalConcepts });
       updateLauncherStats({ codeIq: me.codeIq, maxIq: me.maxIq, streakDays: me.streak.current, totalConcepts: me.totalConcepts });
         broadcastMe(me);
@@ -840,9 +935,22 @@ export async function activate(context: vscode.ExtensionContext) {
     }, 3000);
   }
 
-  setTimeout(() => {
-    vscode.commands.executeCommand("protege.refreshIQ");
-  }, 500);
+  // Login-first: only poll IQ once we're signed in. Pre-auth would 401.
+  if (isSignedIn()) {
+    setTimeout(() => {
+      vscode.commands.executeCommand("protege.refreshIQ");
+    }, 500);
+  }
+  // Re-fire after a successful sign-in so the status bar/launcher hydrate
+  // without requiring the user to manually invoke `Refresh IQ`.
+  context.subscriptions.push(
+    new vscode.Disposable(
+      onAuthChange((snap) => {
+        if (snap.state !== "signed-in") return;
+        void vscode.commands.executeCommand("protege.refreshIQ");
+      })
+    )
+  );
 
   setTimeout(() => {
     try {
@@ -853,18 +961,27 @@ export async function activate(context: vscode.ExtensionContext) {
   }, 400);
 
   // Start the wake-word listener on activate — not just when a webview
-  // mounts. This lets `Protege` work even if the user closes the sidebar:
-  // the Rust binary keeps running in the extension host, and when a wake
-  // fires we auto-reveal the panel to play audio. Default threshold is
-  // used when the user hasn't calibrated yet — wake still works, just
-  // at the generic 0.13 tuning.
-  if (getWakeEnabledFor(context)) {
-    setTimeout(() => {
-      import("./chat/webviewHost.js").then((mod) => {
-        void mod.startGlobalWakeListener(context, getUserId(context));
-      });
-    }, 800);
+  // mounts. Login-first: only fire when signed in. The wake handler also
+  // re-checks `currentUserIdOrNull` at trigger time so a sign-out
+  // mid-session can't dispatch chat under a stale id.
+  if (getWakeEnabledFor(context) && isSignedIn()) {
+    const wakeId = currentUserIdOrNull();
+    if (wakeId) {
+      setTimeout(() => {
+        import("./chat/webviewHost.js").then((mod) => {
+          void mod.startGlobalWakeListener(context, wakeId);
+        });
+      }, 800);
+    }
   }
+
+  // Sign-in command: single canonical entry point invoked by the gate
+  // button, status bar, or any future surface.
+  context.subscriptions.push(
+    vscode.commands.registerCommand("protege.signIn", async () => {
+      await getGitHubUser({ createIfNone: true });
+    })
+  );
 }
 
 // Old updateStatusBar removed — replaced by statusBarLive.ts

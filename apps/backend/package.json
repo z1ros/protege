@@ -9,6 +9,7 @@
     "start": "node --env-file=.env dist/index.js",
     "typecheck": "tsc --noEmit",
     "prepare-kokoro": "node scripts/prepare-kokoro.mjs",
+    "seed:echo": "tsx --env-file=.env scripts/seed-echo.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

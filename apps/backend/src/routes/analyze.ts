@@ -1,8 +1,13 @@
 import { Hono } from "hono";
 import type { AnalyzeRequest, AnalyzeResponse, Finding } from "@protege/types";
-import { anthropic, MODEL } from "../anthropic.js";
+import { callOneShot } from "../llm.js";
+import { githubAuth } from "../middleware/auth.js";
 
 export const analyzeRoute = new Hono();
+
+analyzeRoute.use("*", githubAuth());
+
+const MAX_CONTENT_BYTES = 200_000;
 
 const ANALYZE_PROMPT = `You are Protege — an AI coding mentor reviewing a file the user just saved. Your goal is NOT to list every issue. Your goal is to find at most 3 findings that will TEACH the user something meaningful.
 
@@ -33,23 +38,19 @@ JSON only. Exact shape:
 analyzeRoute.post("/", async (c) => {
   const body = (await c.req.json()) as AnalyzeRequest;
 
-  const res = await anthropic.messages.create({
-    model: MODEL,
-    max_tokens: 1024,
-    system: [
-      { type: "text", text: ANALYZE_PROMPT, cache_control: { type: "ephemeral" } },
-    ],
-    messages: [
-      {
-        role: "user",
-        content: `File: ${body.file.path} (${body.file.language})\n\n${body.file.content}`,
-      },
-    ],
-  });
+  const content = body.file?.content ?? "";
+  if (Buffer.byteLength(content, "utf8") > MAX_CONTENT_BYTES) {
+    return c.json(
+      { error: `file content exceeds ${MAX_CONTENT_BYTES} bytes` },
+      413
+    );
+  }
 
-  const text = res.content
-    .map((b) => (b.type === "text" ? b.text : ""))
-    .join("");
+  const { text } = await callOneShot({
+    systemText: ANALYZE_PROMPT,
+    userText: `File: ${body.file.path} (${body.file.language})\n\n${body.file.content}`,
+    maxTokens: 1024,
+  });
 
   let findings: Finding[] = [];
   try {

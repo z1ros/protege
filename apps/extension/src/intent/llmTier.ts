@@ -1,5 +1,6 @@
 import type { TaskShape, ShapeContext, ClassifyResponse } from "@protege/types";
 import { BACKEND_URL } from "../user/protegeClient.js";
+import { authHeaders } from "../user/auth.js";
 
 /**
  * LLM-tier classifier — invoked when regex tier returns null or low
@@ -22,7 +23,7 @@ async function callOnce(
 ): Promise<TaskShape | null> {
   const res = await fetch(`${BACKEND_URL}/classify`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { ...authHeaders() },
     body: JSON.stringify({ message, context }),
     signal,
   });

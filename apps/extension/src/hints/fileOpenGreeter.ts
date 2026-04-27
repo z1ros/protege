@@ -237,6 +237,21 @@ async function maybeGreet(
   if (pending.has(uriKey)) return; // offer already live for this file
   if (!isEligible(doc)) return;
 
+  // Cost gate: the auto-fire path (every tab switch / file open) is
+  // disabled because each call sends 150-200 lines of file content to
+  // the LLM at ~700-1200 tokens. Per the audit in
+  // .claude/live-review-health-timer-redesign/01-current-state.md and
+  // Architecture/llm-cost-followups.md (Tier 1 P0 #1.2), 80% of the
+  // value of this prompt is structurally derivable from imports +
+  // exports + ownership %. The redesign (Phase 1.2) replaces this with
+  // a heuristic-first path; until that ships, auto-fire is silenced.
+  // Force path (manual command, e.g. "Protege: Replay greeting") still
+  // fires so the surface remains user-accessible.
+  if (!opts.force) {
+    log("fileOpenGreeter", `auto-fire disabled · ${shortName(doc.uri)} (cost gate; use 'Replay greeting' command for manual)`);
+    return;
+  }
+
   // Pick the branch. The unowned re-greeting fires EVEN if the normal
   // first-open greeter already ran — that's the whole point of the
   // ownership-aware path: a file you skimmed a month ago and then
@@ -352,7 +367,7 @@ Pick the offer that matches the file's size + complexity. Short file = drill. Bi
 
 Under 35 words total. Contractions. No preamble. Return only the 2 sentences.`;
 
-  return aiQuery(prompt, MAX_OVERVIEW_TOKENS, { kind: "teach" });
+  return aiQuery(prompt, MAX_OVERVIEW_TOKENS, { kind: "scan" });
 }
 
 async function runOverview(doc: vscode.TextDocument): Promise<string | null> {
@@ -394,7 +409,7 @@ User memory (recent struggles, level): ${memoryBlock}
 ${preview}
 \`\`\``;
 
-  return aiQuery(prompt, MAX_OVERVIEW_TOKENS, { kind: "teach" });
+  return aiQuery(prompt, MAX_OVERVIEW_TOKENS, { kind: "scan" });
 }
 
 function isEligible(doc: vscode.TextDocument): boolean {
