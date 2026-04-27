@@ -464,11 +464,6 @@
           "default": false,
           "description": "Ghost mentor — proactive coaching messages that surface as you work. Off by default; some users find it chatty."
         },
-        "protege.teaching.fileOpenGreeter": {
-          "type": "boolean",
-          "default": false,
-          "description": "File-open greeter — short welcome popover summarising a file when you open it. Off by default to keep file-switching fast."
-        },
         "protege.teaching.struggleChip": {
           "type": "boolean",
           "default": false,
