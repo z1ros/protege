@@ -225,8 +225,9 @@ export async function activate(context: vscode.ExtensionContext) {
   // Replaces the old right-side italic `← <tag>` inline after-decoration —
   // now the primary action surface is the CodeLens; the hover stays as the
   // deeper-detail tooltip on mouseover.
-  const highlightLensSub = registerHighlightCodeLens();
-  context.subscriptions.push(highlightLensSub);
+  context.subscriptions.push(
+    gated("aiHighlights.chatHighlights", () => registerHighlightCodeLens())
+  );
   // Did-You-Know tip row above the line — replaces the old right-side
   // `💡 tip` after-decoration so the Learn more / Dismiss actions are
   // always visible, not buried behind a mouseover.
@@ -374,7 +375,9 @@ export async function activate(context: vscode.ExtensionContext) {
   // Project Map (A1) — binds `context` so the file-summary cache can
   // write to globalState. No listeners/commands; the webview tab
   // requests data on demand via `map/*` messages in webviewHost.ts.
-  const projectMapDisposables = registerProjectMap(context);
+  const projectMapDisposables = [
+    gated("recap.projectMap", () => registerProjectMap(context)),
+  ];
   // Architecture Tour (A2) — guided walk through 5 key files. We pass
   // `broadcast` through so the orchestrator can push `tour/state` +
   // `tour/narrationReady` messages without taking a dependency on
@@ -516,12 +519,16 @@ export async function activate(context: vscode.ExtensionContext) {
   // toast summarizing concepts newly appearing since last save. Positive
   // reinforcement at a natural break, no interrupt. Move 2 of
   // ~/.claude/plans/learn-in-flow-audit.md.
-  const saveRecapDisposables = registerSaveRecap(context);
+  const saveRecapDisposables = [
+    gated("recap.saveRecap", () => registerSaveRecap(context)),
+  ];
   // Concept Trail — subtle blue gutter dot on the first line where a
   // new-this-session concept appears. Purely peripheral, no voice, no
   // popup. Hover → a small Markdown card with a "Teach me" link.
   // Move 4 of ~/.claude/plans/learn-in-flow-audit.md.
-  const conceptTrailDisposables = registerConceptTrail(context);
+  const conceptTrailDisposables = [
+    gated("recap.conceptTrail", () => registerConceptTrail(context)),
+  ];
   // Inset Preview — EXPERIMENTAL alternative to the Ghost Mentor
   // CodeLens. Opt-in via command "Protege: Preview inset-style finding
   // (experimental)". Does NOT replace the CodeLens; both surfaces
