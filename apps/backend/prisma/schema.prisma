@@ -1,0 +1,24 @@
+// Prisma schema for the Protege backend, sourced from Supabase.
+//
+// Connection strategy:
+//   * `url`       — pooled (PgBouncer transaction-mode). Used by the
+//                   runtime PrismaClient. Cheaper for many short-lived
+//                   queries; loses prepared-statement features.
+//   * `directUrl` — direct (session) connection. Used by Prisma CLI
+//                   (`prisma migrate`, `prisma db pull`, `prisma studio`)
+//                   because those operations need the full Postgres
+//                   protocol the pooler can't proxy.
+//
+// Models below get populated by `prisma db pull` (introspection of the
+// existing Supabase schema). Run `prisma generate` after to refresh the
+// typed client.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}

@@ -1,11 +1,22 @@
 import * as vscode from "vscode";
-import { aiQuery } from "../ai/aiBackend.js";
+import { broadcast } from "../chat/webviewHost.js";
 
 /**
- * "Protege: Explain selection" — explains highlighted code inline.
+ * "Protege: Explain selection" — explains highlighted code through chat.
  *
- * If text is selected, explains that. Otherwise explains the current line.
- * Shows result as a hover-style information message with "Teach more" action.
+ * Previously showed a `vscode.window.showInformationMessage` popup with
+ * the AI reply baked in. Users found it disruptive: the dialog blocked
+ * the editor, ignored their text/voice mode preference, and stranded the
+ * answer outside the conversation history.
+ *
+ * Now we open the Protege panel and inject the prompt as if the user
+ * had typed it. The chat pipeline owns the AI call from there, which
+ * means:
+ *   - reply lands in the chat tab (visible, scrollable, persisted)
+ *   - voice mode plays the reply through the speakers automatically
+ *     (the speak path is gated on `protege.explainMode` upstream)
+ *   - the "Teach me more" follow-up is just a normal chat turn — no
+ *     separate dialog/button plumbing needed.
  */
 export async function explainSelection(): Promise<void> {
   const editor = vscode.window.activeTextEditor;
@@ -17,48 +28,28 @@ export async function explainSelection(): Promise<void> {
     : editor.document.getText(selection);
 
   if (!text) {
-    vscode.window.showInformationMessage("Select some code first, then try again.");
+    vscode.window.setStatusBarMessage(
+      "Protege: select some code first, then try again.",
+      3000
+    );
     return;
   }
 
   const lang = editor.document.languageId;
   const truncated = text.length > 500 ? text.slice(0, 497) + "..." : text;
 
-  await vscode.window.withProgress(
-    {
-      location: vscode.ProgressLocation.Notification,
-      title: "Protege: explaining...",
-    },
-    async () => {
-      try {
-        const reply = await aiQuery(
-          `Explain this ${lang} code in 2-3 sentences. Be concise and practical — what does it do, why, and any gotchas:\n\n\`\`\`${lang}\n${truncated}\n\`\`\``,
-          256,
-          { kind: "teach" }
-        );
+  // Reuse the existing open-panel command so we don't need
+  // ExtensionContext threaded through every command file.
+  await vscode.commands.executeCommand("protege.openInNewTab");
 
-        if (!reply) {
-          vscode.window.showWarningMessage("Protege: no response from AI backend.");
-          return;
-        }
+  const prompt =
+    `Explain this ${lang} code in 2-3 sentences — what does it do, why, and any gotchas?\n\n` +
+    "```" + lang + "\n" + truncated + "\n```";
 
-        const choice = await vscode.window.showInformationMessage(
-          reply.slice(0, 500),
-          "Teach me more",
-          "OK"
-        );
-
-        if (choice === "Teach me more") {
-          // Get the first word/symbol for teaching
-          const firstWord = text.match(/\b[a-zA-Z_]\w+/)?.[0];
-          if (firstWord) {
-            vscode.commands.executeCommand("protege.teachConcept", firstWord);
-          }
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        vscode.window.showErrorMessage(`Explain failed: ${msg}`);
-      }
-    }
-  );
+  // 300ms matches the delay used by `protege.teachHighlight` — gives
+  // the webview's React app time to mount and post `ready` before the
+  // chat/autoSend message arrives, otherwise it gets dropped.
+  setTimeout(() => {
+    broadcast({ type: "chat/autoSend", message: prompt });
+  }, 300);
 }

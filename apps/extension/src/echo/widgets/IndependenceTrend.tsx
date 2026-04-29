@@ -20,19 +20,26 @@ export interface IndependenceTrendProps {
   loading: boolean;
 }
 
-// Stacked-area palette. Typed=green (user ownership), AI=indigo-purple
-// (the assistant's contribution), paste=gray (neutral/provenance-light).
-// Kept intentionally close to the Coastline + Hero accents so the rest of
-// the dashboard reads as a single visual family.
-const TYPED_COLOR = ECHO_PALETTE.success; // #7ee787
-const AI_COLOR = ECHO_PALETTE.purple; // #bc8cff
-const PASTE_COLOR = ECHO_PALETTE.gray; // #6e7681
+// Stacked-bar palette tuned 2026-04-23 to Protege's "white-dominant +
+// electric-blue accent" rule. The previous green/purple/gray was
+// off-brand and read as a stock data-viz palette.
+//   Typed (the user's own work) → near-white   — primary, strongest read
+//   AI accepted                  → electric blue — the brand's accent
+//   Pasted                       → neutral mid — quiet contributor
+// Same hue family as the rest of the app; clear visual hierarchy.
+const TYPED_COLOR = "#e8ecff"; // glow-soft (near-white)
+const AI_COLOR = "#4a9eff"; // electric
+const PASTE_COLOR = "#5a6373"; // neutral mid
 
-// Keep fills solid enough that small deltas still read visually, without
-// letting the bottom layer's color bleed through and inflate perceived size.
-const TYPED_FILL = "rgba(126, 231, 135, 0.42)";
-const AI_FILL = "rgba(188, 140, 255, 0.42)";
-const PASTE_FILL = "rgba(110, 118, 129, 0.55)";
+// Solid-but-soft fills so stacks remain distinguishable on small heights.
+const TYPED_FILL = "rgba(232, 236, 255, 0.85)";
+const AI_FILL = "rgba(74, 158, 255, 0.78)";
+const PASTE_FILL = "rgba(90, 99, 115, 0.62)";
+
+// Keep references so any future "fill: TYPED_FILL" or similar usage in
+// gradient defs picks the right alpha; otherwise the bare COLOR consts
+// alone rendered fully opaque slabs which looked stamped on, not painted.
+void TYPED_FILL; void AI_FILL; void PASTE_FILL;
 
 /**
  * W14 Independence Trend. Replaces the old Code Origin donut. Three
@@ -184,7 +191,8 @@ function DailyCompositionChart({
             dataKey="typed"
             stackId="1"
             fill={TYPED_COLOR}
-            fillOpacity={0.85}
+            fillOpacity={0.9}
+            radius={[2, 2, 0, 0]}
             isAnimationActive={!reducedMotion}
           />
           <Bar
@@ -198,7 +206,7 @@ function DailyCompositionChart({
             dataKey="paste"
             stackId="1"
             fill={PASTE_COLOR}
-            fillOpacity={0.85}
+            fillOpacity={0.6}
             isAnimationActive={!reducedMotion}
           />
         </BarChart>
@@ -234,6 +242,18 @@ interface CompositionTooltipPayload {
   payload?: DayRow;
 }
 
+/**
+ * Approximate "chars → lines" — assumes a typical code line is around
+ * 30 chars (mix of short imports + longer expression lines). Off by a
+ * factor of 2 either way is fine; the goal is to give the user an
+ * intuitive sense of "did I write 5 lines or 500 today" rather than a
+ * raw character count that means nothing on its own.
+ */
+function approxLines(chars: number): number {
+  if (!Number.isFinite(chars) || chars <= 0) return 0;
+  return Math.max(1, Math.round(chars / 30));
+}
+
 function CompositionTooltip({
   active,
   payload,
@@ -245,6 +265,9 @@ function CompositionTooltip({
   const row = payload[0]?.payload;
   if (!row) return null;
   const total = row.typed + row.ai + row.paste;
+  const pctOf = (v: number): string =>
+    total === 0 ? "0%" : `${Math.round((v / total) * 100)}%`;
+  const totalLines = approxLines(total);
   return (
     <div className="echo-independence-tooltip">
       <div className="echo-independence-tooltip-head">{row.label}</div>
@@ -254,25 +277,34 @@ function CompositionTooltip({
             className="echo-independence-legend-dot"
             style={{ background: TYPED_COLOR }}
           />
-          Typed: {formatChars(row.typed)}
+          <span className="echo-tt-label">Typed</span>
+          <span className="echo-tt-pct">{pctOf(row.typed)}</span>
+          <span className="echo-tt-raw">{formatChars(row.typed)}</span>
         </li>
         <li>
           <span
             className="echo-independence-legend-dot"
             style={{ background: AI_COLOR }}
           />
-          AI: {formatChars(row.ai)}
+          <span className="echo-tt-label">AI accepted</span>
+          <span className="echo-tt-pct">{pctOf(row.ai)}</span>
+          <span className="echo-tt-raw">{formatChars(row.ai)}</span>
         </li>
         <li>
           <span
             className="echo-independence-legend-dot"
             style={{ background: PASTE_COLOR }}
           />
-          Pasted: {formatChars(row.paste)}
+          <span className="echo-tt-label">Pasted</span>
+          <span className="echo-tt-pct">{pctOf(row.paste)}</span>
+          <span className="echo-tt-raw">{formatChars(row.paste)}</span>
         </li>
       </ul>
       <div className="echo-independence-tooltip-total">
-        Total: {formatChars(total)}
+        <span>~{totalLines} {totalLines === 1 ? "line" : "lines"}</span>
+        <span className="echo-tt-total-raw">
+          {formatChars(total)} chars
+        </span>
       </div>
     </div>
   );

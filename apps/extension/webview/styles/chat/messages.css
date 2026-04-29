@@ -24,7 +24,7 @@
   flex-direction: column;
   gap: 4px;
   max-width: 94%;
-  animation: msg-in 260ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: msg-in 260ms var(--ease-spring);
 }
 .msg-user { align-self: flex-end; align-items: flex-end; }
 .msg-assistant { align-self: flex-start; }
@@ -122,7 +122,7 @@
       rgba(var(--text-rgb), 0.06)
     ),
     rgba(var(--ink-rgb), 0.88);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   color: var(--text);
   border-bottom-left-radius: 4px;
   box-shadow:
@@ -142,7 +142,7 @@
   background: rgba(0, 0, 0, 0.35);
   padding: 1px 6px;
   border-radius: 4px;
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
 }
 
 /* ==========================================================
@@ -184,13 +184,13 @@
   gap: 6px;
   margin-top: 8px;
   padding: 0 2px;
-  animation: msg-in 300ms cubic-bezier(0.16, 1, 0.3, 1) 100ms both;
+  animation: msg-in 300ms var(--ease-spring) 100ms both;
 }
 .followup-chip {
   padding: 7px 13px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
-  border-radius: 999px;
+  border: var(--border-glass);
+  border-radius: var(--radius-pill);
   color: var(--text);
   font-family: inherit;
   font-size: 11px;
@@ -229,12 +229,12 @@
   gap: 10px;
   margin-top: 14px;
   padding: 0 2px;
-  animation: msg-in 300ms cubic-bezier(0.16, 1, 0.3, 1) 100ms both;
+  animation: msg-in 300ms var(--ease-spring) 100ms both;
 }
 .fork-btn {
   padding: 10px 16px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: 10px;
   color: var(--text);
   font-family: inherit;
@@ -276,6 +276,7 @@
   gap: 6px;
   font-family: var(--font-mono);
   font-size: 11px;
+  margin-bottom: 8px;
 }
 .tool-row {
   display: flex;
@@ -284,9 +285,9 @@
   padding: 4px 8px;
   border-radius: 6px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   color: var(--text-dim);
-  animation: msg-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: msg-in 220ms var(--ease-spring);
 }
 .tool-row .tool-icon {
   width: 14px;
@@ -370,6 +371,12 @@
 }
 .typing-dot:nth-child(2) { animation-delay: 0.18s; }
 .typing-dot:nth-child(3) { animation-delay: 0.36s; }
+.typing-label {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--text-faint);
+  letter-spacing: 0.02em;
+}
 
 @keyframes pulse {
   0%, 80%, 100% { opacity: 0.25; transform: scale(0.85); }
@@ -424,7 +431,7 @@
   text-align: left;
   padding: 11px 14px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: 10px;
   color: var(--text);
   font-family: inherit;

@@ -164,13 +164,9 @@ function showHoverNow(
   md.appendMarkdown(
     `**[◎ Explain](command:protege.explainSelection "Quick explanation in chat")**` +
       ` · ` +
-      `**[⌘ Find similar](command:protege.findSimilar "Find sister-patterns elsewhere in this workspace")**` +
-      ` · ` +
-      `**[→ Trace](command:protege.trace "Jump to where this is defined and every place it's called")**` +
-      ` · ` +
       `**[✿ Compare](command:protege.compare "Side-by-side: how a senior engineer would write this")**` +
       ` · ` +
-      `**[? Why](command:protege.why "Git blame + commit body + linked PR — the intent behind this code")**`
+      `**[✎ Fix it](command:protege.fixIt "Diagnose what's wrong and propose a corrected version")**`
   );
 
   // Invisible decoration — we're not drawing anything on the code, just

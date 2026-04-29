@@ -1,5 +1,7 @@
 import * as vscode from "vscode";
 import { openProtegePanel } from "./panel.js";
+import { getGitHubUser, getCachedGitHubUser } from "./user/auth.js";
+import { getAuthSnapshot, type AuthSnapshot } from "./user/authState.js";
 
 /**
  * Activity-bar launcher view.
@@ -9,7 +11,7 @@ import { openProtegePanel } from "./panel.js";
  * whenever the main panel wasn't mounted (closed, in another group,
  * etc.) — users would see just a logo + button over a large empty area.
  *
- * Now the launcher doubles as a mini dashboard: Code IQ, streak, and
+ * Now the launcher doubles as a mini dashboard: progress, streak, and
  * concept count rendered as a compact card. Stats flow from
  * extension.ts (analyzer-save and refreshIQ callsites) via the
  * `updateLauncherStats` helper exported below, which `postMessage`s
@@ -33,7 +35,9 @@ interface LauncherStats {
  *  and every subsequent update so numbers are fresh even if the view
  *  re-resolves (sidebar collapse/expand triggers a re-resolve). */
 let lastStats: LauncherStats | null = null;
+let lastAuth: AuthSnapshot | null = null;
 let currentView: vscode.WebviewView | null = null;
+let currentCtx: vscode.ExtensionContext | null = null;
 
 /**
  * Push new stats to the launcher (if mounted). Safe to call before the
@@ -44,6 +48,38 @@ export function updateLauncherStats(stats: LauncherStats): void {
   currentView?.webview.postMessage({ type: "stats", ...stats });
 }
 
+/**
+ * Push auth state to the launcher so the sidebar swaps between the
+ * normal stats card and a "sign in to continue" CTA. Without this the
+ * launcher would silently show "Save a file to start tracking" even
+ * after the user denies the GitHub OAuth dialog — leaving them with no
+ * obvious way back in. Cached + replayed on resolve, same as stats.
+ *
+ * Auto-opening the main panel is also gated on signed-in here: when the
+ * user is signed-out we stop the launcher → panel auto-bounce so the
+ * sign-in CTA is the only entry point until they accept.
+ */
+export function updateLauncherAuth(snap: AuthSnapshot): void {
+  const wasSignedIn = lastAuth?.user != null;
+  lastAuth = snap;
+  currentView?.webview.postMessage({
+    type: "auth",
+    state: snap.state,
+    signedIn: snap.user !== null,
+  });
+  // Sign-in just succeeded while the launcher is visible — open the
+  // main panel automatically so the user lands in the real UI without
+  // having to click "Open Protege" a second time.
+  if (
+    !wasSignedIn &&
+    snap.user !== null &&
+    currentView?.visible &&
+    currentCtx
+  ) {
+    openProtegePanel(currentCtx);
+  }
+}
+
 export class LauncherProvider implements vscode.WebviewViewProvider {
   constructor(private readonly ctx: vscode.ExtensionContext) {}
 
@@ -51,6 +87,7 @@ export class LauncherProvider implements vscode.WebviewViewProvider {
     view.webview.options = { enableScripts: true };
     view.webview.html = this.html();
     currentView = view;
+    currentCtx = this.ctx;
 
     // Replay the last-known stats so numbers populate immediately on
     // mount. Without this the launcher would show "—" placeholders
@@ -59,23 +96,46 @@ export class LauncherProvider implements vscode.WebviewViewProvider {
       view.webview.postMessage({ type: "stats", ...lastStats });
     }
 
-    view.webview.onDidReceiveMessage((msg: { type: string }) => {
-      if (msg.type === "open") openProtegePanel(this.ctx);
+    // Replay auth state so the sidebar starts in the right shape
+    // (signed-in stats vs. signed-out CTA). Falls back to a fresh
+    // snapshot if no listener has fed us yet.
+    const authSnap = lastAuth ?? getAuthSnapshot();
+    view.webview.postMessage({
+      type: "auth",
+      state: authSnap.state,
+      signedIn: authSnap.user !== null,
     });
 
-    // Legacy behavior: clicking the activity-bar icon auto-opened the
-    // real panel as soon as the sidebar view became visible. Kept, so
-    // regular workflow is unchanged — the launcher stats are only seen
-    // when the user deliberately looks at the sidebar without the
-    // main panel mounted (e.g. after closing the tab).
-    const openIfVisible = () => {
-      if (view.visible) openProtegePanel(this.ctx);
+    view.webview.onDidReceiveMessage(async (msg: { type: string }) => {
+      if (msg.type === "open") openProtegePanel(this.ctx);
+      if (msg.type === "auth/login") {
+        // Pop the GitHub OAuth dialog ONLY if we don't already have a
+        // signed-in session. When the user is already signed in, calling
+        // `getGitHubUser({ createIfNone: true })` makes VS Code surface a
+        // "wants you to sign in again" modal — pure noise. The cached
+        // user already triggered the auth listener once, so the launcher
+        // UI is correctly in the signed-in shape; this branch is a no-op.
+        if (!getCachedGitHubUser()) {
+          await getGitHubUser(true);
+        }
+      }
+    });
+
+    // Auto-open the main panel only when the user is signed in. When
+    // signed-out we keep the launcher's sign-in CTA as the sole entry
+    // point — otherwise denying the OAuth dialog and re-focusing the
+    // sidebar would loop the user through the main panel's auth gate
+    // every time the view regains visibility.
+    const openIfSignedIn = () => {
+      if (!view.visible) return;
+      if (lastAuth?.user) openProtegePanel(this.ctx);
     };
-    openIfVisible();
-    view.onDidChangeVisibility(openIfVisible);
+    openIfSignedIn();
+    view.onDidChangeVisibility(openIfSignedIn);
 
     view.onDidDispose(() => {
       if (currentView === view) currentView = null;
+      if (currentCtx === this.ctx) currentCtx = null;
     });
   }
 
@@ -178,45 +238,42 @@ export class LauncherProvider implements vscode.WebviewViewProvider {
     position: relative;
     z-index: 1;
   }
+  /* Orbit logo — one ring, one dot. Lives inside a softly glowing
+     plate so it reads as the product mark, not a letter. Hover
+     rotates -12° to match the brand spec (single canonical gesture).
+     Box-shadow halo (not pseudo-element) sidesteps any stacking-
+     context surprises with the parent flex row. */
   .mark {
-    width: 40px;
-    height: 40px;
-    border-radius: 11px;
-    background: linear-gradient(135deg, var(--electric), var(--electric-deep));
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    background: radial-gradient(circle at 35% 30%, rgba(74, 158, 255, 0.35), rgba(13, 11, 24, 0.92) 70%);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-family: Georgia, serif;
-    font-style: italic;
-    font-size: 19px;
-    font-weight: 700;
     color: var(--glow);
     box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.16) inset,
-      0 8px 22px rgba(74, 158, 255, 0.42),
-      0 0 26px rgba(74, 158, 255, 0.28);
+      0 0 0 1px rgba(255, 255, 255, 0.1) inset,
+      0 8px 22px rgba(74, 158, 255, 0.32),
+      0 0 22px rgba(74, 158, 255, 0.18);
     flex-shrink: 0;
-    /* Breathing halo — implemented as an animated outer box-shadow
-       instead of a ::after pseudo-element with z-index -1. The
-       pseudo-element approach only works when its parent creates a
-       stacking context; .mark has position relative but no z-index,
-       so negative z-index would climb to the root stacking context
-       and the halo would end up hidden behind the body bg. Box-shadow
-       animation sidesteps the stacking-context problem entirely. */
     animation: mark-pulse 3.2s ease-in-out infinite;
+    transition: transform 320ms cubic-bezier(0.16, 1, 0.3, 1);
   }
+  .mark:hover { transform: rotate(-12deg); }
+  .mark svg { width: 24px; height: 24px; display: block; }
   @keyframes mark-pulse {
     0%, 100% {
       box-shadow:
-        0 0 0 1px rgba(255, 255, 255, 0.16) inset,
-        0 8px 22px rgba(74, 158, 255, 0.42),
-        0 0 22px rgba(74, 158, 255, 0.22);
+        0 0 0 1px rgba(255, 255, 255, 0.1) inset,
+        0 8px 22px rgba(74, 158, 255, 0.32),
+        0 0 18px rgba(74, 158, 255, 0.18);
     }
     50% {
       box-shadow:
-        0 0 0 1px rgba(255, 255, 255, 0.18) inset,
-        0 8px 26px rgba(74, 158, 255, 0.55),
-        0 0 38px rgba(74, 158, 255, 0.42);
+        0 0 0 1px rgba(255, 255, 255, 0.16) inset,
+        0 8px 26px rgba(74, 158, 255, 0.45),
+        0 0 32px rgba(74, 158, 255, 0.32);
     }
   }
   .hero-identity {
@@ -293,19 +350,14 @@ export class LauncherProvider implements vscode.WebviewViewProvider {
     z-index: 1;
   }
 
-  /* ---- Stats ---- */
-  /* One hero card (IQ) + two equal minis (Streak + Concepts) in a 2-col
-     grid underneath. Typography-first: big serif numbers, microcaps
-     labels, no emoji — all icons are SVG strokes so they inherit color
-     and never read as "graphic" among the typography. */
-  .stats {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin-top: 4px;
-  }
+  /* ---- Stats ----
+     Two equal cards (Streak + Concepts) in a 2-col grid. The old
+     "Progress" hero card was Code-IQ–derived and Code IQ has been
+     retired across the app, so it's gone here too — these two stats
+     are the only real, non-aggregated numbers we surface. */
+  .stats { margin-top: 4px; }
   .stat {
-    padding: 14px 14px 13px;
+    padding: 12px 12px 11px;
     border-radius: 10px;
     border: 1px solid var(--glass-border);
     background: rgba(13, 11, 24, 0.82);
@@ -325,16 +377,12 @@ export class LauncherProvider implements vscode.WebviewViewProvider {
     text-transform: uppercase;
     letter-spacing: 0.18em;
     color: var(--text-faint);
-    margin-bottom: 6px;
+    margin-bottom: 5px;
   }
-  .stat-label svg {
-    width: 11px;
-    height: 11px;
-    opacity: 0.9;
-  }
+  .stat-label svg { width: 11px; height: 11px; opacity: 0.9; }
   .stat-value {
     font-family: Georgia, serif;
-    font-size: 26px;
+    font-size: 22px;
     font-weight: 600;
     color: var(--glow);
     line-height: 1;
@@ -344,49 +392,18 @@ export class LauncherProvider implements vscode.WebviewViewProvider {
     gap: 4px;
   }
   .stat-value-unit {
-    font-size: 13px;
+    font-size: 11.5px;
     font-weight: 500;
     color: var(--text-dim);
     letter-spacing: 0;
     font-style: normal;
   }
-  .stat-sub {
-    margin-top: 6px;
-    font-size: 10.5px;
-    color: var(--text-dim);
-    line-height: 1.4;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
-    letter-spacing: 0.02em;
-  }
 
-  /* Hero IQ card — slightly larger value + progress bar. */
-  .stat-hero .stat-value { font-size: 32px; }
-  .bar {
-    position: relative;
-    height: 3px;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.06);
-    overflow: hidden;
-    margin-top: 10px;
-  }
-  .bar-fill {
-    position: absolute;
-    top: 0; left: 0; bottom: 0;
-    border-radius: 999px;
-    background: linear-gradient(90deg, var(--electric), var(--electric-soft));
-    box-shadow: 0 0 8px rgba(74, 158, 255, 0.35);
-    transition: width 320ms cubic-bezier(0.2, 0.9, 0.3, 1);
-  }
-
-  /* Streak + Concepts sit in a 2-col grid. */
   .stats-row {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 8px;
   }
-  .stats-row .stat { padding: 12px 12px 11px; }
-  .stats-row .stat-value { font-size: 22px; }
-  .stats-row .stat-label { margin-bottom: 5px; }
 
   /* Streak flame icon — inherits color. Active state uses a warm hue
      as an accent (typographic amber, not an emoji). */
@@ -400,42 +417,56 @@ export class LauncherProvider implements vscode.WebviewViewProvider {
     font-size: 0.75em;
     font-weight: 500;
   }
+
+  /* ---- Auth states ----
+     The body's data-auth attribute switches the hero between two
+     surfaces: the default "Open Protege" entry point (signed-in or
+     pre-probe) and a sign-in CTA (signed-out). Stats are hidden when
+     signed-out — "Save a file to start tracking" is misleading when
+     the user can't track anything yet. */
+  body:not([data-auth="signed-out"]) .signin-only { display: none; }
+  body[data-auth="signed-out"] .signedin-only { display: none; }
+  body[data-auth="signed-out"] .stats { display: none; }
+
+  /* GitHub mark inside the sign-in button matches the in-panel gate
+     (App.tsx auth-gate), so both surfaces feel like the same flow. */
+  .btn-signin svg { flex-shrink: 0; }
 </style>
 </head>
 <body>
   <section class="hero" aria-label="Protege">
     <div class="hero-top">
-      <div class="mark">P</div>
+      <div class="mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" fill="none" role="img">
+          <circle cx="16" cy="16" r="10.5" stroke="white" stroke-width="1.9" stroke-linecap="round" />
+          <circle cx="23.42" cy="8.58" r="2.9" fill="white" />
+        </svg>
+      </div>
       <div class="hero-identity">
-        <span class="microcaps">AI Mentor</span>
+        <span class="microcaps">Mentor</span>
         <h1 class="title">Protege</h1>
       </div>
     </div>
-    <p class="desc">Your personal AI coding mentor. Opens as a tab on the right.</p>
-    <button class="btn" id="open">
+    <p class="desc signedin-only">Your personal AI coding mentor. Opens as a tab on the right.</p>
+    <p class="desc signin-only">Sign in with GitHub to continue. Protege ties your concepts, Echo activity, and learning history to your account — that's the only thing we use it for.</p>
+    <button class="btn signedin-only" id="open">
       <span>Open Protege</span>
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
         <line x1="5" y1="12" x2="19" y2="12" />
         <polyline points="12 5 19 12 12 19" />
       </svg>
     </button>
-    <div class="hint">Auto-opens on click</div>
+    <button class="btn btn-signin signin-only" id="signin">
+      <svg viewBox="0 0 24 24" fill="currentColor" width="13" height="13">
+        <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" />
+      </svg>
+      <span>Sign in with GitHub</span>
+    </button>
+    <div class="hint signedin-only">Auto-opens on click</div>
+    <div class="hint signin-only">GitHub required to use Protege</div>
   </section>
 
   <section class="stats" aria-label="Your stats">
-    <div class="stat stat-hero">
-      <div class="stat-label">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M3 17l5-5 4 4 8-8" />
-          <path d="M15 8h5v5" />
-        </svg>
-        <span>Code IQ</span>
-      </div>
-      <div class="stat-value" id="iq-value"><span class="ghost-num">—</span></div>
-      <div class="stat-sub" id="iq-sub">Save a file to start tracking.</div>
-      <div class="bar"><div class="bar-fill" id="iq-bar" style="width: 0%"></div></div>
-    </div>
-
     <div class="stats-row">
       <div class="stat stat-streak" id="streak-card">
         <div class="stat-label">
@@ -468,10 +499,16 @@ export class LauncherProvider implements vscode.WebviewViewProvider {
     document.getElementById('open').addEventListener('click', () => {
       vscode.postMessage({ type: 'open' });
     });
+    const signinBtn = document.getElementById('signin');
+    signinBtn.addEventListener('click', () => {
+      // Disable while the OAuth dialog is open to prevent double-fires
+      // (clicking again before the modal resolves throws an extra
+      // getSession call). Re-enabled when the auth message arrives.
+      signinBtn.disabled = true;
+      signinBtn.style.opacity = '0.7';
+      vscode.postMessage({ type: 'auth/login' });
+    });
 
-    const iqVal = document.getElementById('iq-value');
-    const iqSub = document.getElementById('iq-sub');
-    const iqBar = document.getElementById('iq-bar');
     const streakVal = document.getElementById('streak-value');
     const streakCard = document.getElementById('streak-card');
     const conceptsVal = document.getElementById('concepts-value');
@@ -480,20 +517,21 @@ export class LauncherProvider implements vscode.WebviewViewProvider {
 
     window.addEventListener('message', (e) => {
       const m = e.data;
-      if (!m || m.type !== 'stats') return;
+      if (!m) return;
 
-      // Code IQ — big number + "of X" unit + progress bar.
-      if (Number.isFinite(m.codeIq)) {
-        iqVal.textContent = fmt(m.codeIq);
-        if (Number.isFinite(m.maxIq) && m.maxIq > 0) {
-          const pct = Math.max(0, Math.min(100, (m.codeIq / m.maxIq) * 100));
-          iqBar.style.width = pct.toFixed(1) + '%';
-          iqSub.textContent = Math.round(pct) + '% · of ' + fmt(m.maxIq);
-        } else {
-          iqBar.style.width = '0%';
-          iqSub.textContent = 'Save a file to start tracking.';
-        }
+      if (m.type === 'auth') {
+        // signed-in (or unknown / signing-in pre-resolution) → default
+        // entry point with stats. signed-out → sign-in CTA, stats hidden.
+        document.body.setAttribute(
+          'data-auth',
+          m.signedIn ? 'signed-in' : (m.state === 'signed-out' ? 'signed-out' : 'signed-in')
+        );
+        signinBtn.disabled = false;
+        signinBtn.style.opacity = '';
+        return;
       }
+
+      if (m.type !== 'stats') return;
 
       // Streak — value + "days" unit. Flame icon in the label is SVG
       // (not emoji). Warm accent color when the streak is active.

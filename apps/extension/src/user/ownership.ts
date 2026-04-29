@@ -50,6 +50,16 @@ const AUTO_INSERTED_TTL_MS = 30 * 60_000;
  *  every read so they never render a CodeLens. */
 const MIN_AUTO_LINES = 3;
 
+/** How many blank/typed lines between two same-origin regions are still
+ *  treated as "adjacent" for merge purposes. With value 2 we tolerate
+ *  ONE blank line between the regions — covers the common case where
+ *  an AI paste contains multiple statements separated by whitespace
+ *  (e.g. a `const views = [...]` block, then a blank line, then a
+ *  `useEffect(...)` block) and they would otherwise render as two
+ *  separate "Teach me this block" lenses for what's conceptually one
+ *  paste. Larger gaps stay split so unrelated edits don't fuse. */
+const MERGE_LINE_GAP = 2;
+
 let ctx: vscode.ExtensionContext | null = null;
 const cache = new Map<string, FileOwnership>();
 const pendingSaves = new Map<string, NodeJS.Timeout>();
@@ -104,7 +114,12 @@ function pruneStale(
 
 /** Read-through accessor: cache first, then globalState, then empty.
  *  Prunes stale unreviewed auto-inserted regions on each load so old
- *  records from prior sessions decay quietly. */
+ *  records from prior sessions decay quietly. Also re-runs
+ *  `sortAndMerge` against the current MERGE_LINE_GAP so regions
+ *  recorded under an older (tighter) tolerance get coalesced when the
+ *  rule loosens. Without this, the user's existing split regions stay
+ *  split until the next edit, which leaves stale UI like "two CodeLens
+ *  for one paste" lingering across reloads. */
 function load(uriKey: string): FileOwnership {
   const cached = cache.get(uriKey);
   if (cached) return cached;
@@ -117,12 +132,37 @@ function load(uriKey: string): FileOwnership {
   };
   const now = Date.now();
   const pruned = pruneStale(base.regions, now);
-  const result: FileOwnership = pruned.changed
-    ? { ...base, regions: pruned.regions }
+  const remerged = sortAndMerge(pruned.regions);
+  // sortAndMerge always returns a fresh array, so reference-equality
+  // doesn't tell us whether anything actually changed. Compare lengths
+  // and per-region bounds; if either differs we mark the file dirty.
+  const merged = !sameRegions(pruned.regions, remerged);
+  const finalRegions = merged ? remerged : pruned.regions;
+  const changed = pruned.changed || merged;
+  const result: FileOwnership = changed
+    ? { ...base, regions: finalRegions }
     : base;
   cache.set(uriKey, result);
-  if (pruned.changed) schedulePersist(uriKey);
+  if (changed) schedulePersist(uriKey);
   return result;
+}
+
+function sameRegions(
+  a: OwnershipRegion[],
+  b: OwnershipRegion[]
+): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (
+      a[i].startLine !== b[i].startLine ||
+      a[i].endLine !== b[i].endLine ||
+      a[i].origin !== b[i].origin ||
+      a[i].explainedAt !== b[i].explainedAt
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function schedulePersist(uriKey: string): void {
@@ -426,7 +466,7 @@ function sortAndMerge(regions: OwnershipRegion[]): OwnershipRegion[] {
   const out: OwnershipRegion[] = [];
   for (const r of sorted) {
     const last = out[out.length - 1];
-    if (last && canMerge(last, r) && r.startLine <= last.endLine + 1) {
+    if (last && canMerge(last, r) && r.startLine <= last.endLine + MERGE_LINE_GAP) {
       last.endLine = Math.max(last.endLine, r.endLine);
       last.explainedAt =
         last.explainedAt && r.explainedAt

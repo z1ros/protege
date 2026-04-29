@@ -1,6 +1,12 @@
 /**
  * Login-first sign-in wall. Rendered when the webview's `authUser` is null
  * — replaces the entire app body until the user signs in with GitHub.
+ *
+ * Redesigned 2026-04-29 for legibility — the prior card was a thin
+ * outline on top of the panel grid, body text at 0.78 opacity, no
+ * cinematic accent. Hard to read against the noisy background and
+ * felt like a placeholder. New look: solid glass card with electric
+ * top-edge glow, full-opacity body, prominent CTA, soft brand mark.
  */
 
 .auth-gate {
@@ -10,78 +16,139 @@
   min-height: 100vh;
   padding: 24px;
   box-sizing: border-box;
+  position: relative;
+}
+
+/* Cinematic backdrop — subtle electric wash behind the card so it
+   feels intentional rather than dropped onto the grid. */
+.auth-gate::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 65% 50% at 50% 35%, rgba(var(--electric-rgb), 0.18), transparent 70%),
+    radial-gradient(ellipse 80% 60% at 50% 100%, rgba(var(--electric-deep-rgb), 0.12), transparent 70%);
 }
 
 .auth-gate-card {
+  position: relative;
   width: 100%;
-  max-width: 360px;
+  max-width: 380px;
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: 16px;
-  padding: 28px 24px;
-  border-radius: 14px;
-  background: var(--surface, rgba(255, 255, 255, 0.04));
-  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  gap: 14px;
+  padding: 32px 28px 26px;
+  border-radius: 16px;
+  background: rgba(13, 11, 24, 0.88);
+  border: 1px solid rgba(var(--electric-rgb), 0.32);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow:
+    0 20px 50px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(var(--text-rgb), 0.08);
+  overflow: hidden;
+  animation: auth-gate-in 280ms var(--ease-spring);
+}
+@keyframes auth-gate-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+/* Electric top-edge glow — a 1px line that fades into the card. */
+.auth-gate-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 10%;
+  right: 10%;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(var(--electric-rgb), 0.6),
+    transparent
+  );
 }
 
 .auth-gate-brand {
   display: flex;
   align-items: center;
   gap: 10px;
+  margin-bottom: 4px;
 }
 
 .auth-gate-brand img {
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
+  filter: drop-shadow(0 0 12px rgba(var(--electric-rgb), 0.4));
 }
 
 .auth-gate-wordmark {
-  font-size: 18px;
+  font-family: var(--font-display);
+  font-size: 20px;
   font-weight: 600;
-  letter-spacing: 0.02em;
+  color: var(--glow);
+  letter-spacing: var(--ls-narrow);
 }
 
 .auth-gate-title {
-  font-size: 16px;
+  font-family: var(--font-display);
+  font-size: 17px;
   font-weight: 600;
-  margin-top: 4px;
+  color: var(--glow);
+  letter-spacing: var(--ls-narrow);
+  margin-top: 2px;
+  line-height: 1.3;
 }
 
 .auth-gate-body {
-  font-size: 13px;
-  line-height: 1.5;
-  opacity: 0.78;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text);
+  /* Was opacity 0.78 — too dim against the dark panel. Full color
+     with a slight desaturation through the dim variable reads as
+     "secondary copy" without making it unreadable. */
+  opacity: 0.82;
+  max-width: 30ch;
 }
 
 .auth-gate-button {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 9px 16px;
+  padding: 10px 18px;
+  margin-top: 4px;
+  font-family: inherit;
   font-size: 13px;
-  font-weight: 500;
-  border-radius: 8px;
-  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.18));
-  background: var(--button-bg, rgba(255, 255, 255, 0.06));
-  color: inherit;
+  font-weight: 600;
+  border-radius: 10px;
+  border: 1px solid rgba(var(--electric-rgb), 0.6);
+  background: linear-gradient(135deg, var(--electric), var(--electric-deep));
+  color: var(--glow);
   cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  box-shadow:
+    0 6px 22px rgba(var(--electric-rgb), 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  transition: transform 120ms ease, box-shadow 150ms ease, filter 150ms ease;
 }
-
 .auth-gate-button:hover {
-  background: var(--button-bg-hover, rgba(255, 255, 255, 0.12));
-  border-color: var(--border-strong-hover, rgba(255, 255, 255, 0.28));
+  transform: translateY(-1px);
+  filter: brightness(1.06);
+  box-shadow:
+    0 10px 32px rgba(var(--electric-rgb), 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
 }
-
 .auth-gate-button:active {
-  transform: translateY(1px);
+  transform: translateY(0);
+  filter: brightness(0.96);
 }
 
 .auth-gate-foot {
   font-size: 11px;
   line-height: 1.5;
-  opacity: 0.55;
-  margin-top: 4px;
+  color: var(--text-faint);
+  margin-top: 6px;
+  max-width: 32ch;
 }

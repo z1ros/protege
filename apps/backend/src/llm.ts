@@ -40,16 +40,42 @@ export interface ChatCallOptions {
    * second env var dance at the callsite.
    */
   openaiModel?: string;
+  /**
+   * Per-request provider override. When set, this wins over the
+   * process-wide AI_PROVIDER env. Used by the chat route to pin
+   * cheap-tier (Live Review scan) calls to OpenAI / GPT-4o-mini even
+   * when the rest of the app runs on Anthropic. Leave undefined to
+   * inherit the env default.
+   */
+  provider?: ProviderId;
   maxTokens: number;
   systemStable: string;
   systemDynamic: string;
   anthropicMessages: Anthropic.Messages.MessageParam[];
   useTools: boolean;
+  /**
+   * OpenAI reasoning effort override for gpt-5 / o-series models.
+   * Default is "minimal" (near-zero reasoning, fast). Set to "low" /
+   * "medium" / "high" when the call needs the model to actually think
+   * — e.g. structured teaching beats where dropping rules costs quality.
+   */
+  reasoningEffort?: "minimal" | "low" | "medium" | "high";
 }
 
 export async function callChat(opts: ChatCallOptions): Promise<ChatResult> {
-  const provider = getProvider();
-  if (provider === "openai") return callOpenAI(opts);
+  const provider = opts.provider ?? getProvider();
+  // Defensive fallback: if a caller asks for OpenAI but no API key is
+  // configured, fall back to Anthropic with a warning instead of letting
+  // the OpenAI client throw with a confusing error mid-request.
+  if (provider === "openai") {
+    if (!process.env.OPENAI_API_KEY) {
+      console.warn(
+        "[protege] callChat: provider=openai requested but OPENAI_API_KEY missing — falling back to Anthropic"
+      );
+      return callAnthropic(opts);
+    }
+    return callOpenAI(opts);
+  }
   return callAnthropic(opts);
 }
 
@@ -103,11 +129,28 @@ async function callOpenAI(opts: ChatCallOptions): Promise<ChatResult> {
     ? anthropicToolsToOpenAI(ANTHROPIC_TOOL_DEFINITIONS)
     : undefined;
 
+  // Reasoning models (gpt-5*, o1*, o3*, o4*) burn tokens on internal
+  // reasoning BEFORE producing output. If we cap at the same budget we'd
+  // use for a non-reasoning model, the entire allowance gets consumed by
+  // reasoning and the reply comes back empty (stop=length, 0 content).
+  // Floor the OpenAI budget at 4096 to leave reasoning headroom — the
+  // per-phase prompts already enforce brevity in actual output.
+  const isReasoningModel = /^(?:o\d|gpt-5)/i.test(model);
+  const completionBudget = isReasoningModel
+    ? Math.max(opts.maxTokens, 4096)
+    : opts.maxTokens;
+
+  // Reasoning effort: caller can override via opts.reasoningEffort.
+  // Default "minimal" keeps simple Q&A fast; teaching FLOW turns ask
+  // for "low" so the model actually reads structural rules in the
+  // prompt instead of defaulting to its training prior.
+  const reasoningEffort = opts.reasoningEffort ?? "minimal";
   const res = await openai.chat.completions.create({
     model,
-    max_tokens: opts.maxTokens,
+    max_completion_tokens: completionBudget,
     messages,
     ...(tools ? { tools } : {}),
+    ...(isReasoningModel ? { reasoning_effort: reasoningEffort } : {}),
   });
 
   const choice = res.choices[0];
@@ -148,6 +191,10 @@ export interface OneShotOptions {
   maxTokens: number;
   cacheSystem?: boolean;
   anthropicModel?: string;
+  /** When true, use the cheap-tier OpenAI model (OPENAI_CHEAP_MODEL env)
+   *  for one-shot calls. Used by the lesson planner + classifier where
+   *  premium reasoning adds latency without quality. */
+  cheap?: boolean;
 }
 
 export interface OneShotUsage {
@@ -214,17 +261,29 @@ async function oneShotAnthropic(
 }
 
 async function oneShotOpenAI(opts: OneShotOptions): Promise<OneShotResult> {
-  const model = process.env.OPENAI_MODEL ?? "gpt-4.1";
+  const model = opts.cheap
+    ? process.env.OPENAI_CHEAP_MODEL ?? process.env.OPENAI_MODEL ?? "gpt-4.1-mini"
+    : process.env.OPENAI_MODEL ?? "gpt-4.1";
   const messages: ChatCompletionMessageParam[] = [];
   if (opts.systemText) {
     messages.push({ role: "system", content: opts.systemText });
   }
   messages.push({ role: "user", content: opts.userText });
 
+  const isReasoningModel = /^(?:o\d|gpt-5)/i.test(model);
+  const completionBudget = isReasoningModel
+    ? Math.max(opts.maxTokens, 4096)
+    : opts.maxTokens;
+  // One-shot tasks (planner, classifier, level inference) want STRUCTURED
+  // output, not deep reasoning. Default gpt-5 reasoning effort is medium,
+  // which burns 30-50s on a planning prompt. Force "minimal" so the
+  // model produces output immediately. The grounding rules are in the
+  // prompt — no chain-of-thought needed.
   const res = await openai.chat.completions.create({
     model,
-    max_tokens: opts.maxTokens,
+    max_completion_tokens: completionBudget,
     messages,
+    ...(isReasoningModel ? { reasoning_effort: "minimal" as const } : {}),
   });
   const text = (res.choices[0]?.message?.content ?? "").trim();
   return {

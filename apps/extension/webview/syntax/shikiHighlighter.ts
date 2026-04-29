@@ -277,3 +277,46 @@ export function escapeHtml(s: string): string {
 export function canonicalLang(lang: string): string | null {
   return resolveLang(lang);
 }
+
+/**
+ * BlockNote highlighter adapter — same Shiki singleton + One Dark Pro
+ * theme + grammars as chat, exposed under the API shape BlockNote
+ * expects. Two reasons to wrap rather than return the raw highlighter:
+ *
+ *   1. BN calls `highlighter.loadLanguage(langString)` internally, but
+ *      our `createHighlighterCore` instance can't resolve string lang
+ *      ids — it expects a pre-imported grammar object. We intercept
+ *      string calls here and route them through `ensureLang`, which
+ *      knows our `LANG_LOADERS` dynamic-import map.
+ *   2. Other methods (`getLoadedLanguages`, `codeToHast`, etc.) need
+ *      `this`-binding to the underlying core; a Proxy with
+ *      method-binding handles that without a manual surface dump.
+ *
+ * Result: notes code blocks paint with the exact same token colors as
+ * chat code blocks, with no duplicate Shiki state.
+ */
+export async function createBnHighlighter(): Promise<HighlighterCore> {
+  const inner = await ensureShiki();
+  return new Proxy(inner, {
+    get(target, prop) {
+      if (prop === "loadLanguage") {
+        return async (...langs: unknown[]): Promise<void> => {
+          for (const lang of langs) {
+            if (typeof lang === "string") {
+              await ensureLang(lang);
+            } else {
+              // Grammar registration object — pass through unchanged.
+              await (
+                target.loadLanguage as (g: unknown) => Promise<void>
+              )(lang);
+            }
+          }
+        };
+      }
+      const value = (target as unknown as Record<string | symbol, unknown>)[
+        prop
+      ];
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}

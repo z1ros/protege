@@ -1,7 +1,7 @@
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
 const transformers = require(
-  "/Users/Yura/Documents/GitHub/protege/node_modules/.pnpm/@huggingface+transformers@3.8.1/node_modules/@huggingface/transformers/dist/transformers.node.cjs"
+  "@huggingface/transformers/dist/transformers.node.cjs"
 ) as { env: Record<string, unknown> };
 const env = transformers.env;
 import { KokoroTTS } from "kokoro-js";

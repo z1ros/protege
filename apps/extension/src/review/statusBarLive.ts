@@ -103,12 +103,13 @@ function updateMainItem(): void {
 
   const parts: string[] = [];
   parts.push(`$(shield) Protege`);
-  parts.push(`IQ ${codeIq}`);
+  // Code IQ retired 2026-04-28 across both the chip text and the
+  // quickpick row. The `codeIq` field stays on the data shape (still
+  // pushed from the host) but is no longer rendered anywhere here.
   if (streakDays > 0) parts.push(`$(flame) ${streakDays}d`);
 
   mainItem.text = parts.join("  ");
   mainItem.tooltip = [
-    `Code IQ: ${codeIq}`,
     `Concepts tracked: ${totalConcepts}`,
     streakDays > 0 ? `Streak: ${streakDays} days` : null,
     isLiveReviewActive() ? "Live Review: ON" : "Live Review: OFF",
@@ -182,10 +183,6 @@ async function showQuickPick(): Promise<void> {
       description: fileConcepts.slice(0, 5).join(", ") + (fileConcepts.length > 5 ? "..." : ""),
     });
 
-    items.push({
-      label: "$(debug-step-into) Walk this file",
-      description: "Step-by-step mentor walkthrough of the active file",
-    });
   }
 
   items.push({
@@ -196,7 +193,7 @@ async function showQuickPick(): Promise<void> {
   });
 
   items.push({
-    label: `$(graph) Code IQ: ${codeIq}`,
+    label: `$(graph) Open Protege Panel`,
     description: `${totalConcepts} concepts · ${streakDays > 0 ? `${streakDays}d streak` : "no streak"}`,
   });
 
@@ -210,11 +207,7 @@ async function showQuickPick(): Promise<void> {
     vscode.commands.executeCommand("protege.toggle");
   } else if (picked.label.includes("Teach:")) {
     vscode.commands.executeCommand("protege.teachThis");
-  } else if (picked.label.includes("Walk this file")) {
-    vscode.commands.executeCommand("protege.startFileWalk");
   } else if (picked.label.includes("Live Review")) {
     vscode.commands.executeCommand("protege.toggleLiveReview");
-  } else if (picked.label.includes("Code IQ")) {
-    vscode.commands.executeCommand("protege.toggle");
   }
 }

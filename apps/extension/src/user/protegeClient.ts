@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import type { AnalyzeResponse, Finding, MeResponse } from "@protege/types";
-import { authHeaders, getCachedGitHubUser, getGitHubUser } from "./auth.js";
+import { authHeaders, getCachedGitHubUser, getGitHubUser, clearCachedUser } from "./auth.js";
 
 const BACKEND_URL =
   process.env.PROTEGE_BACKEND_URL ?? "http://localhost:8787";
@@ -59,9 +59,32 @@ interface FetchOpts {
 }
 
 /**
- * Authenticated fetch with one-shot 401 recovery. If the backend rejects
- * the Bearer (token rotated, server restarted with stale cache), force a
- * new GitHub session and retry once. A second 401 propagates to the caller.
+ * Authenticated fetch with one-shot 401 recovery.
+ *
+ * On 401 we try a SILENT session refresh — re-reads VS Code's still-cached
+ * GitHub session without showing any UI. That handles the common cause of
+ * a 401 (the in-memory token in our cached user lagged behind a VS Code
+ * rotation) without bothering the user.
+ *
+ * Two outcomes of the silent refresh:
+ *   - Returned a session → the token is valid as far as VS Code is
+ *     concerned. Retry once. If the retry still 401s, the backend itself
+ *     is rejecting a valid token (cold start, validator hiccup, scope
+ *     disagreement during a deploy) — we surface that 401 to the caller
+ *     instead of popping OAuth, because re-OAuthing won't fix a broken
+ *     backend, it would just spam-prompt the user.
+ *   - Returned null → the underlying VS Code session really is gone.
+ *     Clear the local cache, throw NotAuthenticatedError, and let the auth
+ *     gate re-render. The user can click "Sign in" when they're ready;
+ *     that click goes through `createIfNone: true`, which silently resolves
+ *     a still-valid session or pops the OAuth dialog only on confirmed
+ *     revocation.
+ *
+ * We deliberately do NOT call `forceNewSession: true` here. It always pops
+ * the "wants you to sign in again" dialog, and we can't distinguish a
+ * recoverable 401 (backend issue) from an unrecoverable one (token
+ * revoked) at this layer — so triggering OAuth on every 401 spam-prompts
+ * users whenever the backend hiccups.
  *
  * Pre-auth: throws NotAuthenticatedError synchronously; never hits network.
  */
@@ -83,10 +106,19 @@ export async function authedFetch(
   const first = await send();
   if (first.status !== 401) return first;
 
-  // Stale token — force a refresh, then retry once.
-  const refreshed = await getGitHubUser({ forceNewSession: true });
-  if (!refreshed) throw new NotAuthenticatedError();
-  return send();
+  const refreshed = await getGitHubUser(false);
+  if (refreshed) {
+    // VS Code still has a session. Retry once. If it 401s again the
+    // backend is the problem, not the token — surface the response and
+    // let the caller decide (toast, retry later, etc.). No OAuth dialog.
+    return send();
+  }
+
+  // Silent refresh returned null — session is genuinely gone. Clear and
+  // surface the gate. The user's next "Sign in" click handles the OAuth
+  // round trip if VS Code can't resolve silently either.
+  clearCachedUser();
+  throw new NotAuthenticatedError();
 }
 
 export async function analyzeFile(

@@ -9,7 +9,7 @@
   display: flex;
   flex-direction: column;
   gap: 22px;
-  animation: msg-in 320ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: msg-in 320ms var(--ease-spring);
 }
 
 .live-section {
@@ -33,7 +33,7 @@
   gap: 8px;
   padding: 10px 14px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: var(--radius);
 }
 .live-file-dot {
@@ -68,7 +68,7 @@
   gap: 12px;
   padding: 10px 14px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: 10px;
   transition: background 150ms ease, border-color 150ms ease;
 }
@@ -97,8 +97,8 @@
   width: 38px;
   height: 22px;
   background: var(--glass-2);
-  border: 1px solid var(--glass-border);
-  border-radius: 999px;
+  border: var(--border-glass);
+  border-radius: var(--radius-pill);
   position: relative;
   cursor: pointer;
   transition: background 180ms ease, border-color 180ms ease;
@@ -113,7 +113,7 @@
   height: 16px;
   background: var(--text-dim);
   border-radius: 50%;
-  transition: left 220ms cubic-bezier(0.16, 1, 0.3, 1), background 180ms ease;
+  transition: left 220ms var(--ease-spring), background 180ms ease;
 }
 .live-toggle.on {
   background: rgba(var(--electric-rgb), 0.2);
@@ -138,7 +138,7 @@
   gap: 10px;
   padding: 10px 14px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: 10px;
   color: var(--glow);
   font-family: inherit;
@@ -170,7 +170,7 @@
   gap: 4px;
   padding: 10px 14px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: var(--radius);
 }
 .live-shortcut-row {
@@ -186,7 +186,7 @@
   color: var(--glow);
   padding: 3px 8px;
   background: var(--glass-2);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: 5px;
   min-width: 80px;
   text-align: center;
@@ -215,7 +215,7 @@
   gap: 6px;
   padding: 10px 12px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: 12px;
   margin-bottom: 10px;
 }
@@ -238,7 +238,7 @@
   gap: 2px;
   padding: 10px 12px;
   background: transparent;
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: 10px;
   cursor: pointer;
   font-family: inherit;
@@ -278,7 +278,7 @@
   gap: 12px;
   padding: 10px 14px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: 10px;
   cursor: pointer;
   font-family: inherit;
@@ -338,7 +338,7 @@
   font-size: 8px;
   letter-spacing: 0.08em;
   padding: 3px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--glass-2);
   color: var(--text-faint);
   white-space: nowrap;
@@ -363,8 +363,8 @@
   gap: 6px;
   padding: 6px 11px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
-  border-radius: 999px;
+  border: var(--border-glass);
+  border-radius: var(--radius-pill);
   font-family: var(--font-mono);
   font-size: 10px;
   color: var(--text);
@@ -423,7 +423,7 @@
 .live-lastcall-fallback {
   margin-left: 6px;
   padding: 2px 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: rgba(255, 203, 139, 0.2);
   color: #ffcb8b;
   font-size: 9px;
@@ -453,14 +453,14 @@
 .live-download-track {
   height: 4px;
   background: var(--glass-2);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   overflow: hidden;
 }
 .live-download-fill {
   height: 100%;
   background: linear-gradient(90deg, var(--electric-deep), var(--electric));
   box-shadow: 0 0 8px rgba(var(--electric-rgb), 0.5);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   transition: width 300ms ease;
 }
 

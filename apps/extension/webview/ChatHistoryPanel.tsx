@@ -371,14 +371,38 @@ export function ChatHistoryPanel({
                     undefined,
                     { hour: "numeric", minute: "2-digit" }
                   );
-                  const title = t.user
-                    ? compactSnippet(t.user.content, 110)
-                    : "(assistant reply)";
-                  const reply = t.assistant
-                    ? compactSnippet(t.assistant.content, 140)
+                  // Title-picking heuristic: if the user's message is
+                  // a short confirmation ("yes", "ok", "got it", etc.)
+                  // it makes a useless title — every reply card looks
+                  // identical. In that case, swap the title and the
+                  // preview: headline becomes the assistant's content
+                  // (which has actual context like "Let's render the
+                  // views with an index prefix"), and the muted preview
+                  // line becomes the user's "yes". Long user messages
+                  // keep the original layout.
+                  const userText = t.user?.content?.trim() ?? "";
+                  const wordCount = userText.split(/\s+/).filter(Boolean)
+                    .length;
+                  const userIsTooShort =
+                    !userText ||
+                    wordCount < 4 ||
+                    /^(yes|yeah|yep|yup|no|nope|ok|okay|sure|cool|nice|right|exactly|perfect|great|got it|thanks|thx|ty|fine)\b[\s.!?]*$/i.test(
+                      userText
+                    );
+                  const swapForTitle =
+                    userIsTooShort && !!t.assistant?.content;
+                  const title = swapForTitle
+                    ? compactSnippet(t.assistant!.content, 110)
                     : t.user
-                      ? "No reply yet."
-                      : "";
+                      ? compactSnippet(t.user.content, 110)
+                      : "(assistant reply)";
+                  const reply = swapForTitle
+                    ? `You: ${compactSnippet(userText || "(empty)", 100)}`
+                    : t.assistant
+                      ? compactSnippet(t.assistant.content, 140)
+                      : t.user
+                        ? "No reply yet."
+                        : "";
                   const variant = !t.user
                     ? "chp-turn--orphan"
                     : !t.assistant

@@ -1,0 +1,133 @@
+/* Lesson banner — concept + step progress + step summary + a
+ * collapsible roadmap of the full plan. Read-only in v1.
+ */
+
+.lesson-banner {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent, #4a9eff) 35%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent, #4a9eff) 8%, transparent);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--fg, #e6e6e6);
+}
+
+.lesson-banner-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.lesson-banner-concept {
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+.lesson-banner-concept strong {
+  text-transform: none;
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0;
+  margin-left: 4px;
+  color: var(--accent, #4a9eff);
+}
+
+.lesson-banner-progress {
+  font-size: 11px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+.lesson-banner-summary {
+  margin-top: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--fg, #e6e6e6);
+}
+
+.lesson-banner-toggle {
+  margin-top: 8px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg, #e6e6e6) 65%, transparent);
+  cursor: pointer;
+  letter-spacing: 0.02em;
+}
+
+.lesson-banner-toggle:hover {
+  color: var(--accent, #4a9eff);
+}
+
+.lesson-banner-plan {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px solid color-mix(in srgb, var(--accent, #4a9eff) 20%, transparent);
+  padding-top: 8px;
+}
+
+.lesson-banner-plan-item {
+  display: grid;
+  grid-template-columns: 14px 22px 1fr auto;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.lesson-banner-plan-marker {
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: color-mix(in srgb, var(--fg, #e6e6e6) 35%, transparent);
+}
+
+.lesson-banner-plan-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--fg, #e6e6e6) 50%, transparent);
+}
+
+.lesson-banner-plan-summary {
+  color: color-mix(in srgb, var(--fg, #e6e6e6) 60%, transparent);
+}
+
+.lesson-banner-plan-type {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.5;
+  font-style: italic;
+}
+
+.lesson-banner-plan-item--done .lesson-banner-plan-summary {
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+
+.lesson-banner-plan-item--done .lesson-banner-plan-marker {
+  color: color-mix(in srgb, var(--accent-success, #7ce5b3) 80%, transparent);
+}
+
+.lesson-banner-plan-item--current .lesson-banner-plan-marker {
+  color: var(--accent, #4a9eff);
+}
+
+.lesson-banner-plan-item--current .lesson-banner-plan-summary {
+  color: var(--fg, #e6e6e6);
+  font-weight: 600;
+}
+
+.lesson-banner-plan-item--future .lesson-banner-plan-marker {
+  color: color-mix(in srgb, var(--fg, #e6e6e6) 25%, transparent);
+}

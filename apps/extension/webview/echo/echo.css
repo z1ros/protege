@@ -1,19 +1,20 @@
+/* Echo theming — re-mapped onto the main Protege design tokens
+   (--ink / --glow / --electric / --glass-*) so the tab matches Chat,
+   Profile, and the rest of the app. Don't override `body` — that wipes
+   out the global grid background. */
 :root {
-  --echo-bg: #0d1117;
-  --echo-surface: #161b22;
-  --echo-border: rgba(255, 255, 255, 0.08);
-  --echo-text: #e6edf3;
-  --echo-muted: #8b949e;
-  --echo-accent: #58a6ff;
+  --echo-bg: var(--ink);
+  --echo-surface: var(--glass-1);
+  --echo-border: var(--glass-border);
+  --echo-text: var(--text);
+  --echo-muted: var(--text-dim);
+  --echo-accent: var(--electric);
 }
 
-body,
 .echo-root {
   margin: 0;
-  background: var(--echo-bg);
   color: var(--echo-text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    "Helvetica Neue", sans-serif;
+  font-family: var(--font-sans);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -57,20 +58,22 @@ body,
   position: sticky;
   top: 0;
   z-index: 5;
-  background: var(--echo-bg);
+  background: rgba(var(--ink-rgb), 0.78);
+  backdrop-filter: blur(12px) saturate(1.1);
+  -webkit-backdrop-filter: blur(12px) saturate(1.1);
   /* Soft separator that fades in once the toolbar starts covering scrolled
      content, so widgets don't appear to slide under a floating island
      with no anchor. */
-  box-shadow: 0 1px 0 var(--echo-border);
+  box-shadow: 0 1px 0 var(--glass-border);
 }
 
 .echo-history-chip {
   margin: 0 24px 12px;
   padding: 8px 14px;
   border-radius: 10px;
-  border: 1px solid rgba(88, 166, 255, 0.18);
-  background: rgba(88, 166, 255, 0.06);
-  color: var(--vscode-descriptionForeground, #9ba1a6);
+  border: 1px solid rgba(var(--electric-rgb), 0.18);
+  background: rgba(var(--electric-rgb), 0.06);
+  color: var(--text-dim);
   font-size: 12px;
   letter-spacing: 0.01em;
 }
@@ -95,17 +98,17 @@ body,
 }
 
 .echo-window.active {
-  background: rgba(88, 166, 255, 0.15);
+  background: rgba(var(--electric-rgb), 0.15);
   color: var(--echo-accent);
 }
 
 .echo-error {
   margin: 0 24px 12px;
   padding: 8px 12px;
-  background: rgba(248, 81, 73, 0.1);
-  border: 1px solid rgba(248, 81, 73, 0.3);
+  background: rgba(var(--rose-rgb), 0.1);
+  border: 1px solid rgba(var(--rose-rgb), 0.3);
   border-radius: 6px;
-  color: #f85149;
+  color: rgb(var(--rose-rgb));
 }
 
 .echo-grid {
@@ -137,27 +140,34 @@ body,
 }
 
 .echo-widget {
-  background: var(--echo-surface);
+  background:
+    linear-gradient(
+      rgba(255, 255, 255, 0.02),
+      rgba(255, 255, 255, 0.02)
+    ),
+    rgba(13, 11, 24, 0.78);
   border: 1px solid var(--echo-border);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 16px;
   min-height: 120px;
+  transition: border-color 160ms ease, background 160ms ease;
 }
+.echo-widget:hover { border-color: rgba(255, 255, 255, 0.16); }
 
 .echo-widget-head {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
-  margin-bottom: 12px;
+  align-items: center;
+  margin-bottom: 14px;
 }
 
 .echo-widget-head h2 {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   margin: 0;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--echo-muted);
+  letter-spacing: -0.005em;
+  color: var(--glow);
+  text-transform: none;
 }
 
 .echo-widget-tag {
@@ -194,8 +204,37 @@ body,
   font-size: 12px;
 }
 
-/* ===== W1 Hero ===== */
+/* ===== W1 Hero — cinematic dashboard plate =====
+   Layered radial accents over a deep gradient base, glass border, lift
+   shadow, top-right constellation dot. Mirrors the launcher / streak /
+   chat-history hero plates so all "main intro card" surfaces in
+   Protege share one visual language. */
+.echo-widget.echo-hero {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse 130% 90% at 0% 0%, rgba(var(--electric-rgb), 0.2), transparent 55%),
+    radial-gradient(ellipse 100% 70% at 100% 100%, rgba(var(--electric-rgb), 0.12), transparent 60%),
+    linear-gradient(180deg, rgba(20, 17, 31, 0.92), rgba(7, 6, 13, 0.96));
+  box-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+  padding: 20px;
+}
+.echo-widget.echo-hero::after {
+  content: "";
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--electric);
+  box-shadow: 0 0 14px rgba(var(--electric-rgb), 0.7);
+}
 .echo-hero-body {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -204,7 +243,7 @@ body,
 .echo-hero-stats {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 10px;
+  gap: 8px;
 }
 
 @media (max-width: 720px) {
@@ -214,33 +253,43 @@ body,
 }
 
 .echo-hero-stat {
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
-  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 11px 12px 10px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+.echo-hero-stat:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .echo-hero-stat-value {
+  font-family: Georgia, serif;
+  font-style: italic;
   font-size: 22px;
   font-weight: 600;
-  color: var(--echo-text);
+  color: var(--glow);
+  letter-spacing: -0.01em;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
 }
 
 .echo-hero-stat-label {
-  font-size: 10px;
-  color: var(--echo-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text);
+  letter-spacing: 0.005em;
+  text-transform: none;
 }
 
 .echo-hero-stat-hint {
-  font-size: 11px;
-  color: var(--echo-muted);
-  opacity: 0.7;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  letter-spacing: 0.005em;
 }
 
 /* ===== W5 30-day activity (Rv5.C bar chart) ===== */
@@ -310,28 +359,40 @@ body,
   font-size: 11px;
 }
 
+/* Solid backdrop — pre-fix this used --echo-surface (var(--glass-1) =
+   5.5% white over transparent), so the green/red bar fills bled
+   straight through and the text became unreadable. The chart sits
+   directly behind the tooltip with no z-context isolation, so a
+   transparent surface is never going to read here. */
 .echo-lines-tooltip {
-  background: var(--echo-surface);
-  border: 1px solid var(--echo-border);
-  border-radius: 6px;
-  padding: 8px 10px;
+  background: rgba(13, 11, 24, 0.96);
+  border: 1px solid var(--glass-border-strong);
+  border-radius: 8px;
+  padding: 10px 12px;
   font-size: 11px;
-  min-width: 120px;
+  min-width: 130px;
+  color: var(--text);
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(var(--text-rgb), 0.06);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
 }
 
 .echo-lines-tooltip-date {
   font-weight: 600;
-  color: var(--echo-muted);
+  color: var(--glow);
   text-transform: uppercase;
   font-size: 10px;
   letter-spacing: 0.06em;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 
 .echo-lines-tooltip-row {
   display: flex;
   align-items: center;
   gap: 6px;
+  color: var(--text);
 }
 
 .echo-lines-tooltip-row .swatch {
@@ -342,16 +403,18 @@ body,
 }
 
 .echo-lines-tooltip-row .swatch.added {
-  background: #7ee787;
+  background: rgb(var(--good-rgb));
 }
 
 .echo-lines-tooltip-row .swatch.removed {
-  background: #f85149;
+  background: rgb(var(--rose-rgb));
 }
 
 .echo-lines-tooltip-row.net {
-  color: var(--echo-muted);
-  margin-top: 2px;
+  color: var(--text-dim);
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--glass-border);
 }
 
 /* ===== W2 Polar clock ===== */
@@ -435,8 +498,8 @@ body,
 
 .echo-save-tape-row:hover,
 .echo-save-tape-row:focus-visible {
-  background: rgba(88, 166, 255, 0.06);
-  border-color: rgba(88, 166, 255, 0.25);
+  background: rgba(var(--electric-rgb), 0.06);
+  border-color: rgba(var(--electric-rgb), 0.25);
   outline: none;
 }
 
@@ -450,7 +513,7 @@ body,
 }
 
 .echo-save-tape-path {
-  font-family: "SFMono-Regular", Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   color: var(--echo-text);
   overflow: hidden;
@@ -468,20 +531,20 @@ body,
   display: inline-block;
   padding: 1px 6px;
   border-radius: 10px;
-  font-family: "SFMono-Regular", Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   line-height: 1.4;
 }
 
 .echo-save-tape-chip-added {
-  background: rgba(126, 231, 135, 0.12);
-  color: #7ee787;
+  background: rgba(var(--good-rgb), 0.12);
+  color: rgb(var(--good-rgb));
 }
 
 .echo-save-tape-chip-removed {
-  background: rgba(240, 184, 74, 0.1);
-  color: #f0b84a;
+  background: rgba(var(--rose-soft-rgb), 0.1);
+  color: rgb(var(--rose-soft-rgb));
 }
 
 .echo-save-tape-lang {
@@ -533,11 +596,11 @@ body,
   width: 100%;
   background: linear-gradient(
     135deg,
-    rgba(88, 166, 255, 0.18) 0%,
-    rgba(188, 140, 255, 0.12) 100%
+    rgba(var(--electric-rgb), 0.18) 0%,
+    rgba(var(--purple-rgb), 0.12) 100%
   );
   color: var(--echo-text);
-  border: 1px solid rgba(88, 166, 255, 0.3);
+  border: 1px solid rgba(var(--electric-rgb), 0.3);
   border-radius: 10px;
   padding: 18px 20px;
   cursor: pointer;
@@ -547,7 +610,7 @@ body,
 
 .echo-storymode-card:hover {
   transform: translateY(-1px);
-  border-color: rgba(88, 166, 255, 0.55);
+  border-color: rgba(var(--electric-rgb), 0.55);
 }
 
 .echo-storymode-card-inner {
@@ -609,7 +672,7 @@ body,
   height: 120px;
   margin: 0 auto 16px;
   border-radius: 50%;
-  background: radial-gradient(circle at center, #58a6ff 0%, transparent 70%);
+  background: radial-gradient(circle at center, rgb(var(--electric-rgb)) 0%, transparent 70%);
   opacity: 0.2;
 }
 
@@ -645,13 +708,13 @@ body,
   border-radius: 8px;
   background: linear-gradient(
     135deg,
-    rgba(88, 166, 255, 0.08),
-    rgba(188, 140, 255, 0.06)
+    rgba(var(--electric-rgb), 0.08),
+    rgba(var(--purple-rgb), 0.06)
   );
-  border: 1px solid rgba(188, 140, 255, 0.25);
+  border: 1px solid rgba(var(--purple-rgb), 0.25);
   box-shadow:
-    0 0 0 1px rgba(188, 140, 255, 0.1),
-    0 0 40px -10px rgba(88, 166, 255, 0.25);
+    0 0 0 1px rgba(var(--purple-rgb), 0.1),
+    0 0 40px -10px rgba(var(--electric-rgb), 0.25);
   overflow: hidden;
 }
 
@@ -661,7 +724,7 @@ body,
   inset: -40%;
   background: radial-gradient(
     circle at 20% 30%,
-    rgba(188, 140, 255, 0.15),
+    rgba(var(--purple-rgb), 0.15),
     transparent 50%
   );
   opacity: 0.6;
@@ -697,7 +760,7 @@ body,
 }
 
 .echo-rewrite-path {
-  font-family: "SFMono-Regular", Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--echo-muted);
   overflow: hidden;
@@ -708,10 +771,10 @@ body,
 .echo-rewrite-badge {
   font-size: 11px;
   padding: 3px 8px;
-  border-radius: 999px;
-  background: rgba(188, 140, 255, 0.18);
-  color: #d2a8ff;
-  border: 1px solid rgba(188, 140, 255, 0.35);
+  border-radius: var(--radius-pill);
+  background: rgba(var(--purple-rgb), 0.18);
+  color: rgb(var(--purple-rgb));
+  border: 1px solid rgba(var(--purple-rgb), 0.35);
   white-space: nowrap;
 }
 
@@ -723,7 +786,7 @@ body,
   background: rgba(0, 0, 0, 0.35);
   border-radius: 6px;
   overflow-x: auto;
-  font-family: "SFMono-Regular", Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -760,8 +823,8 @@ body,
 }
 
 .echo-commit-card.expanded {
-  border-color: rgba(88, 166, 255, 0.35);
-  background: rgba(88, 166, 255, 0.04);
+  border-color: rgba(var(--electric-rgb), 0.35);
+  background: rgba(var(--electric-rgb), 0.04);
 }
 
 .echo-commit-head {
@@ -779,7 +842,7 @@ body,
 }
 
 .echo-commit-sha {
-  font-family: "SFMono-Regular", Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--echo-muted);
 }
@@ -828,19 +891,19 @@ body,
 }
 
 .echo-commit-stat-time .echo-commit-stat-value {
-  color: #7ee787;
+  color: rgb(var(--good-rgb));
 }
 
 .echo-commit-stat-undo .echo-commit-stat-value {
-  color: #f85149;
+  color: rgb(var(--rose-rgb));
 }
 
 .echo-commit-stat-paste .echo-commit-stat-value {
-  color: #8b949e;
+  color: var(--text-dim);
 }
 
 .echo-commit-stat-ai .echo-commit-stat-value {
-  color: #bc8cff;
+  color: rgb(var(--purple-rgb));
 }
 
 .echo-commit-detail {
@@ -877,7 +940,7 @@ body,
   border-radius: 4px;
   white-space: pre-wrap;
   color: var(--echo-text);
-  font-family: "SFMono-Regular", Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -890,7 +953,7 @@ body,
 }
 
 .echo-commit-detail-files li {
-  font-family: "SFMono-Regular", Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   color: var(--echo-muted);
   padding: 2px 0;
 }
@@ -959,13 +1022,21 @@ body,
   gap: 10px;
 }
 
-/* Big-number typography aligned with .echo-hero-stat-value so the two
-   authorship surfaces feel like one family. W14 goes a little bigger
-   because it's the primary number for this widget, not a tile. */
+/* Hero number — Georgia italic to match the rest of Protege's hero
+   numbers (launcher Progress, streak hero, Echo hero stats). Drops
+   the loud accent-blue and uses pure --glow with a brand-blue
+   gradient-clip so the number sits cleanly in the dashboard
+   typography family. */
 .echo-independence-hero-value {
-  font-size: 34px;
+  font-family: Georgia, serif;
+  font-style: italic;
+  font-size: 36px;
   font-weight: 600;
-  color: var(--echo-accent);
+  color: var(--glow);
+  background: linear-gradient(180deg, #ffffff 0%, rgba(74, 158, 255, 0.85) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
   line-height: 1;
@@ -973,9 +1044,10 @@ body,
 
 .echo-independence-hero-label {
   font-size: 12px;
-  color: var(--echo-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  font-weight: 500;
+  color: var(--text-dim);
+  letter-spacing: 0.005em;
+  text-transform: none;
 }
 
 .echo-independence-trend {
@@ -983,22 +1055,22 @@ body,
   padding: 4px 10px;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: var(--echo-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
 .echo-independence-trend.good {
-  color: #7ee787;
-  border-color: rgba(126, 231, 135, 0.25);
-  background: rgba(126, 231, 135, 0.08);
+  color: rgb(var(--good-rgb));
+  border-color: rgba(var(--good-rgb), 0.25);
+  background: rgba(var(--good-rgb), 0.08);
 }
 
 .echo-independence-trend.bad {
-  color: #f85149;
-  border-color: rgba(248, 81, 73, 0.25);
-  background: rgba(248, 81, 73, 0.08);
+  color: rgb(var(--rose-rgb));
+  border-color: rgba(var(--rose-rgb), 0.25);
+  background: rgba(var(--rose-rgb), 0.08);
 }
 
 .echo-independence-trend.neutral {
@@ -1018,20 +1090,22 @@ body,
 }
 
 .echo-independence-chart-title {
-  font-size: 10px;
-  color: var(--echo-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  text-align: center;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
+  text-transform: none;
+  letter-spacing: 0.005em;
+  text-align: left;
+  margin-top: 4px;
 }
 
 .echo-independence-legend {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 16px;
+  gap: 14px;
   font-size: 11px;
-  color: var(--echo-muted);
+  color: var(--text-dim);
 }
 
 .echo-independence-legend-item {
@@ -1042,25 +1116,29 @@ body,
 
 .echo-independence-legend-dot {
   display: inline-block;
-  width: 8px;
-  height: 8px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
   flex-shrink: 0;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.04);
 }
 
 .echo-independence-tooltip {
-  background: var(--echo-surface);
-  border: 1px solid var(--echo-border);
-  border-radius: 6px;
-  padding: 8px 10px;
-  font-size: 11px;
-  color: var(--echo-text);
-  min-width: 140px;
+  background: rgba(13, 11, 24, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 11.5px;
+  color: var(--text);
+  min-width: 160px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
 }
 
 .echo-independence-tooltip-head {
   font-weight: 600;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
+  color: var(--glow);
+  font-size: 12px;
 }
 
 .echo-independence-tooltip ul {
@@ -1069,22 +1147,55 @@ body,
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
 }
 
+/* Tooltip rows are now a 4-column grid:
+   [dot] [label]                         [%] [raw]
+   The percentage is the headline number — answers "what share of
+   today's code came from this source?" — and the raw char count
+   sits in muted micro-mono on the far right for completeness. */
 .echo-independence-tooltip li {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--echo-muted);
+  display: grid;
+  grid-template-columns: 9px 1fr auto auto;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--text);
+}
+.echo-tt-label {
+  color: var(--text);
+}
+.echo-tt-pct {
+  color: var(--glow);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  min-width: 32px;
+  text-align: right;
+}
+.echo-tt-raw {
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  min-width: 38px;
+  text-align: right;
 }
 
+/* Total row — flips to "~N lines" as the headline (intuitive unit
+   for code) with the raw char count as a smaller subtitle. */
 .echo-independence-tooltip-total {
-  margin-top: 4px;
-  padding-top: 4px;
-  border-top: 1px solid var(--echo-border);
-  color: var(--echo-text);
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text);
   font-variant-numeric: tabular-nums;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.echo-tt-total-raw {
+  color: var(--text-faint);
+  font-size: 10.5px;
 }
 
 .echo-independence-cards {
@@ -1143,11 +1254,11 @@ body,
 }
 
 .echo-independence-card-trend.good {
-  color: #7ee787;
+  color: rgb(var(--good-rgb));
 }
 
 .echo-independence-card-trend.bad {
-  color: #f85149;
+  color: rgb(var(--rose-rgb));
 }
 
 .echo-independence-card-trend.neutral,
@@ -1197,7 +1308,7 @@ body,
 .echo-independence-lang-pct {
   color: var(--echo-text);
   font-variant-numeric: tabular-nums;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -1206,7 +1317,7 @@ body,
   text-transform: uppercase;
   letter-spacing: 0.06em;
   padding: 1px 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: rgba(255, 255, 255, 0.05);
   color: var(--echo-muted);
 }
@@ -1244,9 +1355,9 @@ body,
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: rgba(88, 166, 255, 0.12);
+  background: rgba(var(--electric-rgb), 0.12);
   color: var(--echo-accent);
-  border: 1px solid rgba(88, 166, 255, 0.45);
+  border: 1px solid rgba(var(--electric-rgb), 0.45);
   border-radius: 6px;
   padding: 4px 10px;
   font-size: 11px;
@@ -1256,8 +1367,8 @@ body,
 }
 
 .echo-pending-save:hover {
-  background: rgba(88, 166, 255, 0.22);
-  border-color: rgba(88, 166, 255, 0.7);
+  background: rgba(var(--electric-rgb), 0.22);
+  border-color: rgba(var(--electric-rgb), 0.7);
 }
 
 .echo-pending-discard {
@@ -1292,76 +1403,130 @@ body,
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.04);
   color: var(--echo-text);
   border: 1px solid var(--echo-border);
-  border-radius: 6px;
-  padding: 4px 10px;
-  font-size: 11px;
+  border-radius: 8px;
+  padding: 5px 10px 5px 9px;
+  font-size: 11.5px;
+  font-weight: 500;
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition: background 150ms ease, border-color 150ms ease, transform 150ms ease;
 }
 
 .echo-lang-picker-btn:hover,
 .echo-lang-picker-btn.open {
-  background: rgba(88, 166, 255, 0.08);
-  border-color: rgba(88, 166, 255, 0.35);
+  background: rgba(var(--electric-rgb), 0.08);
+  border-color: rgba(var(--electric-rgb), 0.4);
+  transform: translateY(-1px);
 }
 
+/* Globe + caret are SVGs (replaced the 🌐 emoji + ▾ unicode glyph in
+   2026-04-23). They inherit the button's currentColor so they stay
+   in sync with hover / active states. */
 .echo-lang-picker-globe {
-  font-size: 12px;
-  line-height: 1;
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  color: var(--echo-muted);
+}
+.echo-lang-picker-btn:hover .echo-lang-picker-globe,
+.echo-lang-picker-btn.open .echo-lang-picker-globe {
+  color: var(--echo-accent);
 }
 
 .echo-lang-picker-caret {
-  font-size: 10px;
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
   color: var(--echo-muted);
+  transition: transform 160ms ease;
+}
+.echo-lang-picker-btn.open .echo-lang-picker-caret {
+  transform: rotate(180deg);
 }
 
+/* Dropdown menu — opaque dark surface (was nearly transparent
+   `--echo-surface` at 3% white, which let the editor bg bleed
+   through and made hovered options look like a bright wash with
+   illegible text). */
 .echo-lang-picker-menu {
   position: absolute;
-  top: calc(100% + 4px);
+  top: calc(100% + 6px);
   right: 0;
   z-index: 12;
-  min-width: 200px;
-  max-height: 260px;
+  min-width: 220px;
+  max-height: 280px;
   overflow-y: auto;
-  background: var(--echo-surface);
-  border: 1px solid var(--echo-border);
-  border-radius: 6px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  background: rgba(13, 11, 24, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
   margin: 0;
-  padding: 4px;
+  padding: 6px;
   list-style: none;
   outline: none;
 }
 
 .echo-lang-picker-option {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 5px 8px;
-  border-radius: 4px;
+  padding: 7px 10px;
+  border-radius: 6px;
   font-size: 12px;
-  color: var(--echo-text);
+  color: var(--text);
   cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
 }
 
+/* Hover / keyboard-focus state — subtle but unambiguous: pale
+   electric tint, bright text. The previous 10% blue made hovered
+   rows feel washed-out when text was selected on top. The text
+   color is explicitly set to var(--glow) so any compounding
+   ::selection rules don't darken it. */
 .echo-lang-picker-option.focused,
 .echo-lang-picker-option:hover {
-  background: rgba(88, 166, 255, 0.1);
+  background: rgba(var(--electric-rgb), 0.16);
+  color: var(--glow);
 }
 
+/* Active (currently selected) option — left brand rail + electric
+   text. Distinct from hover so the user can always tell what's
+   selected even while hovering a different row. */
 .echo-lang-picker-option.active {
-  color: var(--echo-accent);
+  background: rgba(var(--electric-rgb), 0.1);
+  color: var(--electric-soft);
   font-weight: 500;
+}
+.echo-lang-picker-option.active::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--electric);
+}
+/* Combined active + hover — keep the rail, lift the bg slightly. */
+.echo-lang-picker-option.active.focused,
+.echo-lang-picker-option.active:hover {
+  background: rgba(var(--electric-rgb), 0.2);
+  color: var(--glow);
 }
 
 .echo-lang-picker-option-count {
-  color: var(--echo-muted);
+  color: var(--text-faint);
   font-variant-numeric: tabular-nums;
   font-size: 11px;
+}
+.echo-lang-picker-option.focused .echo-lang-picker-option-count,
+.echo-lang-picker-option:hover .echo-lang-picker-option-count,
+.echo-lang-picker-option.active .echo-lang-picker-option-count {
+  color: var(--text-dim);
 }
 
 /* ===== W15 Concepts Covered (Rv5.C) ===== */
@@ -1393,11 +1558,11 @@ body,
 }
 
 .echo-ccov-section.section-yours .echo-ccov-section-label {
-  color: #7ee787;
+  color: rgb(var(--good-rgb));
 }
 
 .echo-ccov-section.section-ai .echo-ccov-section-label {
-  color: #bc8cff;
+  color: rgb(var(--purple-rgb));
 }
 
 .echo-ccov-section-count {
@@ -1430,15 +1595,15 @@ body,
 }
 
 .echo-ccov-tile.bucket-yours {
-  border-left-color: #7ee787;
+  border-left-color: rgb(var(--good-rgb));
 }
 
 .echo-ccov-tile.bucket-ai {
-  border-left-color: #bc8cff;
+  border-left-color: rgb(var(--purple-rgb));
 }
 
 .echo-ccov-tile.bucket-repo {
-  border-left-color: #58a6ff;
+  border-left-color: rgb(var(--electric-rgb));
 }
 
 .echo-ccov-tile-head {
@@ -1449,7 +1614,7 @@ body,
 }
 
 .echo-ccov-tile-name {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 13px;
   font-weight: 500;
   color: var(--echo-text);
@@ -1461,8 +1626,8 @@ body,
 .echo-ccov-tile-new {
   font-size: 9px;
   letter-spacing: 0.08em;
-  background: rgba(240, 184, 74, 0.2);
-  color: #f0b84a;
+  background: rgba(var(--rose-soft-rgb), 0.2);
+  color: rgb(var(--rose-soft-rgb));
   padding: 1px 6px;
   border-radius: 8px;
   font-weight: 600;
@@ -1508,20 +1673,20 @@ body,
 }
 
 .echo-ccov-status-btn:hover {
-  background: rgba(88, 166, 255, 0.08);
-  border-color: rgba(88, 166, 255, 0.3);
+  background: rgba(var(--electric-rgb), 0.08);
+  border-color: rgba(var(--electric-rgb), 0.3);
 }
 
 .echo-ccov-status-btn.status-known {
-  color: #7ee787;
-  border-color: rgba(126, 231, 135, 0.35);
-  background: rgba(126, 231, 135, 0.06);
+  color: rgb(var(--good-rgb));
+  border-color: rgba(var(--good-rgb), 0.35);
+  background: rgba(var(--good-rgb), 0.06);
 }
 
 .echo-ccov-status-btn.status-not_known {
-  color: #f85149;
-  border-color: rgba(248, 81, 73, 0.35);
-  background: rgba(248, 81, 73, 0.06);
+  color: rgb(var(--rose-rgb));
+  border-color: rgba(var(--rose-rgb), 0.35);
+  background: rgba(var(--rose-rgb), 0.06);
 }
 
 .echo-ccov-status-glyph {
@@ -1561,14 +1726,14 @@ body,
 }
 
 .echo-repo-scan-header.scanning {
-  border-color: rgba(88, 166, 255, 0.3);
-  background: rgba(88, 166, 255, 0.05);
+  border-color: rgba(var(--electric-rgb), 0.3);
+  background: rgba(var(--electric-rgb), 0.05);
   color: var(--echo-text);
 }
 
 .echo-repo-scan-header.truncated {
-  border-color: rgba(240, 184, 74, 0.3);
-  background: rgba(240, 184, 74, 0.05);
+  border-color: rgba(var(--rose-soft-rgb), 0.3);
+  background: rgba(var(--rose-soft-rgb), 0.05);
   color: var(--echo-text);
 }
 
@@ -1607,7 +1772,7 @@ body,
 .echo-repo-scan-rescan {
   background: transparent;
   color: var(--echo-accent);
-  border: 1px solid rgba(88, 166, 255, 0.3);
+  border: 1px solid rgba(var(--electric-rgb), 0.3);
   border-radius: 4px;
   padding: 2px 10px;
   font-size: 11px;
@@ -1616,7 +1781,7 @@ body,
 }
 
 .echo-repo-scan-rescan:hover {
-  background: rgba(88, 166, 255, 0.1);
+  background: rgba(var(--electric-rgb), 0.1);
 }
 
 .echo-show-all-btn {
@@ -1671,7 +1836,7 @@ body,
   display: flex;
   flex-direction: column;
   gap: 2px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--echo-muted);
 }

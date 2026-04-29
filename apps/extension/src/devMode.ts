@@ -6,9 +6,20 @@ export const VITE_DEV_WS = `ws://localhost:${VITE_DEV_PORT}`;
 
 // Answered by VS Code at activation time — never baked into the bundle.
 // Values: Production (1) marketplace install, Development (2) F5 dev host,
-// Test (3) vscode-test runner. We want the dev-server path only in (2).
+// Test (3) vscode-test runner.
+//
+// Historically this returned true for ANY F5 launch, which routed the
+// webview through the Vite dev server at localhost:5173. Trouble is the
+// repo's launch.json runs `npm: build` (a production build) as its
+// preLaunchTask — Vite is never actually started — so the webview just
+// sat there blank waiting for a dev server that didn't exist.
+//
+// Now we only take the dev-server path when explicitly opted in via
+// PROTEGE_DEV_SERVER=1. The `pnpm dev` script (which starts Vite) sets
+// this. Plain F5 → bundled assets, which Just Work.
 export function isDevMode(mode: vscode.ExtensionMode): boolean {
-  return mode === vscode.ExtensionMode.Development;
+  if (mode !== vscode.ExtensionMode.Development) return false;
+  return process.env.PROTEGE_DEV_SERVER === "1";
 }
 
 // VSCode intercepts localhost connections from webviews. Without

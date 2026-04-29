@@ -5,7 +5,12 @@ import type {
   EchoWindow,
 } from "@protege/types";
 import { Hero } from "./widgets/Hero.js";
-import { PolarClock } from "./widgets/PolarClock.js";
+// PolarClock ("When you code") retired 2026-04-23 — the empty-state
+// caption ("Keep Going · Code a few sessions to find your rhythm")
+// dominated the panel for new users and the radial chart felt out
+// of place next to the rest of the (rectangular) dashboard. File
+// kept on disk if we ever want to revive it.
+// import { PolarClock } from "./widgets/PolarClock.js";
 import { MonthlyHeatmap } from "./widgets/MonthlyHeatmap.js";
 import { IndependenceTrend } from "./widgets/IndependenceTrend.js";
 import { ConceptsCovered } from "./widgets/ConceptsCovered.js";
@@ -13,10 +18,20 @@ import { RepoConcepts } from "./widgets/RepoConcepts.js";
 import type { LiveScanState } from "./widgets/RepoConcepts.js";
 import { ConceptsMomentum } from "./widgets/ConceptsMomentum.js";
 import { LinesWritten } from "./widgets/LinesWritten.js";
-import { LineThatWontDie } from "./widgets/LineThatWontDie.js";
+// LineThatWontDie retired 2026-04-28 — the rewrite-counter widget felt
+// like nagging more than insight ("rewritten 7× this window"). Kept
+// on disk in case the rewrite-rate metric resurfaces in another form.
+// import { LineThatWontDie } from "./widgets/LineThatWontDie.js";
 import { CommitStories } from "./widgets/CommitStories.js";
-import { SaveTape } from "./widgets/SaveTape.js";
-import { StoryModeButton } from "./widgets/StoryModeButton.js";
+// SaveTape (Recent saves) retired 2026-04-28 — the timeline of
+// individual save events was high-volume / low-signal noise next to
+// the higher-level Lines/Commits widgets. Widget file kept on disk in
+// case it comes back as a drill-down.
+// import { SaveTape } from "./widgets/SaveTape.js";
+// StoryModeButton retired 2026-04-23 — the "Coming soon" placeholder
+// card was just clutter on the dashboard. Widget file kept on disk
+// in case Story Mode actually ships, but not rendered anywhere now.
+// import { StoryModeButton } from "./widgets/StoryModeButton.js";
 
 export interface DashboardViewProps {
   window: EchoWindow;
@@ -118,17 +133,10 @@ export function DashboardView({
           onRescanRepo={onRescanRepo}
         />
 
-        <div className="echo-row echo-row-two">
-          <PolarClock
-            data={data?.polar ?? null}
-            loading={loading}
-            window={window}
-          />
-          <IndependenceTrend
-            data={data?.independence ?? null}
-            loading={loading}
-          />
-        </div>
+        <IndependenceTrend
+          data={data?.independence ?? null}
+          loading={loading}
+        />
 
         <ConceptsMomentum
           data={data?.conceptsMomentum ?? null}
@@ -139,25 +147,10 @@ export function DashboardView({
 
         <LinesWritten data={data?.lines ?? null} loading={loading} />
 
-        <LineThatWontDie data={data?.rewrittenLine ?? null} loading={loading} />
-
-        <div className="echo-row echo-row-two">
-          <CommitStories
-            data={data?.commits ?? null}
-            loading={loading}
-            onOpenFile={(file) => onOpenMoment(file)}
-          />
-          <SaveTape
-            data={data?.saveTape ?? null}
-            loading={loading}
-            onOpenMoment={onOpenMoment}
-          />
-        </div>
-
-        <StoryModeButton
-          data={data?.storyMode ?? { notify: false, nextDrop: null }}
-          onOpenStory={onOpenStory}
-          onToggleNotify={onToggleNotify}
+        <CommitStories
+          data={data?.commits ?? null}
+          loading={loading}
+          onOpenFile={(file) => onOpenMoment(file)}
         />
       </div>
     </div>

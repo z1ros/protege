@@ -38,8 +38,95 @@ const gutterWarn: vscode.TextEditorDecorationType | null = null;
 const gutterPerf: vscode.TextEditorDecorationType | null = null;
 const gutterInfo: vscode.TextEditorDecorationType | null = null;
 
+/** Whole-line wash for any line a Protege finding lands on. Subtle
+ *  electric tint so the user gets a visible "something here" cue
+ *  without the line looking like a syntax error. Created lazily once
+ *  registerLiveReview gets called. */
+let lineHighlight: vscode.TextEditorDecorationType | null = null;
+
 function initGutterDecorations(_context: vscode.ExtensionContext) {
-  /* no-op while editor UI is paused */
+  if (!lineHighlight) {
+    lineHighlight = vscode.window.createTextEditorDecorationType({
+      isWholeLine: true,
+      // White wash, not blue. Blue read as "selected" or "linked" — too
+      // close to the editor's own selection/link colors, which made the
+      // finding line ambiguous. Plain white at low alpha reads as a
+      // neutral "something here" cue regardless of theme. Border kept
+      // for the gutter cue but stripped of hue.
+      backgroundColor: "rgba(255, 255, 255, 0.07)",
+      borderStyle: "solid",
+      borderWidth: "0 0 0 2px",
+      borderColor: "rgba(255, 255, 255, 0.6)",
+      overviewRulerColor: "rgba(255, 255, 255, 0.6)",
+      overviewRulerLane: vscode.OverviewRulerLane.Right,
+    });
+  }
+}
+
+/** Suggestions visible to the user — same filter the inlay + CodeLens
+ *  providers apply. Findings already covered by a native (TS / ESLint /
+ *  cSpell) squiggle and findings suppressed by the finding gate (line
+ *  recently edited, cursor near, ruleId on cooldown) are dropped here so
+ *  every renderable surface paints from the same set. Without this, the
+ *  line-wash painted on suggestions that the CodeLens provider then
+ *  filtered out — leaving a "naked" highlight with no lens row above it. */
+function visibleSuggestionsForUri(
+  uri: vscode.Uri,
+  list: Suggestion[]
+): Suggestion[] {
+  const uriKey = uri.toString();
+  return list.filter((s) => {
+    const rangeHasNative =
+      s.scope === "block" || s.scope === "flow"
+        ? hasNativeDiagnosticInRange(uri, s.range)
+        : hasNativeDiagnosticOnLine(uri, s.range.start.line);
+    if (rangeHasNative) return false;
+    if (gateShouldSuppress(uriKey, s)) return false;
+    return true;
+  });
+}
+
+/** Paint / clear the line-highlight decoration for an editor based on
+ *  its current Protege findings. Cleared when there are no findings or
+ *  Live Review is off. Called from refreshAllSurfaces and on tab switch. */
+function paintLineHighlights(editor: vscode.TextEditor): void {
+  if (!lineHighlight) return;
+  if (!active) {
+    editor.setDecorations(lineHighlight, []);
+    return;
+  }
+  const list = suggestionsByUri.get(editor.document.uri.toString());
+  if (!list || list.length === 0) {
+    editor.setDecorations(lineHighlight, []);
+    return;
+  }
+  // Match the inlay + CodeLens filter so the wash is never painted on a
+  // line that won't get a lens row above it.
+  //
+  // Plus a severity floor: only `warn` and `perf` findings get the
+  // full-line wash. `info` (teaching tips, "did-you-know" patterns) keep
+  // a CodeLens row — clickable, dismissible — but no full-line attention
+  // grab. This is the "be quieter for non-bugs" pass: the editor stays
+  // calm, but the teaching content is still one click away.
+  const filtered = visibleSuggestionsForUri(editor.document.uri, list).filter(
+    (s) => s.severity === "warn" || s.severity === "perf"
+  );
+  if (filtered.length === 0) {
+    editor.setDecorations(lineHighlight, []);
+    return;
+  }
+  const ranges: vscode.Range[] = filtered.map((s) => {
+    const line = Math.max(
+      0,
+      Math.min(editor.document.lineCount - 1, s.range.start.line)
+    );
+    return new vscode.Range(line, 0, line, 0);
+  });
+  try {
+    editor.setDecorations(lineHighlight, ranges);
+  } catch {
+    /* editor disposed mid-paint */
+  }
 }
 
 // ---- State ----
@@ -48,6 +135,7 @@ let active = false;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let changeListener: vscode.Disposable | null = null;
 let editorListener: vscode.Disposable | null = null;
+let windowStateListener: vscode.Disposable | null = null;
 let healthTimer: ReturnType<typeof setInterval> | null = null;
 let gateSubscription: vscode.Disposable | null = null;
 let currentSuggestions: Suggestion[] = [];
@@ -84,15 +172,20 @@ const pendingFixByUri = new Map<
 >();
 const PENDING_FIX_TTL_MS = 60_000;
 
-// Tuned 2026-04-23 from 3s → 2s. With SAVE/IDLE retired, LIVE is the
-// only source of findings — a shorter debounce makes the extension
-// feel present instead of silent. 2s is still long enough to avoid
-// firing mid-word.
-const DEBOUNCE_MS = 2_000;
-const MIN_CHANGE_CHARS = 4;
-// Tuned 2026-04-23 from 20s → 12s. Paired with the gate's 8s
-// LINE_EDIT_WINDOW_MS, post-paste recovery lands under ~15s total.
-const HEALTH_CHECK_MS = 12_000;
+// Tuned 2026-04-29 from 7s → 12s + threshold raised 4 → 30 chars.
+// At 7s/4chars the user could type a single word, pause to think, and
+// trigger a fresh scan that flagged the half-written thought. 12s gives
+// real settling time; 30 chars (≈ a meaningful expression, not a
+// keystroke) ensures we don't burn an LLM call on micro-edits the user
+// is about to revise. The 60s health timer still catches genuinely-idle
+// long-tail cases.
+const DEBOUNCE_MS = 12_000;
+const MIN_CHANGE_CHARS = 30;
+// Tuned 2026-04-28 from 12s → 60s. The health re-check exists to surface
+// findings the gate had been suppressing during recent edits — it never
+// needed to fire fast. 60s halves background scan rate without hurting
+// first-flag latency on actual edits (the debounce path handles those).
+const HEALTH_CHECK_MS = 60_000;
 
 // ---- Inlay hints provider (the isolated hover surface) ----
 
@@ -161,27 +254,125 @@ class ProtegeLiveCodeLensProvider implements vscode.CodeLensProvider {
     const list = suggestionsByUri.get(doc.uri.toString());
     if (!list || list.length === 0) return [];
 
-    return list.map((s) => {
+    // Same dedup the inlay used: skip findings already covered by TS /
+    // ESLint native diagnostics, and findings the gate is suppressing
+    // (line recently edited, ruleId on cooldown). Otherwise the user
+    // sees double-rendered lints.
+    const uriKey = doc.uri.toString();
+    const filtered = list.filter((s) => {
+      const rangeHasNative =
+        s.scope === "block" || s.scope === "flow"
+          ? hasNativeDiagnosticInRange(doc.uri, s.range)
+          : hasNativeDiagnosticOnLine(doc.uri, s.range.start.line);
+      if (rangeHasNative) return false;
+      if (gateShouldSuppress(uriKey, s)) return false;
+      return true;
+    });
+
+    // CodeLens row (left → right):
+    //   1. Short explanation of the issue — clickable, opens a hover
+    //      popup at that line with the full why + fix preview.
+    //      No severity icon, no "Protege ·" prefix — just the
+    //      explanation reads as the lens.
+    //   2. `✿ Teach me`  — opens the full lesson in chat.
+    //   3. `✔ Apply fix` — runs the smart-fix tool loop (only when
+    //      the suggestion has a fix string).
+    //   4. `✘ Dismiss`   — removes the finding from this session.
+    // Unicode glyphs (NOT emoji): ✿ U+273F, ✔ U+2714, ✘ U+2718.
+    return filtered.flatMap((s) => {
       const line = Math.max(0, Math.min(doc.lineCount - 1, s.range.start.line));
       const range = new vscode.Range(line, 0, line, 0);
-      const icon =
-        s.severity === "warn" ? "$(circle-filled)" :
-        s.severity === "perf" ? "$(zap)" : "$(lightbulb)";
-      const title = titleForRule(s.ruleId, s.severity);
-      return new vscode.CodeLens(range, {
-        title: `${icon} Protege · ${title} · Open →`,
-        command: "protege.openTipDetail",
-        arguments: [
-          {
-            suggestion: s,
-            docUri: doc.uri.toString(),
-            currentLine: doc.lineAt(line).text.trim(),
-            lang: doc.languageId,
-          },
-        ],
-      });
+      const uri = doc.uri.toString();
+      const explanation = lensExplanation(s);
+      // Match the `Finding` shape the chat-side teachFinding handler in
+      // App.tsx reads (`type`, `title`, `line`, `explanation`). Without
+      // these, the prompt builder substituted `undefined` everywhere and
+      // the resulting chat message read "I saw a undefined on line 10:
+      // undefined" — the AI then probed for context instead of teaching
+      // the actual concept. The extra fields (currentLine, lang) carry
+      // the actual code so the prompt can quote it; the AI then has
+      // enough to spot small adjacent issues (let vs const, etc.).
+      const findingType: "bug" | "performance" | "tip" =
+        s.severity === "warn"
+          ? "bug"
+          : s.severity === "perf"
+            ? "performance"
+            : "tip";
+      const teachArgs = {
+        type: findingType,
+        title: titleForRule(s.ruleId, s.severity).trim(),
+        line: line + 1,
+        explanation: s.message,
+        ruleId: s.ruleId,
+        message: s.message,
+        uri,
+        currentLine: doc.lineAt(line).text.trim(),
+        lang: doc.languageId,
+      };
+
+      const lenses: vscode.CodeLens[] = [
+        new vscode.CodeLens(range, {
+          title: explanation,
+          tooltip: "Click for the full explanation and fix preview",
+          command: "protege.showFindingPopup",
+          arguments: [{ uri, line }],
+        }),
+        new vscode.CodeLens(range, {
+          title: "✿ Teach me",
+          tooltip: "Open the full lesson in chat",
+          command: "protege.teachFinding",
+          arguments: [teachArgs],
+        }),
+      ];
+      if (s.fix) {
+        lenses.push(
+          new vscode.CodeLens(range, {
+            title: "✔ Apply fix",
+            tooltip: "Apply Protege's fix to this line",
+            command: "protege.smartFix",
+            arguments: [{ uri, line }],
+          })
+        );
+      }
+      lenses.push(
+        new vscode.CodeLens(range, {
+          title: "✘ Dismiss",
+          tooltip: "Hide this finding",
+          command: "protege.dismissFinding",
+          arguments: [{ uri, ruleId: s.ruleId, line }],
+        })
+      );
+      return lenses;
     });
   }
+}
+
+/** Build the short single-line explanation that becomes the CodeLens
+ *  status. Prefer the rule's curated title when available (it's
+ *  written human-friendly), then fall back to the model's `message`
+ *  trimmed to one sentence. Capped so the row never wraps. */
+function lensExplanation(s: Suggestion): string {
+  const title = titleForRule(s.ruleId, s.severity).trim();
+  const msg = (s.message ?? "").trim();
+  let body = title;
+  // If the title is a generic category ("Heads up", "Potential bug",
+  // "Perf hit") and the message has more substance, use the message
+  // instead so the lens actually communicates *what's wrong*, not
+  // just *that* something is wrong.
+  const genericTitles = new Set(["Heads up", "Potential bug", "Perf hit"]);
+  if (msg && (genericTitles.has(title) || msg.length > title.length + 6)) {
+    body = msg;
+  }
+  // First sentence only — keep the lens row tight.
+  const firstSentence = body.split(/(?<=[.!?])\s+/)[0] ?? body;
+  // Hard cap so very long messages don't push other lenses off-screen.
+  // Tightened from 90 → 55 — the prior limit ate ~70% of the editor row
+  // and crowded the action buttons. The full text is one click away via
+  // the "showFindingPopup" hover, so the lens just needs to read as a
+  // glance-sized headline.
+  return firstSentence.length > 55
+    ? firstSentence.slice(0, 52) + "…"
+    : firstSentence;
 }
 
 let liveCodeLensProvider: ProtegeLiveCodeLensProvider | null = null;
@@ -320,6 +511,13 @@ function refreshAllSurfaces(): void {
     refreshFindingCodeLens();
   } catch {}
   inlayProvider?.refresh();
+  liveCodeLensProvider?.refresh();
+  // Repaint the whole-line wash on every visible editor that's looking
+  // at a tracked file. Cheap (just setDecorations with the cached
+  // ranges) so safe to fire from every refresh callsite.
+  for (const ed of vscode.window.visibleTextEditors) {
+    paintLineHighlights(ed);
+  }
 }
 
 function notifyLiveReviewOn(): void {
@@ -419,6 +617,24 @@ function startLiveReview(): void {
     }
   }
 
+  // When the IDE regains focus (user alt-tabbed back from a browser /
+  // Slack / terminal), fire a single rescan of the active file. This
+  // pairs with the focus gate at runReview entry: while the user was
+  // away every debounce + health tick no-op'd, so anything that
+  // changed externally (git pull, formatter on save, the file content
+  // shifted) needs one fresh scan to catch up. Losing focus disposes
+  // nothing — the existing listeners stay live and just keep skipping
+  // until focus comes back. Pending edits during the unfocused window
+  // count: we treat a refocus as if the user just paused typing, so
+  // the freshest content gets reviewed without waiting another 7s.
+  windowStateListener = vscode.window.onDidChangeWindowState((s) => {
+    if (!active || !s.focused) return;
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) return;
+    log("liveReview", "LIVE refocus · firing catch-up scan");
+    void runReview(editor);
+  });
+
   // The legacy "force a full LLM rescan every 12s" timer was deleted —
   // it bypassed runReview's same-content dedup with pendingChangeSize =
   // Infinity, burning ~$4/day per idle user re-scanning unchanged code.
@@ -458,6 +674,8 @@ function stopLiveReview(): void {
   changeListener = null;
   editorListener?.dispose();
   editorListener = null;
+  windowStateListener?.dispose();
+  windowStateListener = null;
   if (healthTimer) { clearInterval(healthTimer); healthTimer = null; }
   gateSubscription?.dispose();
   gateSubscription = null;
@@ -536,7 +754,35 @@ function isFileMidEdit(editor: vscode.TextEditor): boolean {
 async function runReview(editor: vscode.TextEditor): Promise<void> {
   if (!active) return;
 
+  // Window-focus gate: skip scans when the user isn't looking at the
+  // IDE. Critical for on-device mode (Qwen 7B inference burns ~5-15W
+  // for ~5s — running it while the user is in a browser tab is a
+  // gratuitous battery drain), but also right for cloud (no point
+  // billing tokens for a user who isn't reading findings anyway).
+  // The debounce + health timer keep firing in the background; this
+  // gate just makes them no-op until the window regains focus, at
+  // which point a fresh scan fires from the focus listener below.
+  if (!vscode.window.state.focused) {
+    const name = editor.document.fileName.split(/[\\/]/).pop() ?? "file";
+    log("liveReview", `LIVE skip · window unfocused · ${name}`);
+    return;
+  }
+
   const text = editor.document.getText();
+  const uriKey = editor.document.uri.toString();
+  // Delta cache: if THIS file's content matches what we last scanned for
+  // it, skip the LLM call regardless of how big the pending edit was —
+  // formatter ran + reverted, undo-redo cycle, file restored from disk,
+  // etc. all show up here as "different intermediate edits, same final
+  // text". The per-URI cache survives tab switches; the global
+  // `lastScannedText` does not, so we check both.
+  const lastTextForUri = lastScannedTextByUri.get(uriKey);
+  if (text === lastTextForUri) {
+    const name = editor.document.fileName.split(/[\\/]/).pop() ?? "file";
+    log("liveReview", `LIVE skip · content unchanged for ${name}`);
+    pendingChangeSize = 0;
+    return;
+  }
   if (pendingChangeSize < MIN_CHANGE_CHARS && text === lastScannedText) {
     return;
   }
@@ -621,17 +867,18 @@ async function runReview(editor: vscode.TextEditor): Promise<void> {
 
   isScanning = false;
 
-  // Preserve higher-scope findings from SAVE / IDLE tiers — only replace
-  // the atom-scope slice here. Without this, every LIVE pass wiped the
-  // block/flow suggestions that SAVE had just emitted, so the user never
-  // got to see cross-file findings after typing.
+  // Full replace per scan (2026-04-29). The prior version preserved
+  // block/flow-scope keepers from older scans so SAVE/FLOW-tier findings
+  // wouldn't get wiped by every LIVE pass. But that also kept findings
+  // alive after the code they anchored to was deleted — "handleClick
+  // loops 0..3" hanging above a return statement long after handleClick
+  // was removed. Stale findings are a worse failure mode than briefly
+  // missing a SAVE/FLOW finding (which the next FLOW/SAVE scan will
+  // re-emit anyway). Each LIVE scan is now the source of truth for the
+  // scopes it covers; dismiss + pending-fix are still respected.
   const key = editor.document.uri.toString();
-  const prior = suggestionsByUri.get(key) ?? [];
-  const keepers = prior.filter(
-    (s) => s.scope === "block" || s.scope === "flow"
-  );
-  const merged = [...keepers];
-  const reserved = new Set(keepers.map((s) => `${s.ruleId}@${s.range.start.line}`));
+  const merged: Suggestion[] = [];
+  const reserved = new Set<string>();
   const dismissed = dismissedByUri.get(key) ?? new Set<string>();
   const pending = pendingFixByUri.get(key);
   // Re-read the doc NOW for the cooldown snapshot — `text` was captured
@@ -681,7 +928,7 @@ async function runReview(editor: vscode.TextEditor): Promise<void> {
   suggestionsByUri.set(key, merged);
   log(
     "liveReview",
-    `LIVE merged ${scanFile} · raw=${suggestions.length} keepers=${keepers.length} stored=${merged.length}${gateDropped > 0 ? ` · gate-dropped ${gateDropped}` : ""}`
+    `LIVE merged ${scanFile} · raw=${suggestions.length} stored=${merged.length}${gateDropped > 0 ? ` · gate-dropped ${gateDropped}` : ""}`
   );
   // Editor UI paused — no inlay/codelens/gutter rendering. Sidebar still
   // receives suggestion state via broadcastState(). The Ambient Coach Strip
@@ -698,12 +945,66 @@ export function registerLiveReview(
   context: vscode.ExtensionContext
 ): vscode.Disposable[] {
   initGutterDecorations(context);
-  // Editor-surface providers are paused; the scan pipeline (startLiveReview)
-  // still runs and feeds the sidebar via broadcastState().
+  // 2026-04-28 swap: the right-side inlay hint had no actions, so
+  // the user couldn't do anything with a flagged line. Replaced with
+  // the original design — a multi-action CodeLens row ABOVE the line
+  // (Protege · <title> · Explain · Fix it · Teach me) plus a subtle
+  // whole-line wash so the eye lands on the right line. The inlay
+  // class is kept in tree but no longer registered; flip the assignments
+  // below if we ever want to A/B them again.
   inlayProvider = null;
-  liveCodeLensProvider = null;
+  liveCodeLensProvider = new ProtegeLiveCodeLensProvider();
 
   const disposables: vscode.Disposable[] = [];
+
+  // Register the CodeLens surface across all file-scheme docs so the
+  // action row appears above any line that has a finding.
+  disposables.push(
+    vscode.languages.registerCodeLensProvider(
+      { scheme: "file" },
+      liveCodeLensProvider
+    )
+  );
+
+  // Hover provider — drives the popup that opens when the user
+  // clicks the status CodeLens. We match findings by (line + rule)
+  // and render the same MarkdownString `buildHover()` already
+  // produces for the rest of the app.
+  disposables.push(
+    vscode.languages.registerHoverProvider(
+      { scheme: "file" },
+      {
+        provideHover(doc, pos) {
+          if (!active) return null;
+          const list = suggestionsByUri.get(doc.uri.toString());
+          if (!list || list.length === 0) return null;
+          // Pick the finding whose primary line matches the hover
+          // position. If multiple findings share a line (rare), the
+          // first one wins — they all surface via the CodeLens row
+          // anyway.
+          const hit = list.find((s) => s.range.start.line === pos.line);
+          if (!hit) return null;
+          const md = buildHover(hit, doc);
+          // Anchor the hover to the whole line so the popup stays
+          // open while the user mouses across to its action buttons.
+          const anchor = new vscode.Range(pos.line, 0, pos.line, doc.lineAt(pos.line).text.length);
+          return new vscode.Hover(md, anchor);
+        },
+      }
+    )
+  );
+
+  // Repaint line-highlight decoration when the active editor changes —
+  // VS Code clears decorations when an editor unmounts, so without this
+  // the wash disappears on tab switch even if findings are still cached.
+  if (lineHighlight) {
+    disposables.push(lineHighlight);
+    disposables.push(
+      vscode.window.onDidChangeActiveTextEditor((editor) => {
+        if (editor) paintLineHighlights(editor);
+      })
+    );
+  }
 
   disposables.push(
     vscode.commands.registerCommand("protege.toggleLiveReview", () => {
@@ -713,6 +1014,57 @@ export function registerLiveReview(
         startLiveReview();
       }
     })
+  );
+
+  // Status-lens click handler: jumps the cursor to the finding line
+  // (so the hover popup anchors correctly) and triggers VS Code's
+  // built-in showHover. Hover content comes from buildHover() above
+  // — already includes the explanation, fix preview, and action row.
+  disposables.push(
+    vscode.commands.registerCommand(
+      "protege.showFindingPopup",
+      async ({ uri, line }: { uri: string; line: number }) => {
+        const docUri = vscode.Uri.parse(uri);
+        const editor =
+          vscode.window.activeTextEditor?.document.uri.toString() === uri
+            ? vscode.window.activeTextEditor
+            : await vscode.window.showTextDocument(docUri, { preserveFocus: false });
+        if (!editor) return;
+        const safeLine = Math.max(0, Math.min(editor.document.lineCount - 1, line));
+        const pos = new vscode.Position(safeLine, 0);
+        editor.selection = new vscode.Selection(pos, pos);
+        editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+        await vscode.commands.executeCommand("editor.action.showHover");
+      }
+    )
+  );
+
+  // Dismiss handler — drop one finding (matched by uri+ruleId+line)
+  // from the in-memory store and refresh all surfaces. Lives only
+  // for the session; on next scan the rule may resurface unless the
+  // findingGate has separately suppressed it.
+  disposables.push(
+    vscode.commands.registerCommand(
+      "protege.dismissFinding",
+      ({
+        uri,
+        ruleId,
+        line,
+      }: {
+        uri: string;
+        ruleId: string;
+        line: number;
+      }) => {
+        const list = suggestionsByUri.get(uri);
+        if (!list) return;
+        const next = list.filter(
+          (s) => !(s.ruleId === ruleId && s.range.start.line === line)
+        );
+        if (next.length === list.length) return;
+        suggestionsByUri.set(uri, next);
+        refreshAllSurfaces();
+      }
+    )
   );
 
   disposables.push(

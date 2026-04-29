@@ -181,13 +181,34 @@ export function LanguagePicker({
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
-        <span className="echo-lang-picker-globe" aria-hidden>
-          🌐
-        </span>
+        <svg
+          className="echo-lang-picker-globe"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.7"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <circle cx="12" cy="12" r="9" />
+          <path d="M3 12h18" />
+          <path d="M12 3a13 13 0 010 18" />
+          <path d="M12 3a13 13 0 000 18" />
+        </svg>
         <span className="echo-lang-picker-label">{currentLabel}</span>
-        <span className="echo-lang-picker-caret" aria-hidden>
-          ▾
-        </span>
+        <svg
+          className="echo-lang-picker-caret"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
       </button>
       {open ? (
         <ul

@@ -42,7 +42,7 @@
   overflow: visible;
 }
 .iqv2-ring-fill {
-  transition: stroke-dasharray 720ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: stroke-dasharray 720ms var(--ease-spring);
 }
 .iqv2-ring-num {
   font-family: var(--font-display);
@@ -60,8 +60,8 @@
   text-transform: uppercase;
 }
 .iqv2-ring-pulse circle {
-  transition: cx 720ms cubic-bezier(0.16, 1, 0.3, 1),
-              cy 720ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: cx 720ms var(--ease-spring),
+              cy 720ms var(--ease-spring);
   filter: drop-shadow(0 0 4px rgba(var(--electric-rgb), 0.6));
 }
 
@@ -102,7 +102,7 @@
   padding: 3px 9px;
   background: rgba(var(--text-rgb), 0.03);
   border: 1px solid rgba(var(--electric-rgb), 0.22);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: var(--text-dim);
   font-family: var(--font-mono);
   font-size: 8.5px;
@@ -117,7 +117,7 @@
 .iqv2-ladder-toggle svg {
   width: 10px;
   height: 10px;
-  transition: transform 260ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: transform 260ms var(--ease-spring);
 }
 .iqv2-ladder-toggle.open svg { transform: rotate(180deg); }
 .iqv2-ladder-toggle:hover {
@@ -139,7 +139,7 @@
     0 4px 18px rgba(0, 0, 0, 0.25);
   display: grid;
   gap: 10px;
-  animation: iqv2ExplainIn 320ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: iqv2ExplainIn 320ms var(--ease-spring);
 }
 .iqv2-ladder-head {
   font-size: 9px;
@@ -209,7 +209,7 @@
     rgba(var(--electric-rgb), 0.95)
   );
   box-shadow: 0 0 6px rgba(var(--electric-rgb), 0.25);
-  transition: width 500ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: width 500ms var(--ease-spring);
 }
 .iqv2-ladder-row.reached .iqv2-ladder-bar-fill {
   background: rgba(var(--good-rgb), 0.55);
@@ -282,10 +282,10 @@
   cursor: pointer;
   text-align: left;
   transition:
-    background 320ms cubic-bezier(0.16, 1, 0.3, 1),
-    border-color 320ms cubic-bezier(0.16, 1, 0.3, 1),
-    transform 320ms cubic-bezier(0.16, 1, 0.3, 1),
-    box-shadow 320ms cubic-bezier(0.16, 1, 0.3, 1);
+    background 320ms var(--ease-spring),
+    border-color 320ms var(--ease-spring),
+    transform 320ms var(--ease-spring),
+    box-shadow 320ms var(--ease-spring);
 }
 .iqv2-bar-row:hover,
 .iqv2-bar-row.hovered {
@@ -323,7 +323,7 @@
   );
   box-shadow: 0 0 8px rgba(var(--electric-rgb), 0.3);
   transition:
-    width 720ms cubic-bezier(0.16, 1, 0.3, 1),
+    width 720ms var(--ease-spring),
     box-shadow 320ms ease;
 }
 .iqv2-bar-row:hover .iqv2-bar-fill,
@@ -366,7 +366,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: transform 320ms cubic-bezier(0.16, 1, 0.3, 1), color 240ms ease;
+  transition: transform 320ms var(--ease-spring), color 240ms ease;
 }
 .iqv2-bar-chevron svg {
   width: 12px;
@@ -397,7 +397,7 @@
   box-shadow:
     inset 0 1px 0 rgba(var(--electric-rgb), 0.08),
     0 4px 18px rgba(0, 0, 0, 0.28);
-  animation: iqv2ExplainIn 320ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: iqv2ExplainIn 320ms var(--ease-spring);
   display: grid;
   gap: 12px;
 }
@@ -510,7 +510,7 @@
 .dash-card {
   position: relative;
   background: linear-gradient(180deg, rgba(var(--text-rgb), 0.028), rgba(var(--text-rgb), 0.008));
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: 14px;
   padding: 14px 14px 14px;
   /* SVG children in dashboard cards use `fill="currentColor"` for theme-aware
@@ -522,7 +522,7 @@
     0 1px 0 rgba(0, 0, 0, 0.35);
   /* Staggered cinematic entrance — every card gets a slight delay offset via
      nth-child below, so they cascade into view instead of all snapping at once. */
-  animation: dashCardIn 640ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  animation: dashCardIn 640ms var(--ease-spring) backwards;
 }
 @keyframes dashCardIn {
   from { opacity: 0; transform: translateY(12px); }
@@ -538,7 +538,7 @@
 .dash > .dash-card:nth-child(8)  { animation-delay: 490ms; }
 .dash-row-2,
 .dash-modes {
-  animation: dashCardIn 640ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  animation: dashCardIn 640ms var(--ease-spring) backwards;
 }
 .dash-card-head {
   display: flex;
@@ -563,8 +563,8 @@
   gap: 4px;
   padding: 2px;
   background: rgba(var(--text-rgb), 0.04);
-  border: 1px solid var(--glass-border);
-  border-radius: 999px;
+  border: var(--border-glass);
+  border-radius: var(--radius-pill);
 }
 .dash-pill {
   padding: 3px 9px;
@@ -572,7 +572,7 @@
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--text-faint);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 .dash-pill.active {
   color: var(--glow);

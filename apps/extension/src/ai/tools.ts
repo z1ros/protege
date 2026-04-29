@@ -70,9 +70,34 @@ class HighlightCodeLensProvider implements vscode.CodeLensProvider {
       // CodeLens anchors to a zero-width range at the start of the line —
       // VS Code renders the lens row in the gutter space above that line.
       const lensRange = new vscode.Range(h.range.start.line, 0, h.range.start.line, 0);
+      // Full payload — issue, fix, explanation, AND the corrected line
+      // range — so the teach handler can quote the actual code instead of
+      // sending the model a generic "what was that thing again?" prompt.
+      // Using h.range (post-anchor-correction) means we always quote the
+      // line the user is actually looking at, not the model's pre-snap
+      // claim.
       const teachArgs = encodeURIComponent(
-        JSON.stringify({ kind: h.kind, label: h.issue ?? h.label ?? "", explanation: h.explanation ?? "" })
+        JSON.stringify({
+          kind: h.kind,
+          label: h.label ?? "",
+          issue: h.issue ?? "",
+          fix: h.fix ?? "",
+          explanation: h.explanation ?? "",
+          path: h.meta.path,
+          startLine: h.range.start.line + 1,
+          endLine: h.range.end.line + 1,
+        })
       );
+      // Detect "teaching highlight" — the bot is highlighting a line
+      // mid-lesson to point at it while explaining. Two signals:
+      //   1. h has NO fix and NO issue — pure "look at this" highlight
+      //   2. there's an active lesson session (lessonActive flag) —
+      //      EVEN if h has fix/issue, the user is in a lesson so the
+      //      "Teach me" / "Apply fix" buttons don't fit (they'd open
+      //      a new teach prompt or rewrite while a lesson is running).
+      // Either way → strip Teach me + Apply fix; keep summary + Dismiss.
+      const isTeachingHighlight = (!h.fix && !h.issue) || isLessonActive();
+
       // First lens: one-line summary of what's wrong — picked from the
       // richest available field (issue > label > explanation), capped so
       // the row never wraps. Icon reflects the kind so users can tell
@@ -87,9 +112,17 @@ class HighlightCodeLensProvider implements vscode.CodeLensProvider {
           })
         );
       }
-      if (h.fix) {
+      if (h.fix && !isTeachingHighlight) {
+        // Use the post-anchor-correction range — applyFix should overwrite
+        // the line the highlight is actually painted on, not the line the
+        // model originally claimed.
         const fixArgs = encodeURIComponent(
-          JSON.stringify({ path: h.meta.path, startLine: h.meta.startLine, endLine: h.meta.endLine, fix: h.fix })
+          JSON.stringify({
+            path: h.meta.path,
+            startLine: h.range.start.line + 1,
+            endLine: h.range.end.line + 1,
+            fix: h.fix,
+          })
         );
         lenses.push(
           new vscode.CodeLens(lensRange, {
@@ -99,13 +132,15 @@ class HighlightCodeLensProvider implements vscode.CodeLensProvider {
           })
         );
       }
-      lenses.push(
-        new vscode.CodeLens(lensRange, {
-          title: `✿ Teach me`,
-          command: "protege.teachHighlight",
-          arguments: [JSON.parse(decodeURIComponent(teachArgs))],
-        })
-      );
+      if (!isTeachingHighlight) {
+        lenses.push(
+          new vscode.CodeLens(lensRange, {
+            title: `✿ Teach me`,
+            command: "protege.teachHighlight",
+            arguments: [JSON.parse(decodeURIComponent(teachArgs))],
+          })
+        );
+      }
       lenses.push(
         new vscode.CodeLens(lensRange, {
           title: `✘ Dismiss`,
@@ -122,6 +157,23 @@ let highlightLensProvider: HighlightCodeLensProvider | null = null;
 export function registerHighlightCodeLens(): vscode.Disposable {
   highlightLensProvider = new HighlightCodeLensProvider();
   return vscode.languages.registerCodeLensProvider({ scheme: "file" }, highlightLensProvider);
+}
+
+// Lesson-active flag — flipped by webviewHost when the chat response
+// carries a lessonState with phase=TEACHING. The codelens reads this
+// and renders a stripped-down lens (no "Teach me", no "Apply fix")
+// during lessons, since the user is ALREADY being taught — those
+// buttons just create recursive teach prompts that pull focus.
+let lessonActive = false;
+export function setLessonActive(active: boolean): void {
+  if (lessonActive === active) return;
+  lessonActive = active;
+  // Refresh the codelens so the change takes effect on screens that
+  // are currently rendering highlights.
+  highlightLensProvider?.refresh();
+}
+function isLessonActive(): boolean {
+  return lessonActive;
 }
 
 /** Pick the most descriptive field and cap it so the lens row never wraps.
@@ -406,6 +458,49 @@ export interface HighlightRegion {
   issue?: string;
   fix?: string;
   explanation?: string;
+  /**
+   * Verification anchor — a short, unique substring that MUST appear on the
+   * highlighted start line. The model is required to include this so we can
+   * detect off-by-N mistakes and snap to the correct line (or refuse to paint
+   * if the anchor doesn't exist). Without this guard the model regularly
+   * lands highlights on the wrong line and we have no way to know.
+   */
+  anchor?: string;
+}
+
+/**
+ * Verify the anchor against the model's claimed line and return the corrected
+ * 0-indexed start line. Returns null if the anchor genuinely cannot be located
+ * in a small window around the claim — in that case we drop the region rather
+ * than paint somewhere wrong.
+ *
+ * If no anchor is supplied we trust the model (legacy behavior). The persona
+ * prompt will start asking for an anchor on every region, but older cached
+ * tool calls + the teach_step path don't always set it.
+ */
+const ANCHOR_SEARCH_WINDOW = 8;
+function resolveAnchorLine(
+  doc: vscode.TextDocument,
+  claimedZeroIdx: number,
+  anchor: string | undefined
+): number | null {
+  if (!anchor) return claimedZeroIdx;
+  const target = anchor.trim();
+  if (!target) return claimedZeroIdx;
+
+  const inBounds = (i: number) => i >= 0 && i < doc.lineCount;
+  // Fast path — the model was right.
+  if (inBounds(claimedZeroIdx) && doc.lineAt(claimedZeroIdx).text.includes(target)) {
+    return claimedZeroIdx;
+  }
+  // Search outward from the claim — closer matches win.
+  for (let delta = 1; delta <= ANCHOR_SEARCH_WINDOW; delta++) {
+    for (const idx of [claimedZeroIdx - delta, claimedZeroIdx + delta]) {
+      if (!inBounds(idx)) continue;
+      if (doc.lineAt(idx).text.includes(target)) return idx;
+    }
+  }
+  return null;
 }
 
 /** Exported alias so the teach_step tool can reuse the same highlight
@@ -430,27 +525,59 @@ async function highlightCode(regions: HighlightRegion[]): Promise<string> {
     }
   >();
 
+  const skipped: Array<{ path: string; anchor: string; claimedLine: number }> = [];
   for (const r of regions) {
     const kind: HighlightKind = r.kind && r.kind in HIGHLIGHT_DECORATIONS ? r.kind : "focus";
     const uri = resolveUri(r.path);
     const key = `${uri.toString()}|${kind}`;
+    const doc = await vscode.workspace.openTextDocument(uri);
+    const claimedStart = Math.max(0, (r.startLine | 0) - 1);
+    const claimedEnd = Math.max(claimedStart, (r.endLine | 0) - 1);
+
+    // Anchor check — if the model supplied one, snap the range when its
+    // line drifted, or refuse to paint if the anchor isn't in this file
+    // anywhere near the claim. Multi-line ranges shift as a block by the
+    // same delta as the start line, so spans stay intact. Done BEFORE the
+    // group is created so a fully-rejected file doesn't end up in
+    // activeHighlightFiles with zero options.
+    const correctedStart = resolveAnchorLine(doc, claimedStart, r.anchor);
+    if (correctedStart === null) {
+      skipped.push({
+        path: r.path,
+        anchor: r.anchor ?? "",
+        claimedLine: r.startLine,
+      });
+      continue;
+    }
     if (!groups.has(key)) {
       groups.set(key, { uri, kind, options: [] });
     }
-    const doc = await vscode.workspace.openTextDocument(uri);
-    const startIdx = Math.max(0, (r.startLine | 0) - 1);
-    const endIdx = Math.max(startIdx, (r.endLine | 0) - 1);
+    const delta = correctedStart - claimedStart;
+    const startIdx = correctedStart;
+    const endIdx = Math.max(startIdx, claimedEnd + delta);
     const lineEnd = doc.lineAt(Math.min(endIdx, doc.lineCount - 1));
+    // Final 1-indexed range for the model + downstream consumers (hover
+    // card, lens commands). Use the corrected lines, NOT the claim.
+    const correctedStartLine = startIdx + 1;
+    const correctedEndLine = endIdx + 1;
+    // End column = MAX_SAFE_INTEGER so the wash extends across the full
+    // editor width, not just to the last visible character. `isWholeLine`
+    // alone wasn't reliably painting past end-of-text for the bordered kinds.
     const range = new vscode.Range(
       startIdx,
       0,
       lineEnd.lineNumber,
-      lineEnd.text.length
+      Number.MAX_SAFE_INTEGER
     );
 
     const label = r.label?.trim();
+    // Corrected range goes into the hover so its embedded action links
+    // (Fix it for me, Teach me more) target the line the highlight is
+    // actually painted on — not the model's pre-snap claim.
     const hover = buildRichHover(kind, label, r.issue, r.fix, r.explanation, {
-      path: r.path, startLine: r.startLine, endLine: r.endLine,
+      path: r.path,
+      startLine: correctedStartLine,
+      endLine: correctedEndLine,
     });
 
     // Hover stays (discoverability on mouseover); the right-side italic
@@ -477,7 +604,11 @@ async function highlightCode(regions: HighlightRegion[]): Promise<string> {
       issue: r.issue,
       fix: r.fix,
       explanation: r.explanation,
-      meta: { path: r.path, startLine: r.startLine, endLine: r.endLine },
+      meta: {
+        path: r.path,
+        startLine: correctedStartLine,
+        endLine: correctedEndLine,
+      },
     });
   }
   highlightLensProvider?.refresh();
@@ -521,9 +652,43 @@ async function highlightCode(regions: HighlightRegion[]): Promise<string> {
     } catch {}
   }
 
-  return `Highlighted ${regions.length} region${
-    regions.length === 1 ? "" : "s"
+  const placed = regions.length - skipped.length;
+  // When EVERY region failed anchor verification, the user sees zero
+  // highlights in their editor but the chat chip would still flash ✓
+  // "Highlighting code". That's a lie. Throw so the chip flips to ✗ and
+  // the model gets a clear retry signal in the error message.
+  if (placed === 0 && skipped.length > 0) {
+    const detail = skipped
+      .map(
+        (s) =>
+          `· ${s.path}:${s.claimedLine} — anchor ${
+            s.anchor ? JSON.stringify(s.anchor) : "(missing)"
+          } not found near that line`
+      )
+      .join("\n");
+    throw new Error(
+      `highlight_code placed 0 regions — every anchor failed verification:\n${detail}\nRe-issue with a unique substring copied verbatim from the target line.`
+    );
+  }
+  let summary = `Highlighted ${placed} region${
+    placed === 1 ? "" : "s"
   } across ${groups.size} file${groups.size === 1 ? "" : "s"}`;
+  if (skipped.length > 0) {
+    // Some succeeded, some failed. Tell the model which dropped so it can
+    // retry the failed ones with a correct anchor.
+    const detail = skipped
+      .map(
+        (s) =>
+          `· ${s.path}:${s.claimedLine} — anchor ${
+            s.anchor ? JSON.stringify(s.anchor) : "(missing)"
+          } not found near that line`
+      )
+      .join("\n");
+    summary += `\nSkipped ${skipped.length} region${
+      skipped.length === 1 ? "" : "s"
+    } (anchor verification failed):\n${detail}\nRe-issue these with a unique substring from the actual line.`;
+  }
+  return summary;
 }
 
 // ---- Inline tag derivation ----
@@ -593,10 +758,18 @@ function buildRichHover(
     }));
     actions.push(`[$(wrench) Fix it for me](command:protege.applyFix?${fixArgs})`);
   }
+  // Full payload — same shape as the CodeLens click, so the teach handler
+  // can quote real code and run the two-way checkpoint flow regardless of
+  // whether the user came from the hover or the lens.
   const teachArgs = encodeURIComponent(JSON.stringify({
     kind,
-    label: issue ?? label ?? "",
+    label: label ?? "",
+    issue: issue ?? "",
+    fix: fix ?? "",
     explanation: explanation ?? "",
+    path: meta.path,
+    startLine: meta.startLine,
+    endLine: meta.endLine,
   }));
   actions.push(`[$(comment-discussion) Teach me more](command:protege.teachHighlight?${teachArgs})`);
   actions.push(`[$(close) Clear](command:protege.clearHighlights)`);

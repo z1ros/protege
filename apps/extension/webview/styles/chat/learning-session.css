@@ -46,7 +46,7 @@
 }
 .learn-close-btn {
   background: transparent;
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   color: var(--text-dim);
   border-radius: 6px;
   width: 28px;
@@ -315,7 +315,7 @@
 .learn-btn {
   padding: 6px 12px;
   background: transparent;
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: 6px;
   color: var(--text);
   font-family: inherit;
@@ -349,7 +349,7 @@
 
 .learn-dev-toggle {
   background: transparent;
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: 6px;
   padding: 2px 8px;
   font-family: inherit;
@@ -387,7 +387,7 @@
 }
 .learn-dev-copy {
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: 5px;
   padding: 3px 10px;
   font-family: inherit;
@@ -410,7 +410,7 @@
 }
 .learn-dev-code {
   background: #0f1115;
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: 4px;
   padding: 8px 10px;
   font-family: var(--font-mono);

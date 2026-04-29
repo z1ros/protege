@@ -34,3 +34,31 @@
   line-height: 1;
 }
 
+/* ==========================================================
+   Smooth programmatic scroll
+   --------------------------------------------------------
+   Chat auto-scrolls to bottom on every new message; history scrolls
+   to top on filter changes; learning-session reveals the active step
+   with scrollIntoView. Without this rule those calls land as hard
+   snaps. With scroll-behavior: smooth, the same calls glide over
+   ~250ms (browser default) and the UI reads less jumpy.
+
+   IMPORTANT: this only affects PROGRAMMATIC scroll (scrollTo,
+   scrollIntoView, setting scrollTop directly). User wheel and
+   trackpad scrolling go through the OS, which already handles
+   momentum natively — those stay exactly as before, no styling
+   change. */
+.messages,
+.notes-list,
+.notes-body-edit,
+.notes-body-preview,
+.history-content,
+.history-list,
+.lesson-list,
+.live-content,
+.echo-root,
+.streak-journal-scroll,
+.streak-scroll {
+  scroll-behavior: smooth;
+}
+

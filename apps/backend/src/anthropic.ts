@@ -87,6 +87,11 @@ export const TOOL_DEFINITIONS: Anthropic.Messages.Tool[] = [
               path: { type: "string" },
               startLine: { type: "number" },
               endLine: { type: "number" },
+              anchor: {
+                type: "string",
+                description:
+                  "REQUIRED. A short unique substring (4-40 chars) copied verbatim from startLine — used to verify the line number is correct. If the substring isn't on the claimed line, the highlight is rejected and you'll be told to retry. Pick something distinctive from the line: a tag name, function call, identifier — NOT generic punctuation like `}` or `)`. Example: for `<Swiper spaceBetween={20}>` use `<Swiper`.",
+              },
               kind: {
                 type: "string",
                 enum: ["focus", "bug", "pattern", "tip"],
@@ -96,7 +101,7 @@ export const TOOL_DEFINITIONS: Anthropic.Messages.Tool[] = [
               fix: { type: "string", description: "The corrected code snippet. Shown as a copyable code block in the hover card" },
               explanation: { type: "string", description: "Why this matters — the conceptual lesson. Max two sentences" },
             },
-            required: ["path", "startLine", "endLine"],
+            required: ["path", "startLine", "endLine", "anchor"],
           },
         },
       },
@@ -130,7 +135,7 @@ export const TOOL_DEFINITIONS: Anthropic.Messages.Tool[] = [
   {
     name: "teach_step",
     description:
-      "Agentic teaching beat. Highlights ONE piece of code and narrates ONE short spoken sentence about it. Use repeatedly (4-8 times) to walk the user through a concept, one idea per call. The extension applies the highlight, speaks the narration via TTS (mic muted during speech), waits for playback to finish, then returns so you can issue the next beat. Only use in teaching mode.",
+      "VOICE TEACHING ONLY (mode === 'teaching'). Highlights ONE piece of code and narrates ONE short spoken sentence via TTS. The extension waits for audio playback to finish before returning. NEVER use this tool in 'teaching-text' or text channels — the user has no audio output, the call will appear as a stuck loading chip in chat with nothing happening. In teaching-text mode, write your explanation as prose and use highlight_code (silent) for the visual.",
     input_schema: {
       type: "object",
       properties: {
@@ -140,9 +145,14 @@ export const TOOL_DEFINITIONS: Anthropic.Messages.Tool[] = [
             path: { type: "string", description: "Workspace-relative or absolute path" },
             startLine: { type: "number" },
             endLine: { type: "number", description: "Same as startLine for a single line" },
+            anchor: {
+              type: "string",
+              description:
+                "REQUIRED. Unique substring (4-40 chars) copied verbatim from startLine. Verifies the line number is correct — wrong-line highlights are rejected. Pick something distinctive (tag name, identifier), not punctuation.",
+            },
             label: { type: "string", description: "Optional short inline tag (e.g. 'state init')" },
           },
-          required: ["path", "startLine", "endLine"],
+          required: ["path", "startLine", "endLine", "anchor"],
         },
         narration: {
           type: "string",
@@ -159,13 +169,13 @@ export const TOOL_DEFINITIONS: Anthropic.Messages.Tool[] = [
   {
     name: "remember",
     description:
-      "Save a durable fact about the user for future sessions. Use sparingly — only things worth remembering next week. Types: profile (stack, goals), struggle (recurring gaps), win (breakthroughs), decision (choices + why), preference (how they like to work), context (short-term project notes).",
+      "Save a durable fact about the user for future sessions. For most types — profile, struggle, win, decision, preference, context — use sparingly (things worth remembering next week, not every turn). EXCEPTION: type='concept' fires every time the user produces a correct YOUR-TURN answer in teaching mode — that's not 'sparing', that's the mastery-tracking signal future sessions rely on. Types: profile (stack, goals), struggle (recurring gaps), win (breakthroughs), decision (choices + why), preference (how they like to work), context (short-term project notes), concept (verified mastery — content MUST start with 'user owns: [concept name] — ').",
     input_schema: {
       type: "object",
       properties: {
         type: {
           type: "string",
-          enum: ["profile", "struggle", "win", "decision", "preference", "context"],
+          enum: ["profile", "struggle", "win", "decision", "preference", "context", "concept"],
         },
         content: {
           type: "string",

@@ -5,13 +5,14 @@ import type {
   ChatRunRequest,
   ChatRunResponse,
   ChatTier,
+  LessonStateSnapshot,
   OAITurn,
   ToolCall,
   ToolResult,
 } from "@protege/types";
-import { BACKEND_URL } from "../user/protegeClient.js";
-import { authHeaders } from "../user/auth.js";
+import { BACKEND_URL, authedFetch, NotAuthenticatedError } from "../user/protegeClient.js";
 import { executeTool, buildWorkspaceContext } from "../ai/tools.js";
+import { isTeachingMessage } from "../intent/teachingTrigger.js";
 
 /**
  * We import the user's backend preference via dynamic require to avoid
@@ -41,6 +42,10 @@ interface RunnerCallbacks {
     status: "running" | "done" | "error"
   ) => void;
   log?: (line: string) => void;
+  /** Fired whenever the backend returns lesson-session state. Used by
+   *  webviewHost to broadcast `lesson/state` to the chat panel so the
+   *  in-app banner can update per turn. Null = lesson ended or none active. */
+  onLessonState?: (state: LessonStateSnapshot | null) => void;
 }
 
 export interface RunChatOptions {
@@ -64,7 +69,22 @@ export async function runChat(
   cb: RunnerCallbacks = {},
   opts: RunChatOptions = {}
 ): Promise<string> {
-  const mode: ChatMode = opts.mode ?? "text";
+  // Mode resolution order: explicit caller mode > teach-shaped first message > text.
+  // The teaching upgrade only fires on the FIRST message of a thread (no
+  // history) so short mid-lesson replies like "ok" or "got it" don't flip
+  // the mode out from under the lesson.
+  const isFirstMessage = !opts.history || opts.history.length === 0;
+  const inferredTeaching =
+    opts.mode === undefined &&
+    isFirstMessage &&
+    isTeachingMessage(userMessage);
+  const mode: ChatMode =
+    opts.mode ?? (inferredTeaching ? "teaching-text" : "text");
+  if (inferredTeaching) {
+    console.log(
+      `[protege] runChat: teaching-text mode triggered from first-message classifier`
+    );
+  }
   const workspace = await buildWorkspaceContext();
 
   // Seed with recent conversation history so Claude can resolve follow-up
@@ -91,11 +111,23 @@ export async function runChat(
       backend,
     };
 
-    const res = await fetch(`${BACKEND_URL}/chat`, {
-      method: "POST",
-      headers: { ...authHeaders() },
-      body: JSON.stringify(body),
-    });
+    // authedFetch handles 401 silently: it re-probes VS Code for the
+    // current GitHub session (no UI), retries once, and only throws
+    // NotAuthenticatedError if the session is genuinely gone. That
+    // replaces the raw fetch that used to propagate the backend's
+    // "invalid or expired token" string straight into the chat bubble.
+    let res: Response;
+    try {
+      res = await authedFetch(`${BACKEND_URL}/chat`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      if (err instanceof NotAuthenticatedError) {
+        throw new Error("Sign in with GitHub to use Protege.");
+      }
+      throw err;
+    }
 
     const raw = await res.text();
     let data: ChatRunResponse & { error?: string } = { messages: [] };
@@ -113,6 +145,14 @@ export async function runChat(
     messages = data.messages;
     newUserMessage = undefined;
     toolResults = undefined;
+
+    // Forward lesson state to the host whenever the backend includes it.
+    // This fires once per round (server-tool round, terminal reply, etc.) —
+    // the host dedupes by storing only the latest state and broadcasting
+    // a single `lesson/state` message per turn.
+    if (data.lessonState !== undefined) {
+      cb.onLessonState?.(data.lessonState);
+    }
 
     if (data.reply !== undefined) {
       cb.log?.(`[protege] chat final round=${round + 1}`);
@@ -184,11 +224,18 @@ export async function runSingleQuery(
     noTools: opts.noTools ?? true,
   };
 
-  const res = await fetch(`${BACKEND_URL}/chat`, {
-    method: "POST",
-    headers: { ...authHeaders() },
-    body: JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await authedFetch(`${BACKEND_URL}/chat`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    if (err instanceof NotAuthenticatedError) {
+      throw new Error("Sign in with GitHub to use Protege.");
+    }
+    throw err;
+  }
 
   const raw = await res.text();
   let data: ChatRunResponse & { error?: string } = { messages: [] };

@@ -329,7 +329,21 @@ export interface ToolResult {
   error?: string;
 }
 
-export type ChatMode = "text" | "voice" | "voice-dialogue" | "teaching";
+/**
+ * Chat channels:
+ *  - text: typed Q&A, no TTS, full markdown.
+ *  - voice / voice-dialogue: spoken reply, no markdown, short.
+ *  - teaching: voice-driven agentic lesson with `teach_step` + TTS.
+ *  - teaching-text: typed back-and-forth lesson with beat structure +
+ *    PAUSE-at-checkpoint discipline. Distinct from `teaching` so the
+ *    backend prompt can pick the right channel-specific block.
+ */
+export type ChatMode =
+  | "text"
+  | "voice"
+  | "voice-dialogue"
+  | "teaching"
+  | "teaching-text";
 
 /**
  * Task shaping — classifier output consumed by the chat router.
@@ -456,11 +470,52 @@ export interface ChatRunRequest {
   noTools?: boolean;
 }
 
+/**
+ * Slim projection of one step from the lesson plan, sent to the webview
+ * so it can render a roadmap of the whole lesson under the banner.
+ * Excludes the actual code (which can be large) — just the type label
+ * and the planner-generated summary.
+ */
+export interface LessonStepPreview {
+  type: string;
+  summary: string;
+}
+
+/**
+ * Snapshot of the lesson session state at the moment the backend reply
+ * was generated. Used by the webview to render a lesson-progress banner.
+ * `null` when there's no active lesson (regular chat). When `phase ===
+ * "DONE"` the lesson just ended this turn.
+ */
+export interface LessonStateSnapshot {
+  id: string;
+  concept: string;
+  level: "zero" | "comfortable" | "expert" | "unknown";
+  phase: "PROBE" | "TEACHING" | "DONE";
+  /** 1-indexed for display. 0 when in PROBE phase. */
+  stepNumber: number;
+  /** Total planned steps. Note: the plan is mutable (insertions on
+   *  why-questions / confusions can grow it), so this can change turn
+   *  to turn. */
+  totalSteps: number;
+  /** Type of the step that was just delivered, or null in PROBE. */
+  currentStepType: string | null;
+  /** Planner-generated summary of the current step, e.g. "Add useEffect
+   *  to React import line". Lets the banner show what's actually
+   *  happening, not just an abstract type label. Null in PROBE. */
+  currentStepSummary: string | null;
+  /** Full lesson plan (just type + summary, no code) so the webview
+   *  can render a collapsible roadmap. Empty array in PROBE. */
+  plan: LessonStepPreview[];
+}
+
 export interface ChatRunResponse {
   // Either a final reply, or a set of tool calls the extension must execute.
   reply?: string;
   toolCalls?: ToolCall[];
   messages: OAITurn[]; // updated running conversation
+  /** Present only when the chat round was driven by a lesson session. */
+  lessonState?: LessonStateSnapshot | null;
 }
 
 export interface ChatRequest {
@@ -560,7 +615,21 @@ export type WebviewToHost =
       messageId: string;
     }
   | { type: "debug/log"; tag: string; message: string }
+  | { type: "notes/list" }
+  | { type: "notes/create"; title?: string }
+  | { type: "notes/update"; id: string; title?: string; body?: string }
+  | { type: "notes/delete"; id: string }
   | { type: "echo/msg"; payload: EchoWebviewToHost };
+
+/** A single user-authored note in the Notes tab. Stored locally in
+ *  globalState; cloud sync TBD. `body` is plain markdown. */
+export interface Note {
+  id: string;
+  title: string;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export type HostToWebview =
   | { type: "chat/append"; message: ChatMessage }
@@ -572,6 +641,7 @@ export type HostToWebview =
    *  the current chat view. */
   | { type: "chat/fullHistory"; messages: ChatMessage[] }
   | { type: "chat/searchResults"; results: { message: ChatMessage; snippet: string }[] }
+  | { type: "notes/state"; notes: Note[] }
   | { type: "chat/loading"; loading: boolean }
   | { type: "chat/error"; error: string }
   | {
@@ -715,6 +785,14 @@ export type HostToWebview =
   | { type: "tour/narrationReady"; index: number; narration: string }
   | { type: "explainBack/state"; state: ExplainBackSession | null }
   | { type: "learning/state"; state: LearningSession | null }
+  | {
+      /** Micro-step lesson-session snapshot. Sent on every chat turn
+       *  when a teaching-text lesson is active. Null when the lesson
+       *  ends or no lesson is in flight. Webview renders LessonBanner
+       *  off this state. */
+      type: "lesson/state";
+      state: LessonStateSnapshot | null;
+    }
   | {
       /** Broadcast the in-progress session trace when `protege.learning.devLogging`
        *  is on. Panel reads it to render the Dev drawer. Null = clear. */

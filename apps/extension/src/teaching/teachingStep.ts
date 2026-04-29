@@ -66,6 +66,7 @@ export interface TeachStepArgs {
     path: string;
     startLine: number;
     endLine: number;
+    anchor?: string;
     label?: string;
   };
   narration: string;
@@ -95,6 +96,7 @@ export async function runTeachStep(args: TeachStepArgs): Promise<string> {
             path: h.path,
             startLine: h.startLine,
             endLine: h.endLine,
+            anchor: h.anchor,
             kind: "focus",
             label: h.label,
           } as HighlightRegion,

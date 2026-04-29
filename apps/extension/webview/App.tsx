@@ -24,13 +24,17 @@ import { vscode, onHostMessage } from "./vscode.js";
 import { VoiceMode } from "./VoiceMode.js";
 import { ConceptsTab } from "./ConceptsTab.js";
 import { LiveTab } from "./LiveTab.js";
-import { MapTab } from "./MapTab.js";
+// MapTab retired 2026-04-23 — Map tab removed from header. Keeping the
+// file in tree (just unimported) in case the surface comes back.
+// import { MapTab } from "./MapTab.js";
 import { EchoTab } from "./EchoTab.js";
+import { NotesTab } from "./NotesTab.js";
 import { SessionStrip } from "./SessionStrip.js";
 import { ExplainBackPanel } from "./ExplainBackPanel.js";
 import { LearningSessionPanel } from "./LearningSessionPanel.js";
 import { ChatSearchBar } from "./ChatSearchBar.js";
 import { ChatHistoryPanel } from "./ChatHistoryPanel.js";
+import { LessonBanner } from "./LessonBanner.js";
 import { CinematicPlate } from "./CinematicPlate.js";
 import { AssistantMarkdown } from "./AssistantMarkdown.js";
 import { Overlay } from "./Overlay.js";
@@ -42,9 +46,12 @@ import { TipDetailOverlay, type TipDetail } from "./TipDetailOverlay.js";
 const ProfilePage = lazy(() =>
   import("./ProfilePage.js").then((m) => ({ default: m.ProfilePage }))
 );
-const SubscriptionPage = lazy(() =>
-  import("./SubscriptionPage.js").then((m) => ({ default: m.SubscriptionPage }))
-);
+// SubscriptionPage retired as a top-level overlay (2026-04-23) — the
+// header icon is gone and the page no longer mounts as its own panel.
+// Plan info now lives inline inside ProfilePage with a click-to-expand
+// row. File kept on disk so the detailed compare table is reusable
+// when real billing wiring lands.
+// const SubscriptionPage = lazy(() => …);
 import {
   IconZap,
   IconBug,
@@ -59,7 +66,7 @@ import {
 } from "./icons.js";
 import protegeLogoUrl from "./protege-logo.svg";
 
-type Mode = "chat" | "concepts" | "live" | "map" | "echo";
+type Mode = "chat" | "concepts" | "live" | "echo" | "notes";
 type ChatInputMode = "text" | "voice";
 
 // Legacy Code IQ route is hidden behind a dev flag — see the "Archive CodeIQ"
@@ -317,7 +324,7 @@ export function App() {
   const [breakdown, setBreakdown] = useState<IqBreakdown | null>(null);
   const [iqV2, setIqV2] = useState<IqV2 | null>(null);
   const [toast, setToast] = useState<GainEvent | null>(null);
-  const [overlay, setOverlay] = useState<"profile" | "subscription" | null>(null);
+  const [overlay, setOverlay] = useState<"profile" | null>(null);
   const [authUser, setAuthUser] = useState<{
     githubId: string;
     login: string;
@@ -326,10 +333,6 @@ export function App() {
   } | null>(null);
   const [scanning, setScanning] = useState(false);
   const [liveMode, setLiveMode] = useState(false);
-  // Hoisted here (not in LiveTab) so tab switches don't remount the state
-  // to the default. Hydrated via `explainMode/state` on every mount + any
-  // config change. Passed down to LiveTab as a controlled prop.
-  const [explainMode, setExplainMode] = useState<"text" | "voice" | "both">("text");
   // Architecture Tour (A2) session state. Hoisted here so the strip
   // survives tab switches. Host is the source of truth — we mirror
   // whatever `tour/state` comes in, and partial updates via
@@ -343,6 +346,11 @@ export function App() {
   // Learning Mode session. Same ownership pattern — host drives, panel
   // reflects. When non-null, LearningSessionPanel takes over the sidebar.
   const [learning, setLearning] = useState<LearningSession | null>(null);
+  // Micro-step lesson session state (Layer 2 of teaching-real-1to1).
+  // Host broadcasts `lesson/state` per chat turn; banner reads from this.
+  // Null when no lesson active or just ended.
+  const [lessonState, setLessonState] =
+    useState<import("@protege/types").LessonStateSnapshot | null>(null);
   // Dev-mode trace — host broadcasts `learning/devTrace` when the
   // `protege.learning.devLogging` setting is on. Null = setting off or
   // no active session. Passed through to the panel's Dev drawer.
@@ -374,6 +382,14 @@ export function App() {
   const headerRef = useRef<HTMLElement>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // Mirror these into refs so the message listener (set up once with
+  // `[]` deps below) can read the current values instead of the stale
+  // closure snapshot. Without this, hover-triggered actions like
+  // "Explain" / "Fix it" would always send as text mode no matter what
+  // the user picked, because the captured `chatInputMode` would be the
+  // initial "text".
+  const chatInputModeRef = useRef<ChatInputMode>(chatInputMode);
+  chatInputModeRef.current = chatInputMode;
 
   useEffect(() => {
     const off = onHostMessage((msg) => {
@@ -448,12 +464,15 @@ export function App() {
       } else if (msg.type === "teach/finding") {
         teachFinding(msg.finding);
       } else if (msg.type === "chat/autoSend") {
-        // Triggered from a highlight hover's "Teach me more" link.
-        // Ensure we're in the chat tab, then send the prompt as if
-        // the user typed it.
+        // Triggered from selection-hover actions (Explain, Fix it,
+        // etc.) and the "Teach me more" highlight chip. The reply
+        // lands through whichever channel the chat composer is
+        // currently in — voice if the user is in voice mode, text
+        // otherwise. Reading via the ref dodges the stale-closure
+        // trap (this listener was set up with [] deps).
+        const currentInputMode = chatInputModeRef.current;
         setMode("chat");
-        setChatInputMode("text");
-        sendMessage(msg.message);
+        sendMessage(msg.message, currentInputMode);
       } else if (msg.type === "voice/primeConversation") {
         // Teaching Thread's "Ask" button. Swaps the chat into voice input
         // mode before priming so the reply streams back in voice-tuned
@@ -461,7 +480,7 @@ export function App() {
         // conversation by just speaking again.
         setMode("chat");
         setChatInputMode("voice");
-        sendMessage(msg.message);
+        sendMessage(msg.message, "voice");
       } else if (msg.type === "voice/playExplain") {
         // Ghost Lens "Explain" fired in voice mode. The host has already
         // trimmed the text; we just fetch /tts and play. Uses a single
@@ -506,8 +525,6 @@ export function App() {
         // future surface (status bar, inlay, etc.) can re-subscribe here.
       } else if (msg.type === "watcher/dismiss") {
         // same as above — no-op
-      } else if (msg.type === "explainMode/state") {
-        setExplainMode(msg.mode);
       } else if (msg.type === "tour/state") {
         setTour(msg.state);
       } else if (msg.type === "tour/narrationReady") {
@@ -525,6 +542,8 @@ export function App() {
         setExplainBack(msg.state);
       } else if (msg.type === "learning/state") {
         setLearning(msg.state);
+      } else if (msg.type === "lesson/state") {
+        setLessonState(msg.state);
         // If the session cleared, drop the trace too — `learning/devTrace`
         // also broadcasts null on session end, but wiping here is a
         // cheap safety net against drift if a trace lingers.
@@ -585,15 +604,20 @@ export function App() {
     el.style.height = `${Math.min(max, el.scrollHeight)}px`;
   }, [input]);
 
-  const sendMessage = (text: string) => {
+  const sendMessage = (text: string, modeOverride?: ChatInputMode) => {
     const trimmed = text.trim();
     if (!trimmed || loading) return;
+    // Read mode through the ref so calls from the message listener
+    // (which has stale closures) still pick up the current selection.
+    // An explicit override wins — used by hover-triggered actions
+    // that want to pin the channel for this one send.
+    const effectiveMode = modeOverride ?? chatInputModeRef.current;
     const user: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
       content: trimmed,
       createdAt: new Date().toISOString(),
-      source: chatInputMode === "voice" ? "voice" : "text",
+      source: effectiveMode === "voice" ? "voice" : "text",
     };
     // Snapshot the current visible messages BEFORE adding the user's
     // new one — that's the AI's short-term context for this turn.
@@ -612,15 +636,31 @@ export function App() {
     vscode.postMessage({
       type: "chat/send",
       message: trimmed,
-      mode: chatInputMode,
+      mode: effectiveMode,
       contextMessages,
     });
   };
 
-  const teachFinding = (f: Finding) => {
+  const teachFinding = (
+    f: Finding & { currentLine?: string; lang?: string; message?: string }
+  ) => {
     setMode("chat");
     setChatInputMode("text");
-    const prompt = `I saw a ${f.type} on line ${f.line}: "${f.title}". Can you teach me about it and show me how to fix it properly?`;
+    // Live-review CodeLens enriches the payload with the actual code line
+    // and language so the AI can quote the user's real code instead of
+    // guessing. When that context is present we send a richer prompt:
+    // the AI then has enough to discuss the line itself (e.g. spot a
+    // `let` that should be `const`, an unused destructured value, etc.)
+    // not just regurgitate the rule title.
+    const codeBlock = f.currentLine
+      ? `\n\n\`\`\`${f.lang ?? ""}\n${f.currentLine}\n\`\`\``
+      : "";
+    const note = f.message ?? f.explanation;
+    const noteBlock = note ? `\n\nProtege flagged: ${note}` : "";
+    const prompt =
+      `Teach me about "${f.title}" on line ${f.line}.${codeBlock}${noteBlock}` +
+      `\n\nWalk me through what's happening, why it matters, and whether ` +
+      `anything else on this line could be improved.`;
     sendMessage(prompt);
   };
 
@@ -656,11 +696,10 @@ export function App() {
 
   const isEmpty = messages.length === 0;
 
-  // Login-first gate. The host warms the GitHub session at activation; if
-  // the user has signed in to VS Code's GitHub provider, `authUser` will
-  // arrive within ~50ms of `ready` and we render the full UI. Otherwise we
-  // show a sign-in wall and refuse to render the chat / Echo / live tabs.
-  // The gate is the ONLY surface that can hit the backend pre-auth.
+  // Login gate. Auto-resume policy: when VS Code has a cached GitHub
+  // session and the user hasn't opted out, the host broadcasts
+  // `auth/user: <user>` on ready and we never see the gate. We only
+  // hit this path on a fresh install or after an explicit sign-out.
   if (authUser === null) {
     return (
       <div className="app auth-gate">
@@ -671,9 +710,9 @@ export function App() {
           </div>
           <div className="auth-gate-title">Sign in to get started</div>
           <div className="auth-gate-body">
-            Protege keeps your Code IQ, concepts, and Echo activity tied to
-            your GitHub account. We use it for sign-in only — no repo access,
-            no posts, nothing else.
+            Protege keeps your concepts, Echo activity, and learning history
+            tied to your GitHub account. We use it for sign-in only — no
+            repo access, no posts, nothing else.
           </div>
           <button
             type="button"
@@ -746,22 +785,22 @@ export function App() {
             <div className="brand-name">Protege</div>
           </button>
           <div className="brand-spacer" />
-          <div
-            className="status-chip"
-            title={`Code IQ ${codeIq} / ${maxIq}${streak.current > 0 ? ` · ${streak.current}d streak (longest ${streak.longest}d)` : ""} — click for history`}
-            onClick={() => setStreakOpen((o) => !o)}
-            style={{ cursor: "pointer" }}
-          >
-            {streak.current > 0 && (
-              <>
-                <span className="status-flame"><IconZap size={11} /></span>
-                <span className="status-streak">{streak.current}d</span>
-                <span className="status-sep" aria-hidden>·</span>
-              </>
-            )}
-            <span className="status-iq">{codeIq}</span>
-            <span className="status-iq-label microcaps">IQ</span>
-          </div>
+          {/* Header chip is streak-only now (2026-04-23) — the
+              "${codeIq} IQ" label was retired across the app, so we
+              drop it here too. The chip hides entirely when there's
+              no active streak; the streak journal still opens via
+              click when one exists. */}
+          {streak.current > 0 && (
+            <div
+              className="status-chip"
+              title={`${streak.current}d streak · longest ${streak.longest}d — click for history`}
+              onClick={() => setStreakOpen((o) => !o)}
+              style={{ cursor: "pointer" }}
+            >
+              <span className="status-flame"><IconZap size={11} /></span>
+              <span className="status-streak">{streak.current}d</span>
+            </div>
+          )}
           <div className="header-actions">
             <button
               className={`header-icon-btn scan-btn ${liveMode ? "active" : ""} ${scanning ? "scanning" : ""}`}
@@ -809,18 +848,9 @@ export function App() {
                 Sign in
               </button>
             )}
-            <button
-              className={`header-icon-btn ${overlay === "subscription" ? "active" : ""}`}
-              onClick={() => setOverlay(overlay === "subscription" ? null : "subscription")}
-              title={overlay === "subscription" ? "Close subscription" : "Subscription"}
-              aria-label="Subscription"
-              aria-pressed={overlay === "subscription"}
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                <circle cx="12" cy="12" r="9" />
-                <path d="M12 7v10M9 10h5a2 2 0 010 4h-4a2 2 0 000 4h5" strokeLinecap="round" />
-              </svg>
-            </button>
+            {/* Subscription icon removed 2026-04-23 — plan info now lives
+                inline inside ProfilePage (click-to-expand row), so this
+                header slot disappears. Keeps the header lean. */}
           </div>
         </div>
 
@@ -854,19 +884,11 @@ export function App() {
             {mode === "echo" && !overlay && !streakOpen && <span className="tab-dot" />}
             Echo
           </button>
-          {SHOW_CODEIQ_TAB && (
-            <button
-              className={`tab ${mode === "concepts" && !overlay && !streakOpen ? "active" : ""}`}
-              onClick={() => {
-                setMode("concepts");
-                setOverlay(null);
-                setStreakOpen(false);
-              }}
-            >
-              {mode === "concepts" && !overlay && !streakOpen && <span className="tab-dot" />}
-              Code IQ
-            </button>
-          )}
+          {/* Legacy "Code IQ" (concepts) tab removed 2026-04-23 — the
+              term was retired across the app; Echo replaces it. The
+              SHOW_CODEIQ_TAB dev flag stays declared above only so any
+              remaining test/script references compile, but the tab
+              itself is no longer rendered. */}
           <button
             className={`tab ${mode === "live" && !overlay && !streakOpen ? "active" : ""}`}
             onClick={() => {
@@ -879,16 +901,15 @@ export function App() {
             Live
           </button>
           <button
-            className={`tab ${mode === "map" && !overlay && !streakOpen ? "active" : ""}`}
+            className={`tab ${mode === "notes" && !overlay && !streakOpen ? "active" : ""}`}
             onClick={() => {
-              setMode("map");
+              setMode("notes");
               setOverlay(null);
               setStreakOpen(false);
             }}
-            title="Project Map — what matters in this codebase"
           >
-            {mode === "map" && !overlay && !streakOpen && <span className="tab-dot" />}
-            Map
+            {mode === "notes" && !overlay && !streakOpen && <span className="tab-dot" />}
+            Notes
           </button>
         </div>
 
@@ -910,22 +931,19 @@ export function App() {
         />
       )}
 
-      {/* Learning Mode overlay — same takeover pattern. Stop posts
-          `learning/stop`, host broadcasts `learning/state: null`,
-          this unmounts. */}
-      {learning && (
-        <LearningSessionPanel
-          session={learning}
-          devTrace={learningTrace}
-          onClose={() => vscode.postMessage({ type: "learning/stop" })}
-        />
-      )}
+      {/* Learning Mode overlay disabled — the takeover panel was
+          rendering broken sessions (looping teach_steps, partially
+          generated plans) and bleeding through the chat layer. Hidden
+          until the underlying loop is redesigned. The host-side state
+          machine still runs; we just don't paint it. To re-enable:
+          restore the {learning && <LearningSessionPanel … />} block. */}
 
       {streakOpen ? (
         <div className="streak-inline">
           <StreakJournal
             currentStreak={streak.current}
             longestStreak={streak.longest}
+            dailyIq={dailyIq}
           />
         </div>
       ) : mode === "chat" && chatInputMode === "text" && chatHistoryOpen ? (
@@ -1025,6 +1043,7 @@ export function App() {
             </div>
           ) : (
             <div className="messages">
+              <LessonBanner state={lessonState} />
               {messages.map((m) => {
                 const { clean, followups, fork } =
                   m.role === "assistant"
@@ -1070,16 +1089,9 @@ export function App() {
                         >
                           ◎ Just do it
                         </button>
-                        <button
-                          className="fork-btn fork-btn--secondary"
-                          onClick={() =>
-                            handleForkChoice("learn", fork.goal, m.id)
-                          }
-                          disabled={loading}
-                          title="Step-by-step plan; you write each step, Protege validates"
-                        >
-                          ✿ Learn it with me
-                        </button>
+                        {/* "Learn it with me" removed — the old turn-loop
+                            Learning Mode is being superseded by the typed
+                            TEACHING_TEXT path. Type "teach me X" instead. */}
                       </div>
                     )}
                     {followups.length > 0 && !loading && !forkAvailable && (
@@ -1103,7 +1115,7 @@ export function App() {
                 <div className="msg msg-assistant">
                   <div className="role">Protege</div>
                   <div className="content">
-                    {toolActivity.length > 0 ? (
+                    {toolActivity.length > 0 && (
                       <div className="tool-activity">
                         {toolActivity.map((t, i) => (
                           <div
@@ -1127,13 +1139,13 @@ export function App() {
                           </div>
                         ))}
                       </div>
-                    ) : (
-                      <span className="typing">
-                        <span className="typing-dot" />
-                        <span className="typing-dot" />
-                        <span className="typing-dot" />
-                      </span>
                     )}
+                    <span className="typing">
+                      <span className="typing-dot" />
+                      <span className="typing-dot" />
+                      <span className="typing-dot" />
+                      <span className="typing-label">thinking…</span>
+                    </span>
                   </div>
                 </div>
               )}
@@ -1269,22 +1281,11 @@ export function App() {
             });
           }}
           modelStatus={modelStatus}
-          explainMode={explainMode}
-          onExplainModeChange={(mode) => {
-            setExplainMode(mode);
-            vscode.postMessage({ type: "explainMode/set", mode });
-          }}
-        />
-      ) : mode === "map" ? (
-        <MapTab
-          activeTourPath={
-            tour && tour.steps[tour.currentIndex]?.path
-              ? tour.steps[tour.currentIndex].path
-              : null
-          }
         />
       ) : mode === "echo" ? (
         <EchoTab />
+      ) : mode === "notes" ? (
+        <NotesTab />
       ) : null}
 
       {/* Single persistent overlay — the backdrop stays mounted across panel
@@ -1310,18 +1311,8 @@ export function App() {
                 recentGains={recentGains}
               />
             )}
-            {overlay === "subscription" && (
-              <SubscriptionPage
-                plan="trial"
-                trialDaysLeft={2}
-                chatMessagesUsed={32}
-                chatMessagesLimit={50}
-                toolCallsUsed={3}
-                toolCallsLimit={5}
-                voiceMinutesUsed={6}
-                voiceMinutesLimit={10}
-              />
-            )}
+            {/* `overlay === "subscription"` branch removed — the
+                SubscriptionPage no longer renders as an overlay. */}
           </Suspense>
         </div>
       </Overlay>
@@ -1332,11 +1323,6 @@ export function App() {
 
     </div>
   );
-}
-
-function shortPath(full: string): string {
-  const parts = full.split(/[\\/]/);
-  return parts[parts.length - 1] || full;
 }
 
 /**
@@ -1378,33 +1364,43 @@ function parseAssistantExtras(content: string): {
   return { clean: working.trim(), followups, fork };
 }
 
+// Truncate paths to just the basename so the chip stays compact —
+// "Reading /Users/Yura/Desktop/todo-demo/app/page.tsx" becomes
+// "Reading page.tsx". Full path is in the tool result anyway. Splits on
+// both `/` and `\` so Windows paths render the same way.
+function shortPath(p: unknown): string {
+  if (typeof p !== "string") return String(p ?? "file");
+  const parts = p.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] ?? p;
+}
+
 function toolLabel(name: string, args: Record<string, unknown>): string {
   switch (name) {
     case "read_file":
-      return `Reading ${args.path ?? "file"}`;
+      return `Reading ${shortPath(args.path)}`;
     case "list_files":
       return `Listing files${args.pattern ? ` ${args.pattern}` : ""}`;
     case "grep":
       return `Searching${args.glob ? ` in ${args.glob}` : ""} for /${args.pattern}/`;
     case "show_code":
-      return `Showing ${args.path} L${args.startLine}–${args.endLine}`;
+      return `Showing ${shortPath(args.path)} L${args.startLine}–${args.endLine}`;
     case "highlight_code": {
       const regions = (args.regions as Array<{ path?: string; kind?: string }> | undefined) ?? [];
       if (regions.length === 0) return "Highlighting code";
       if (regions.length === 1)
-        return `Highlighting ${regions[0].kind ?? "focus"} in ${regions[0].path}`;
+        return `Highlighting ${regions[0].kind ?? "focus"} in ${shortPath(regions[0].path)}`;
       return `Highlighting ${regions.length} regions`;
     }
     case "clear_highlights":
       return "Clearing highlights";
     case "edit_file":
-      return `Editing ${args.path}`;
+      return `Editing ${shortPath(args.path)}`;
     case "create_file":
-      return `Creating ${args.path}`;
+      return `Creating ${shortPath(args.path)}`;
     case "create_scratch_file":
       return `Writing lesson — ${args.name}`;
     case "run_file":
-      return `Running ${args.path}`;
+      return `Running ${shortPath(args.path)}`;
     default:
       return name;
   }

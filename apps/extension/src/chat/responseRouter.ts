@@ -159,35 +159,13 @@ export async function dispatchRouterActions(
     }
   }
 
-  // 2. For code fixes — show "Apply" CodeLens on the first code block
-  if (result.kind === "code_fix" && result.codeBlocks.length > 0) {
-    const firstBlock = result.codeBlocks[0];
-
-    // Try to find where this code should go by matching
-    // the first non-empty line of the code block in the file
-    const firstLine = firstBlock.code.split("\n").find((l) => l.trim())?.trim();
-    if (firstLine) {
-      const text = doc.getText();
-      const idx = text.indexOf(firstLine);
-      if (idx !== -1) {
-        const pos = doc.positionAt(idx);
-
-        // Show a temporary notification with apply action
-        const choice = await vscode.window.showInformationMessage(
-          `Protege has a code suggestion for line ${pos.line + 1}`,
-          "Show in editor",
-          "Dismiss"
-        );
-
-        if (choice === "Show in editor") {
-          editor.revealRange(
-            new vscode.Range(pos, pos),
-            vscode.TextEditorRevealType.InCenter
-          );
-        }
-      }
-    }
-  }
+  // 2. Code-fix replies — the chat reply itself shows the fenced code
+  // block, and if the same finding is in the live-review store the user
+  // already has an "✔ Apply fix" CodeLens row above the line. The
+  // showInformationMessage banner here ("Protege has a code suggestion
+  // for line N — Show in editor / Dismiss") was redundant noise on top
+  // of both surfaces, so it's gone (2026-04-29). No replacement —
+  // editor-side affordances cover this path.
 
   // 3. For teaching/explanation — show rich hover popups anchored to symbols
   if (

@@ -63,7 +63,7 @@
   gap: 12px;
   padding: 10px 14px 10px 36px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: var(--radius);
 }
 .journey-dot {
@@ -86,7 +86,7 @@
   font-size: 8px;
   letter-spacing: 0.18em;
   padding: 3px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: rgba(var(--electric-rgb), 0.16);
   border: 1px solid rgba(var(--electric-rgb), 0.4);
   color: var(--electric-soft);
@@ -99,7 +99,7 @@
   gap: 10px;
   padding: 8px 12px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: calc(var(--radius) - 2px);
 }
 .win-delta {
@@ -124,7 +124,7 @@
   flex: 1;
   padding: 10px 14px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: var(--radius);
   color: var(--text);
   font-family: inherit;

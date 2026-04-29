@@ -7,11 +7,13 @@ import type {
 } from "@protege/types";
 import { currentUserIdOrNull, fetchMe } from "../user/protegeClient.js";
 import { getGitHubUser, isSignedIn, onAuthChange, signOut } from "../user/auth.js";
+import { isOptedOut } from "../user/authState.js";
 import { runChat } from "./chatRunner.js";
+import { isTeachingMessage } from "../intent/teachingTrigger.js";
 import { getActiveFileEditor } from "../workspace/activeFile.js";
 import { classifyResponse, dispatchRouterActions } from "./responseRouter.js";
 import { getHistory, appendMessage, searchHistory, clearHistory } from "./chatHistory.js";
-import { clearAllHighlights } from "../ai/tools.js";
+import { clearAllHighlights, setLessonActive } from "../ai/tools.js";
 import { isLiveReviewActive } from "../review/liveReview.js";
 import { getOnDeviceStatus, onStatusChange } from "../ai/onDeviceModel.js";
 import {
@@ -368,8 +370,17 @@ export function mountProtegeWebview(
         void startGlobalWakeListener(context, userId);
       }
 
-      // Send GitHub auth state (silent — don't prompt yet)
-      const ghUser = await getGitHubUser(false);
+      // Auto-resume policy (2026-04-29): if VS Code already has a
+      // cached GitHub session AND the user hasn't explicitly signed
+      // out, skip the gate and broadcast the user directly so the
+      // chat surface mounts immediately. Only when the silent probe
+      // returns null (or the user has opted out) do we hand back
+      // null and let the gate take over.
+      //
+      // The earlier "always show gate" experiment forced an explicit
+      // click every panel mount, which the user found annoying — most
+      // VS Code extensions just resume.
+      const ghUser = isOptedOut() ? null : await getGitHubUser(false);
       post(webview, {
         type: "auth/user",
         user: ghUser
@@ -382,8 +393,19 @@ export function mountProtegeWebview(
           : null,
       });
     } else if (msg.type === "auth/login") {
-      // User clicked "Sign in with GitHub" in the webview — prompt
-      const ghUser = await getGitHubUser(true);
+      // User clicked "Continue as <login>" / "Sign in" on the gate.
+      //
+      // Try the silent probe first — if VS Code already has a GitHub
+      // session this returns the user without any UI dialog. The
+      // probe also calls setSession() internally, which fires
+      // onAuthChange listeners that broadcast `auth/user` to every
+      // mounted webview (so the launcher + main panel both flip past
+      // the gate at the same time). Only fall through to OAuth when
+      // the silent probe genuinely returns null.
+      let ghUser = await getGitHubUser(false);
+      if (!ghUser) {
+        ghUser = await getGitHubUser(true);
+      }
       post(webview, {
         type: "auth/user",
         user: ghUser
@@ -449,6 +471,21 @@ export function mountProtegeWebview(
     } else if (msg.type === "chat/clearHistory") {
       clearHistory();
       post(webview, { type: "chat/history", messages: [] });
+    } else if (msg.type === "notes/list") {
+      const { listNotes } = await import("../notes/notesStore.js");
+      post(webview, { type: "notes/state", notes: listNotes() });
+    } else if (msg.type === "notes/create") {
+      const { createNote, listNotes } = await import("../notes/notesStore.js");
+      createNote(msg.title);
+      post(webview, { type: "notes/state", notes: listNotes() });
+    } else if (msg.type === "notes/update") {
+      const { updateNote, listNotes } = await import("../notes/notesStore.js");
+      updateNote(msg.id, { title: msg.title, body: msg.body });
+      post(webview, { type: "notes/state", notes: listNotes() });
+    } else if (msg.type === "notes/delete") {
+      const { deleteNote, listNotes } = await import("../notes/notesStore.js");
+      deleteNote(msg.id);
+      post(webview, { type: "notes/state", notes: listNotes() });
     } else if (msg.type === "debug/log") {
       const { log } = await import("../log.js");
       log(msg.tag, msg.message);
@@ -478,20 +515,6 @@ export function mountProtegeWebview(
       await vscode.workspace
         .getConfiguration("protege")
         .update("explainMode", msg.mode, vscode.ConfigurationTarget.Global);
-    } else if (msg.type === "map/request") {
-      // Project Map tab (A1) — file tree + git signals + entry points.
-      const { collectProjectMap } = await import("../workspace/projectMap.js");
-      const data = await collectProjectMap();
-      post(webview, { type: "map/data", data });
-    } else if (msg.type === "map/fileSummary") {
-      // MAP tab — fetch (or pull from cache) a 2-sentence summary.
-      const { getFileSummary } = await import("../workspace/projectMap.js");
-      const summary = await getFileSummary(msg.path);
-      post(webview, { type: "map/fileSummaryResult", path: msg.path, summary });
-    } else if (msg.type === "map/openFile") {
-      // MAP tab — "Open file" button.
-      const { openMapFile } = await import("../workspace/projectMap.js");
-      await openMapFile(msg.path);
     } else if (msg.type === "tour/start") {
       // Architecture Tour (A2) — kick off a codebase walkthrough.
       const { startTour } = await import("../teaching/architectureTour.js");
@@ -961,7 +984,7 @@ async function handleChat(
   webview: vscode.Webview,
   userId: string,
   message: string,
-  mode: "text" | "voice" | "voice-dialogue" | "teaching",
+  mode: "text" | "voice" | "voice-dialogue" | "teaching" | "teaching-text",
   contextMessages?: ChatMessage[]
 ) {
   // --- Explicit "teach me X" short-circuit (fork chip redundant) ---
@@ -1059,9 +1082,29 @@ async function handleChat(
   // only when we're already in a voice channel (teaching is a voice-only
   // UX; it requires TTS to pace the highlights). Both "voice" and the
   // new "voice-dialogue" can graduate to teaching on the right intent.
-  let effectiveMode: "text" | "voice" | "voice-dialogue" | "teaching" = mode;
+  let effectiveMode:
+    | "text"
+    | "voice"
+    | "voice-dialogue"
+    | "teaching"
+    | "teaching-text" = mode;
   if ((mode === "voice" || mode === "voice-dialogue") && TEACH_INTENT_RE.test(message)) {
     effectiveMode = "teaching";
+  }
+  // Text-channel teaching upgrade — typed "teach me X" / "I don't get this"
+  // on the FIRST message of a thread routes through TEACHING_TEXT instead
+  // of plain TEXT_MODE. Restricted to first message so short follow-ups
+  // ("ok", "got it") don't keep re-evaluating and flipping modes mid-
+  // lesson. Distinct mode value from the voice teaching path so the
+  // backend prompt picks the right beat structure (typed PAUSE vs.
+  // voice agentic teach_step).
+  const isFirstMessage = (contextMessages ?? getHistory()).length === 0;
+  if (
+    effectiveMode === "text" &&
+    isFirstMessage &&
+    isTeachingMessage(message)
+  ) {
+    effectiveMode = "teaching-text";
   }
   // If the user typed but wake is listening, the reply will be spoken.
   // Promote to voice-dialogue so the prompt pulls a short, ear-friendly
@@ -1205,6 +1248,15 @@ async function handleChat(
             args: call.arguments,
             status,
           });
+        },
+        onLessonState: (state) => {
+          // Broadcast — every mounted Protege panel renders the same
+          // banner from this state, so we use broadcast() not post().
+          broadcast({ type: "lesson/state", state });
+          // Flip the codelens-flag so highlights painted during a
+          // lesson render with a stripped-down lens (no Teach me /
+          // Apply fix buttons — the user is already being taught).
+          setLessonActive(state?.phase === "TEACHING");
         },
       },
       { mode: effectiveMode, history: recentHistory }
@@ -1441,6 +1493,13 @@ function renderHtml(
   const styleUri = webview.asWebviewUri(
     vscode.Uri.joinPath(base, "assets", "main.css")
   );
+  // EchoTab embeds the dashboard inside the main panel. Vite's per-entry
+  // CSS bundling keeps echo styles in echo/echo.css (the standalone Echo
+  // panel still needs that path), so the main panel needs to load both
+  // stylesheets to paint the .echo-* classes.
+  const echoStyleUri = webview.asWebviewUri(
+    vscode.Uri.joinPath(base, "echo", "echo.css")
+  );
   const nonce = getNonce();
   // `wasm-unsafe-eval` is required for Shiki's Oniguruma grammar engine
   // (TextMate regex compiled to WebAssembly). Without it the webview's
@@ -1455,6 +1514,7 @@ function renderHtml(
 <base href="${baseUri}" />
 <meta http-equiv="Content-Security-Policy" content="${csp}" />
 <link rel="stylesheet" href="${styleUri}" />
+<link rel="stylesheet" href="${echoStyleUri}" />
 <title>Protege</title>
 </head>
 <body>

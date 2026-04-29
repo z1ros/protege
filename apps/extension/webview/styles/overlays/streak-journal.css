@@ -6,8 +6,8 @@
   flex: 1;
   overflow-y: auto;
   scrollbar-width: none;
-  padding: 20px 18px 40px;
-  animation: sj-fade-in 250ms ease;
+  padding: 18px 16px 36px;
+  animation: sj-fade-in 240ms ease;
 }
 
 .streak-inline::-webkit-scrollbar { display: none; }
@@ -28,8 +28,8 @@
 .streak-journal {
   display: flex;
   flex-direction: column;
-  gap: 28px;
-  padding: 4px 2px 24px;
+  gap: 16px;
+  padding: 0;
 }
 
 /* ---- Section heads shared across activity + milestones ---- */
@@ -37,28 +37,26 @@
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 .sj-section-head h3 {
   margin: 0;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--text);
+  letter-spacing: -0.005em;
+  color: var(--glow);
 }
 .sj-section-sub {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.005em;
   color: var(--text-faint);
 }
 
 /* ==========================================================
-   HERO — giant streak number + animated electric-bolt glyph.
-   Uses the app's glass tokens so the card blends with every other
-   panel in Protege (no hardcoded deep navy). The only accent color
-   is `--electric-rgb` — matches the brand + logo dot.
+   HERO — cinematic plate matching the launcher / history aesthetic.
+   Layered radial accents over a deep gradient, glass border, lift
+   shadow, subtle constellation dot. Big serif streak number on the
+   right, animated electric bolt on the left.
    ========================================================== */
 .sj-hero {
   display: grid;
@@ -68,33 +66,32 @@
     "glyph number"
     "glyph caption"
     "stats stats";
-  gap: 6px 18px;
-  padding: 24px 20px 22px;
+  gap: 4px 18px;
+  align-items: center;
+  padding: 20px 18px 18px;
   border-radius: 14px;
-  background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
+  background:
+    radial-gradient(ellipse 130% 90% at 0% 0%, rgba(var(--electric-rgb), 0.22), transparent 55%),
+    radial-gradient(ellipse 100% 70% at 100% 100%, rgba(var(--electric-deep-rgb), 0.18), transparent 60%),
+    linear-gradient(180deg, rgba(20, 17, 31, 0.92), rgba(7, 6, 13, 0.96));
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.04),
-    0 6px 22px rgba(0, 0, 0, 0.28);
+    0 10px 30px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset;
   position: relative;
   overflow: hidden;
 }
-
-.sj-hero::before {
-  /* Subtle electric-blue halo behind the bolt glyph — replaces the
-     old orange ember; gives the card a faint directional light source. */
+/* Top-right constellation dot — matches the launcher's brand corner mark. */
+.sj-hero::after {
   content: "";
   position: absolute;
-  top: -60px;
-  left: -60px;
-  width: 260px;
-  height: 260px;
-  background: radial-gradient(
-    circle,
-    rgba(var(--electric-rgb), 0.13) 0%,
-    transparent 65%
-  );
-  pointer-events: none;
+  top: 12px;
+  right: 12px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--electric);
+  box-shadow: 0 0 14px rgba(var(--electric-rgb), 0.7);
 }
 
 .sj-hero-glyph {
@@ -102,99 +99,123 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  filter: drop-shadow(0 0 18px rgba(var(--electric-rgb), 0.4));
+  filter: drop-shadow(0 0 18px rgba(var(--electric-rgb), 0.45));
   animation: sj-glyph-pulse 2.8s ease-in-out infinite;
+  position: relative;
+  z-index: 1;
 }
 @keyframes sj-glyph-pulse {
   0%, 100% { transform: translateY(0) scale(1); opacity: 0.95; }
-  50%      { transform: translateY(-1px) scale(1.02); opacity: 1; }
+  50%      { transform: translateY(-1px) scale(1.03); opacity: 1; }
 }
 
 .sj-hero-number-wrap {
   grid-area: number;
   display: flex;
   align-items: baseline;
-  gap: 12px;
+  gap: 10px;
+  position: relative;
+  z-index: 1;
 }
 .sj-hero-number {
-  font-size: 84px;
-  font-weight: 700;
-  line-height: 0.9;
-  letter-spacing: -0.03em;
-  color: var(--text);
-  /* Brand-only gradient: bright starlight → electric blue. No amber. */
-  background: linear-gradient(180deg, #ffffff 0%, rgba(var(--electric-rgb), 1) 95%);
+  /* Serif italic to match Protege's brand typography (the launcher
+     "Protege" title + chat empty-state headline). Lower-key gradient
+     so the number glows without screaming. */
+  font-family: Georgia, serif;
+  font-style: italic;
+  font-size: 64px;
+  font-weight: 600;
+  line-height: 0.95;
+  letter-spacing: -0.02em;
+  color: var(--glow);
+  background: linear-gradient(180deg, #ffffff 0%, rgba(var(--electric-rgb), 0.85) 100%);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  filter: drop-shadow(0 2px 14px rgba(var(--electric-rgb), 0.3));
+  filter: drop-shadow(0 2px 14px rgba(var(--electric-rgb), 0.32));
 }
 .sj-hero-unit {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.18em;
-  color: var(--text-faint);
-  padding-bottom: 6px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-dim);
+  letter-spacing: 0.005em;
+  text-transform: none;
+  font-family: inherit;
+  padding-bottom: 4px;
 }
 
 .sj-hero-caption {
   grid-area: caption;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--text-dim);
-  letter-spacing: 0.01em;
-  padding-top: 4px;
+  letter-spacing: 0.005em;
+  position: relative;
+  z-index: 1;
+  max-width: 90%;
 }
 
+/* Mini-stats row — 2 cards (Longest + Active days). Two equal
+   columns at every width since two stats wouldn't benefit from
+   wrapping or 4×1 layouts. */
 .sj-hero-stats {
   grid-area: stats;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 1px;
-  margin-top: 18px;
-  padding: 14px 0 4px;
-  border-top: 1px solid rgba(74, 158, 255, 0.08);
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-top: 14px;
+  padding: 0;
+  border-top: none;
+  position: relative;
+  z-index: 1;
 }
 .sj-mini-stat {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 0 6px;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 9px 10px 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: var(--border-glass);
+  border-radius: 9px;
+  transition: border-color 160ms ease, background 160ms ease;
   position: relative;
 }
-.sj-mini-stat:not(:last-child)::after {
-  content: "";
-  position: absolute;
-  right: 0;
-  top: 20%;
-  bottom: 20%;
-  width: 1px;
-  background: rgba(74, 158, 255, 0.08);
+.sj-mini-stat::after { display: none; }
+.sj-mini-stat:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.06);
 }
 .sj-mini-stat-value {
-  font-size: 18px;
+  font-family: Georgia, serif;
+  font-style: italic;
+  font-size: 19px;
   font-weight: 600;
-  color: var(--text);
+  color: var(--glow);
   letter-spacing: -0.01em;
+  line-height: 1;
 }
 .sj-mini-stat-label {
-  font-family: var(--font-mono);
-  font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.005em;
   color: var(--text-faint);
+  text-transform: none;
+  font-family: inherit;
+}
+@media (max-width: 460px) {
+  .sj-hero-stats { grid-template-columns: repeat(2, 1fr); }
 }
 
 /* ==========================================================
    ACTIVITY — GitHub-grade heatmap
    ========================================================== */
 .sj-activity {
-  padding: 18px 18px 14px;
+  padding: 16px 16px 14px;
   border-radius: 12px;
-  background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  background: rgba(13, 11, 24, 0.72);
+  border: var(--border-glass);
 }
+.sj-activity:hover { border-color: rgba(255, 255, 255, 0.14); }
 
 .sj-heatmap {
   display: flex;
@@ -363,11 +384,12 @@
    MILESTONES — horizontal progress rail with tile nodes
    ========================================================== */
 .sj-rewards-section {
-  padding: 20px 20px 22px;
+  padding: 16px 16px 18px;
   border-radius: 12px;
-  background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  background: rgba(13, 11, 24, 0.72);
+  border: var(--border-glass);
 }
+.sj-rewards-section:hover { border-color: rgba(255, 255, 255, 0.14); }
 
 /* Milestone track — white-dominant. The rail and most tiles are pure
    white at varying alphas; the single ELECTRIC accent appears only on
@@ -394,7 +416,7 @@
   left: 22px;
   height: 1px;
   background: rgba(255, 255, 255, 0.32);
-  transition: width 500ms cubic-bezier(0.2, 0.9, 0.3, 1);
+  transition: width 500ms var(--ease-snap);
 }
 
 .sj-track-tiles {
@@ -509,25 +531,32 @@
 .sj-tile.unlocked .sj-tile-label { color: var(--text); }
 .sj-tile.next .sj-tile-label { color: var(--text); }
 
-/* 8 milestone tiles need a lot of breathing room for their labels. Below
-   680 px we collapse to icons-only (day-number circles) so the track
-   stays legible in the typical VS Code side-bar webview width. */
+/* Milestone tiles need a lot of breathing room for their labels. At
+   narrower widths we collapse to icon-only circles (day-number nodes
+   are still recognizable) so the track stays legible in the typical
+   VS Code side-bar webview width. */
 @media (max-width: 680px) {
   .sj-tile-meta { display: none; }
 }
 
 @media (max-width: 520px) {
-  .sj-hero-number { font-size: 64px; }
+  .sj-hero-number { font-size: 52px; }
   .sj-hero {
-    grid-template-columns: 1fr;
-    grid-template-areas:
-      "glyph"
-      "number"
-      "caption"
-      "stats";
-    text-align: center;
+    grid-template-columns: auto 1fr;
+    gap: 4px 14px;
+    padding: 18px 16px 16px;
   }
-  .sj-hero-glyph { justify-content: center; }
-  .sj-hero-number-wrap { justify-content: center; }
+  .sj-mini-stat-value { font-size: 19px; }
+}
+
+/* Very narrow (sidebar-style ~340px panel) — drop the heatmap day
+   labels (Mon/Wed/Fri) and tighten the hero stats grid. */
+@media (max-width: 380px) {
+  .sj-day-labels { display: none; }
+  .sj-hero-stats { gap: 6px; }
+  .sj-mini-stat { padding: 10px 10px 9px; }
+  .sj-track-tiles { grid-template-columns: repeat(4, 1fr); row-gap: 14px; }
+  .sj-track-rail,
+  .sj-track-fill { display: none; }
 }
 

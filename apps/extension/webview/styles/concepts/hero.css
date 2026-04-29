@@ -9,7 +9,7 @@
   display: flex;
   flex-direction: column;
   gap: 22px;
-  animation: msg-in 320ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: msg-in 320ms var(--ease-spring);
 }
 
 /* The hero now lives inside a CinematicPlate — the iq-hero-over block is
@@ -43,16 +43,16 @@
   max-width: 240px;
   height: 6px;
   background: var(--glass-2);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   overflow: hidden;
   margin-top: 14px;
 }
 .iq-bar-fill {
   height: 100%;
   background: linear-gradient(90deg, var(--electric-deep), var(--electric), var(--electric-soft));
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   box-shadow: 0 0 12px rgba(var(--electric-rgb), 0.6);
-  transition: width 500ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: width 500ms var(--ease-spring);
 }
 
 .concepts-empty {
@@ -80,7 +80,7 @@
 .concept-row {
   padding: 12px 14px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: var(--radius);
   display: flex;
   flex-direction: column;
@@ -107,13 +107,13 @@
   text-transform: uppercase;
   letter-spacing: 0.1em;
   padding: 3px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-weight: 600;
 }
 .lvl-familiar {
   color: var(--text-dim);
   background: var(--glass-2);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
 }
 .lvl-functional {
   color: var(--electric-soft);
@@ -135,14 +135,14 @@
 .concept-bar {
   height: 4px;
   background: var(--glass-2);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   overflow: hidden;
 }
 .concept-bar-fill {
   height: 100%;
   background: linear-gradient(90deg, var(--electric-deep), var(--electric));
-  border-radius: 999px;
-  transition: width 400ms cubic-bezier(0.16, 1, 0.3, 1);
+  border-radius: var(--radius-pill);
+  transition: width 400ms var(--ease-spring);
 }
 .concept-meta {
   font-size: 10px;
@@ -174,7 +174,7 @@
   gap: 6px;
   padding: 4px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: var(--radius);
 }
 .cv-tab {
@@ -206,7 +206,7 @@
   text-align: left;
   padding: 14px 14px 12px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: var(--radius);
   display: flex;
   flex-direction: column;
@@ -247,14 +247,14 @@
 .cluster-bar {
   height: 4px;
   background: var(--glass-2);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   overflow: hidden;
 }
 .cluster-bar-fill {
   height: 100%;
   background: linear-gradient(90deg, var(--electric-deep), var(--electric));
-  border-radius: 999px;
-  transition: width 500ms cubic-bezier(0.16, 1, 0.3, 1);
+  border-radius: var(--radius-pill);
+  transition: width 500ms var(--ease-spring);
 }
 .cluster-meta {
   font-family: var(--font-mono);
@@ -291,7 +291,7 @@
   gap: 12px;
   padding: 10px 14px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: var(--radius);
 }
 .gain-delta {
@@ -338,7 +338,7 @@
   align-items: center;
   padding: 14px 6px 12px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: var(--radius);
   overflow: hidden;
 }
@@ -405,7 +405,7 @@
   gap: 2px;
   padding: 8px 10px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: calc(var(--radius) - 2px);
 }
 .rec-top {
@@ -445,7 +445,7 @@
   gap: 10px;
   padding: 10px 12px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: var(--radius);
 }
 .milestone-row.unlocked {

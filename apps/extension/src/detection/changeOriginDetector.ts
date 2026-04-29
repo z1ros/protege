@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { log } from "../log.js";
 import { aiQuery } from "../ai/aiBackend.js";
+import { isProtegeEditing } from "../ai/tools.js";
 
 /**
  * Change-origin detection — is this text the user TYPED or something a
@@ -384,7 +385,17 @@ function handleDocChange(evt: vscode.TextDocumentChangeEvent): void {
 
   let origin: ChangeOrigin;
   let needsGreyClassify = false;
-  if (insideSaveWindow) {
+  if (isProtegeEditing()) {
+    // The change came from a Protege tool (chat-driven edit_file /
+    // create_file, Compare's "Apply rewrite", etc.). The user already
+    // saw the explanation in chat, so flagging this region as
+    // "auto-inserted by another AI" and asking them to "Teach me this
+    // block" would be redundant and confusing. Record as typed so
+    // ownership treats it as owned, the AI-block lens skips it, and
+    // we only flag code from EXTERNAL tools (Cursor Tab, Copilot, raw
+    // pastes, etc.).
+    origin = "typed";
+  } else if (insideSaveWindow) {
     // Save-time formatter. Don't flag — user didn't paste, AI didn't
     // write, the content is structurally the same code the user already
     // had. Mark as typed so ownership still tracks lines as known.

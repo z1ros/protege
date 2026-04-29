@@ -1,0 +1,692 @@
+/* ==========================================================
+   Notes tab — small Notion-ish surface.
+   Layout: 2-col on wide, stacked rail-on-top on narrow widths.
+   Persistence is owned by the host (notes/* messages); CSS only
+   handles the visual surface.
+   ========================================================== */
+
+.notes-tab {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 10px 14px 14px;
+  overflow: hidden;
+}
+
+/* Editor head buttons — history + new on the left, trash on the
+   right. The history button is the primary "open notes list" entry
+   point, replacing the old left-rail. */
+.notes-history-btn:hover,
+.notes-new-btn:hover {
+  color: var(--electric-soft);
+  background: rgba(var(--electric-rgb), 0.1);
+  border-color: rgba(var(--electric-rgb), 0.4);
+}
+
+/* ---- Shared search input chrome -------------------------
+   Used inside the notes history panel below. */
+.notes-search-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  width: 13px;
+  height: 13px;
+  transform: translateY(-50%);
+  color: var(--text-faint);
+  pointer-events: none;
+}
+.notes-search-clear {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-faint);
+  cursor: pointer;
+  transition: color var(--dur-fast) ease, background var(--dur-fast) ease;
+}
+.notes-search-clear:hover {
+  color: var(--glow);
+  background: var(--glass-2);
+}
+
+.notes-list-empty {
+  padding: 28px 16px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-faint);
+  line-height: 1.5;
+}
+.notes-list-empty-q {
+  color: var(--electric-soft);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  word-break: break-all;
+}
+
+/* Matched-term highlight inside title + snippet. */
+.notes-hit {
+  background: rgba(var(--electric-rgb), 0.28);
+  color: var(--glow);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+/* ---- Notes history panel ---------------------------------
+   The panel itself uses the shared `.chp-*` classes from
+   styles/chat/history.css for full visual parity with the chat
+   history view. Below: only the notes-specific extension —
+   `.chp-turn--active` highlights the currently-loaded note. */
+.chp-turn--active {
+  background:
+    linear-gradient(
+      rgba(var(--electric-rgb), 0.1),
+      rgba(var(--electric-rgb), 0.06)
+    ),
+    rgba(var(--ink-rgb), 0.78);
+  border-color: rgba(var(--electric-rgb), 0.42);
+}
+.chp-turn--active::before {
+  opacity: 1;
+}
+
+/* ---- Editor pane --------------------------------------- */
+
+.notes-editor {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  /* Slightly opaque dark glass so the page grid pattern doesn't show
+     through the writing surface (glass-1 was too transparent — the
+     grid bled in and made the editor feel like it was floating over
+     graph paper). Still translucent enough to read as a glass card,
+     not a flat box. */
+  background: rgba(13, 11, 24, 0.55);
+  border: var(--border-glass);
+  border-radius: var(--radius);
+  min-height: 0;
+  overflow: hidden;
+}
+.notes-editor-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--glass-border);
+}
+.notes-title-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--glow);
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: var(--ls-narrow);
+  padding: 4px 0;
+}
+.notes-title-input::placeholder { color: var(--text-faint); }
+
+/* Editor head action buttons. Layout: [history] [new] [title…] [trash].
+   The flex gap on .notes-editor-head spaces the cluster items at 6px;
+   we override the gap between left buttons (4px — they read as one
+   group) and add a bigger gap before the title so the cluster has a
+   clean visual break from the input. */
+.notes-editor-head { gap: 6px; }
+.notes-head-btn {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: var(--border-glass);
+  border-radius: 6px;
+  color: var(--text-dim);
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: color var(--dur-fast) ease, background var(--dur-fast) ease,
+    border-color var(--dur-fast) ease;
+}
+.notes-history-btn + .notes-new-btn { margin-left: -2px; }
+.notes-new-btn { margin-right: 4px; }
+.notes-trash-btn:hover {
+  color: var(--rose);
+  background: rgba(var(--rose-rgb), 0.1);
+  border-color: rgba(var(--rose-rgb), 0.4);
+}
+/* Armed state — first click of the two-click delete pattern. The
+   button reads as "primed for action" and the second click commits.
+   Resets after 3s if the user walks away. Solid rose fill + subtle
+   pulse so the state is unmissable without being a modal. */
+.notes-trash-btn--armed,
+.notes-trash-btn--armed:hover {
+  color: var(--glow);
+  background: rgba(var(--rose-rgb), 0.65);
+  border-color: rgba(var(--rose-rgb), 0.9);
+  animation: notes-trash-arm 1.4s ease-in-out infinite;
+}
+@keyframes notes-trash-arm {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(var(--rose-rgb), 0.5); }
+  50%      { box-shadow: 0 0 0 4px rgba(var(--rose-rgb), 0); }
+}
+
+/* ---- BlockNote theming ----------------------------------
+   BlockNote portals its slash menu, side menu, formatting toolbar
+   and tooltips to `document.body` via Mantine — they are NOT
+   children of `.notes-bn-host`, so CSS variables scoped there
+   never reach them. We declare the `--bn-colors-*` overrides at
+   `:root` so the cascade picks them up wherever BlockNote renders.
+   `.bn-mantine` is BlockNote's own root class on every portaled
+   surface; targeting it lets us override their stylesheet without
+   bumping specificity with `!important`. */
+
+:root {
+  --bn-colors-editor-background: transparent;
+  --bn-colors-editor-text: var(--text);
+  --bn-colors-menu-background: rgba(13, 11, 24, 0.96);
+  --bn-colors-menu-text: var(--text);
+  --bn-colors-tooltip-background: rgba(13, 11, 24, 0.96);
+  --bn-colors-tooltip-text: var(--text);
+  --bn-colors-hovered-background: rgba(var(--electric-rgb), 0.18);
+  --bn-colors-hovered-text: var(--glow);
+  --bn-colors-selected-background: rgba(var(--electric-rgb), 0.28);
+  --bn-colors-selected-text: var(--glow);
+  --bn-colors-disabled-background: rgba(var(--text-rgb), 0.04);
+  --bn-colors-disabled-text: var(--text-faint);
+  --bn-colors-shadow: rgba(0, 0, 0, 0.55);
+  --bn-colors-border: var(--glass-border);
+  --bn-colors-side-menu: var(--text-faint);
+  --bn-border-radius-small: 6px;
+  --bn-border-radius-medium: 10px;
+  --bn-border-radius-large: 12px;
+  --bn-font-family: var(--font-sans);
+  --bn-shadow-light: 0 4px 14px rgba(0, 0, 0, 0.4);
+  --bn-shadow-medium:
+    0 12px 32px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(var(--text-rgb), 0.06);
+  --bn-border: 1px solid var(--glass-border-strong);
+}
+
+.notes-bn-host {
+  /* Neutralize Mantine's default body/paper colors so BN's panes
+     don't render with the warm `#1A1B1E` tint that reads "brown"
+     against our cool glass surface. Scoped to the host so Mantine
+     menus elsewhere (none today, but future-proof) aren't affected. */
+  --mantine-color-body: transparent;
+  --mantine-color-default: transparent;
+  --mantine-color-default-hover: rgba(255, 255, 255, 0.04);
+  --mantine-color-default-color: var(--text);
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  scrollbar-width: none;
+}
+.notes-bn-host::-webkit-scrollbar { display: none; }
+.notes-bn-host > * {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+}
+.notes-bn-host .bn-container,
+.notes-bn-host .bn-editor,
+.notes-bn-host [class*="bn-"]:not([class*="bn-suggestion"]):not([class*="bn-toolbar"]):not([class*="bn-tooltip"]) {
+  background: transparent !important;
+}
+.notes-bn-host .bn-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+}
+.notes-bn-host .bn-editor {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  /* Left padding (44px) reserves a gutter for BN's side menu — the
+     "+" add-block button + drag handle live there, positioned by
+     floating-ui. BN's default is 54px which is too generous for our
+     narrow side panel; 44px fits the side menu cluster (~32px) with
+     a small breathing margin without eating too much content width. */
+  padding: 12px 16px 24px 44px;
+}
+.notes-bn-host .bn-editor [class*="ProseMirror"] {
+  flex: 1 1 auto;
+  min-height: 100%;
+  background: transparent;
+}
+
+/* Heading rhythm — BlockNote's defaults are tuned for marketing
+   pages; we want a denser writing surface. */
+.notes-bn-host .bn-block h1 { font-size: 22px; line-height: 1.25; }
+.notes-bn-host .bn-block h2 { font-size: 18px; line-height: 1.3; }
+.notes-bn-host .bn-block h3 { font-size: 15px; line-height: 1.35; }
+
+/* Code block — visual parity with the chat's `.md-code-wrap` slab.
+   Same Shiki + One Dark Pro highlighter is wired up in the editor
+   schema (NotesTab.tsx → notesSchema), so token colors match
+   automatically. CSS here only handles the chrome (background,
+   border, padding, font) so the surface reads identical across the
+   two surfaces.
+
+   BlockNote renders `<pre><code>` for codeBlocks; the wrapper class
+   `[data-content-type="codeBlock"]` is on the BN block container. */
+.notes-bn-host [data-content-type="codeBlock"] {
+  margin: 6px 0;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #1e1e1e;
+  color: #cbd5ea;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 1px 0 rgba(0, 0, 0, 0.25);
+}
+.notes-bn-host [data-content-type="codeBlock"] pre {
+  margin: 0;
+  padding: 12px 14px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: #cbd5ea;
+  scrollbar-width: thin;
+}
+.notes-bn-host [data-content-type="codeBlock"] code {
+  /* Inside the codeBlock, the inner `<code>` is just the content
+     wrapper — strip our inline-code styling that would otherwise
+     paint a tiny pill chrome around the whole block. */
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+/* Hide BN's auto-rendered language `<select>` dropdown. We provide
+   `supportedLanguages` to the codeBlock spec ONLY so its
+   `getLanguageId` can resolve `block.props.language` and the Shiki
+   plugin paints tokens. The side-effect — a native dropdown injected
+   above every code block — is not the visual we want; chat code
+   blocks don't have one, and a raw HTML <select> in a glass-themed
+   editor reads as broken. The contenteditable=false wrapper BN puts
+   around the select is what we target.
+   If we ever want a language switcher, swap `display: none` for a
+   styled custom control. */
+.notes-bn-host [data-content-type="codeBlock"] > div[contenteditable="false"],
+.notes-bn-host [data-content-type="codeBlock"] select {
+  display: none;
+}
+
+/* Inline code (the BN inline mark) — keep the small pill style for
+   single-token mentions inside paragraphs. */
+.notes-bn-host code {
+  background: rgba(var(--electric-rgb), 0.12);
+  border: 1px solid rgba(var(--electric-rgb), 0.2);
+  border-radius: 4px;
+  padding: 0.5px 5px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--electric-soft);
+}
+
+/* ---- Slash (suggestion) menu ----------------------------
+   BlockNote's default "Heading 1 / Heading 2 / Heading 3" rows
+   are 52px tall with side icon plates and subtitles — far too
+   chunky for our side panel. Tighten everything: 40px rows,
+   no icon plate background, electric-blue active state, glass
+   chrome on the dropdown itself. */
+.bn-mantine .bn-suggestion-menu {
+  padding: 6px;
+  min-width: 240px;
+  max-width: 320px;
+  border: var(--border-glass-strong);
+  border-radius: var(--radius);
+  background: rgba(13, 11, 24, 0.96);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow:
+    0 16px 40px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(var(--text-rgb), 0.06);
+  font-family: var(--font-sans);
+}
+.bn-mantine .bn-suggestion-menu-label {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: var(--ls-caps);
+  text-transform: uppercase;
+  padding: 8px 10px 4px;
+}
+.bn-mantine .bn-suggestion-menu-item {
+  height: 40px;
+  padding: 6px 10px;
+  border-radius: 7px;
+  gap: 10px;
+  cursor: pointer;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+.bn-mantine .bn-suggestion-menu-item:hover,
+.bn-mantine .bn-suggestion-menu-item[aria-selected="true"] {
+  background: rgba(var(--electric-rgb), 0.18);
+  color: var(--glow);
+}
+.bn-mantine .bn-suggestion-menu-item[aria-selected="true"] {
+  box-shadow: inset 0 0 0 1px rgba(var(--electric-rgb), 0.4);
+}
+.bn-mantine .bn-mt-suggestion-menu-item-title {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.2;
+}
+.bn-mantine .bn-mt-suggestion-menu-item-subtitle {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  line-height: 1.2;
+}
+.bn-mantine .bn-suggestion-menu-item[aria-selected="true"]
+  .bn-mt-suggestion-menu-item-title,
+.bn-mantine .bn-suggestion-menu-item:hover
+  .bn-mt-suggestion-menu-item-title {
+  color: var(--glow);
+}
+.bn-mantine .bn-mt-suggestion-menu-item-section[data-position="left"] {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: rgba(var(--text-rgb), 0.05);
+  border-radius: 5px;
+  color: var(--electric-soft);
+  margin-inline-end: 8px;
+}
+.bn-mantine
+  .bn-suggestion-menu-item[aria-selected="true"]
+  .bn-mt-suggestion-menu-item-section[data-position="left"],
+.bn-mantine
+  .bn-suggestion-menu-item:hover
+  .bn-mt-suggestion-menu-item-section[data-position="left"] {
+  background: rgba(var(--electric-rgb), 0.22);
+  color: var(--glow);
+}
+/* Right-side keyboard shortcut badges — BN renders them as
+   Mantine Badges; flatten to plain monospace text. */
+.bn-mantine .bn-suggestion-menu-item .mantine-Badge-root {
+  background: rgba(var(--text-rgb), 0.06);
+  color: var(--text-faint);
+  border: 1px solid var(--glass-border);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  text-transform: none;
+  border-radius: 4px;
+}
+
+/* ---- Formatting (bubble) toolbar ------------------------
+   The toolbar that appears above selected text. Glass card with
+   tight padding and our hover/selected colors. */
+.bn-mantine .bn-toolbar {
+  padding: 3px;
+  gap: 1px;
+  border: var(--border-glass-strong);
+  border-radius: var(--radius);
+  background: rgba(13, 11, 24, 0.96);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(var(--text-rgb), 0.06);
+}
+.bn-mantine .bn-toolbar .mantine-Button-root,
+.bn-mantine .bn-toolbar .mantine-ActionIcon-root {
+  border-radius: 6px;
+  color: var(--text);
+  background: transparent;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+.bn-mantine .bn-toolbar .mantine-Button-root:hover,
+.bn-mantine .bn-toolbar .mantine-ActionIcon-root:hover {
+  background: rgba(var(--electric-rgb), 0.18);
+  color: var(--glow);
+}
+.bn-mantine .bn-toolbar .mantine-Button-root[data-selected],
+.bn-mantine .bn-toolbar .mantine-ActionIcon-root[data-selected] {
+  background: rgba(var(--electric-rgb), 0.28);
+  color: var(--glow);
+  box-shadow: inset 0 0 0 1px rgba(var(--electric-rgb), 0.45);
+}
+
+/* ---- Tooltip --------------------------------------------- */
+.bn-mantine .bn-tooltip {
+  border: var(--border-glass);
+  border-radius: 6px;
+  background: rgba(13, 11, 24, 0.96);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  padding: 5px 9px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+/* ---- Side menu (drag handle + add block) ----------------- */
+.bn-mantine .bn-side-menu .mantine-UnstyledButton-root:not(.mantine-Menu-item) svg {
+  color: var(--text-faint);
+  transition: color var(--dur-fast) ease;
+}
+.bn-mantine .bn-side-menu .mantine-UnstyledButton-root:hover svg {
+  color: var(--electric-soft);
+}
+
+/* ---- Mantine portal animations --------------------------
+   Mantine's default Popover/Menu fade is fine but its initial
+   transform-origin is unset, so menus pop from a weird corner
+   on appear. Override the entrance so they enter from below
+   (slash menu sits below the caret) with the snappy curve we
+   use everywhere else. */
+.bn-mantine .bn-suggestion-menu,
+.bn-mantine .bn-toolbar {
+  animation: notes-bn-enter 140ms var(--ease-snap);
+  transform-origin: top center;
+}
+@keyframes notes-bn-enter {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.notes-editor { position: relative; }
+
+/* Fresh-note feedback ----------------------------------------
+   Triggered for 1.2s after `+` creates a new note. The user
+   complaint that motivated this: blank → "+" → still-blank looks
+   like nothing happened, so they'd click "+" repeatedly and pile
+   up empty notes. Three layered cues fix that:
+     - Title input gets focus (handled in NotesTab.tsx — caret in
+       the title is the strongest "name this thing" signal).
+     - Card border pulses electric blue and fades back to neutral.
+     - A "NEW" chip slides into the editor head, sits for ~0.9s,
+       and fades back out.
+   The 1.2s window matches the JS-side timeout so the CSS class is
+   removed exactly when the animation ends. */
+.notes-editor.is-fresh {
+  animation: notes-fresh-pulse 1.2s ease-out;
+}
+@keyframes notes-fresh-pulse {
+  0% {
+    border-color: rgba(var(--electric-rgb), 0.65);
+    box-shadow:
+      0 0 0 2px rgba(var(--electric-rgb), 0.18),
+      0 0 28px rgba(var(--electric-rgb), 0.22);
+  }
+  70% {
+    border-color: rgba(var(--electric-rgb), 0.25);
+    box-shadow:
+      0 0 0 1px rgba(var(--electric-rgb), 0.06),
+      0 0 0 rgba(var(--electric-rgb), 0);
+  }
+  100% {
+    border-color: var(--glass-border);
+    box-shadow: none;
+  }
+}
+
+.notes-fresh-chip {
+  position: absolute;
+  top: 12px;
+  right: 50px; /* clear the trash button on the far right */
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  background: rgba(var(--electric-rgb), 0.2);
+  border: 1px solid rgba(var(--electric-rgb), 0.55);
+  border-radius: var(--radius-pill);
+  color: var(--glow);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  box-shadow: 0 4px 14px rgba(var(--electric-rgb), 0.32);
+  pointer-events: none;
+  animation:
+    notes-fresh-chip-in 180ms var(--ease-snap) both,
+    notes-fresh-chip-out 220ms ease-in 950ms both;
+}
+@keyframes notes-fresh-chip-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.9); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes notes-fresh-chip-out {
+  to { opacity: 0; transform: translateY(-3px) scale(0.95); }
+}
+
+/* ---- Empty / loading states --------------------- */
+.notes-loading {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+  padding: 32px;
+}
+.notes-empty {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 40px 24px;
+  text-align: center;
+}
+.notes-empty-icon {
+  width: 56px;
+  height: 56px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--glass-1);
+  border: var(--border-glass);
+  color: var(--electric-soft);
+  margin-bottom: 4px;
+}
+.notes-empty-title {
+  font-family: var(--font-display);
+  font-size: 18px;
+  color: var(--glow);
+  letter-spacing: var(--ls-narrow);
+}
+.notes-empty-sub {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.55;
+  max-width: 320px;
+}
+.notes-empty-sub kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  background: var(--glass-2);
+  border: var(--border-glass);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--electric-soft);
+}
+.notes-empty-btn {
+  margin-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: linear-gradient(135deg, var(--electric), var(--electric-deep));
+  color: var(--glow);
+  border: 1px solid rgba(var(--electric-rgb), 0.6);
+  border-radius: var(--radius-pill);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow:
+    0 4px 18px rgba(var(--electric-rgb), 0.3),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.15);
+  transition: transform var(--dur-fast) ease, box-shadow var(--dur-fast) ease,
+    filter var(--dur-fast) ease;
+}
+.notes-empty-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.notes-empty-btn-ghost {
+  background: var(--glass-1);
+  border-color: var(--glass-border);
+  color: var(--text);
+  box-shadow: none;
+}
+.notes-empty-btn-ghost:hover {
+  background: var(--glass-2);
+  filter: none;
+  box-shadow: none;
+}
+.notes-empty-btn:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+  box-shadow:
+    0 8px 26px rgba(var(--electric-rgb), 0.5),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.18);
+}
+
+/* ---- Narrow-width fallback ----------------------------- */
+
+@media (max-width: 520px) {
+  .notes-tab {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+  .notes-rail {
+    max-height: 30vh;
+  }
+}

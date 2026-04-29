@@ -28,6 +28,13 @@ import {
  * with the Bearer header to confirm identity.
  */
 
+// Match the scopes the user has historically granted to this extension
+// so the silent probe at activate hits the existing session directly —
+// no consent dialog, no "wants to sign in again" modal. VS Code's
+// session matching is per-(extension, exact-scope-list); switching to
+// `[]` would have made every prior session look like a non-match and
+// re-prompted on every reload. The /user fetch below uses this scope
+// to fill in email + avatar.
 const SCOPES = ["user:email"];
 
 export type { ProtegeUser } from "./authState.js";
@@ -71,20 +78,41 @@ export async function getGitHubUser(
   }
 
   try {
+    // `silent: true` suppresses every UI surface VS Code might otherwise
+    // show on a probe — no consent dialog, no Accounts-menu badge, no
+    // "wants you to sign in again" modal. We only allow that on the
+    // explicit user-initiated path (createIfNone / forceNewSession),
+    // where surfacing UI is the whole point. The two flags are mutually
+    // exclusive in the API, hence the conditional.
+    const isExplicit = !!(opts.createIfNone || opts.forceNewSession);
     const session = await vscode.authentication.getSession("github", SCOPES, {
       createIfNone: opts.createIfNone,
       forceNewSession: opts.forceNewSession,
+      silent: isExplicit ? undefined : true,
     });
     if (!session) {
       setSession(null);
       return null;
     }
 
+    // Deterministic avatar URL — works WITHOUT a network call. VS Code's
+    // GitHub session exposes `account.id` (numeric user id) and
+    // `account.label` (login). The avatars.githubusercontent.com CDN
+    // serves an avatar for any valid numeric id; the `?s=160` size hint
+    // keeps the file small. This is the same URL pattern GitHub itself
+    // returns from /user — we just bypass the API call. If the live API
+    // call below succeeds we'll prefer its `avatar_url` (in case the
+    // user has a custom redirect), but the fallback ensures we never
+    // ship a null avatar just because the network had a hiccup.
+    const fallbackAvatar = session.account.id
+      ? `https://avatars.githubusercontent.com/u/${session.account.id}?v=4&s=160`
+      : `https://github.com/${session.account.label}.png?size=160`;
+
     const user: ProtegeUser = {
       githubId: session.account.id,
       login: session.account.label,
       email: null,
-      avatarUrl: null,
+      avatarUrl: fallbackAvatar,
       accessToken: session.accessToken,
     };
 
@@ -102,10 +130,12 @@ export async function getGitHubUser(
           avatar_url?: string;
         };
         user.email = data.email ?? null;
-        user.avatarUrl = data.avatar_url ?? null;
+        // Prefer the API's avatar_url when present; otherwise keep the
+        // deterministic fallback we set above.
+        if (data.avatar_url) user.avatarUrl = data.avatar_url;
       }
     } catch {
-      // Non-fatal — session basics are already in `user`.
+      // Non-fatal — session basics + fallback avatar are already in `user`.
     }
 
     setSession(user);

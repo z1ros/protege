@@ -2,9 +2,18 @@ import * as vscode from "vscode";
 import { getBatcher } from "./batcher.js";
 
 /**
- * Session heartbeat. Emits session_tick every ~60s while the editor has
- * focus, and session_boundary when crossing the idle threshold. A
- * "session" is a contiguous stretch of activity bounded by >15min idle.
+ * Session heartbeat. Emits session_tick every ~60s while VS Code itself
+ * has OS focus AND an editor tab is active, and session_boundary when
+ * crossing the idle threshold. A "session" is a contiguous stretch of
+ * activity bounded by >15min idle.
+ *
+ * Window-focus gate (vscode.window.state.focused) was added so the
+ * "Time in Editor" stat stops accumulating the moment the user
+ * alt-tabs into a browser, terminal, Slack, etc. Previously a tab kept
+ * being "active" inside VS Code even when the OS window was hidden, so
+ * ticks fired for the whole 15-min idle window — over-counting real
+ * editor time. Now the tick only fires when the user is actually
+ * looking at VS Code.
  */
 
 const TICK_INTERVAL_MS = 60_000;
@@ -27,7 +36,11 @@ let state: SessionState = {
 let timer: ReturnType<typeof setInterval> | null = null;
 
 function hasEditorFocus(): boolean {
-  return !!vscode.window.activeTextEditor;
+  // Both gates must pass:
+  //   1. an editor tab is active inside VS Code
+  //   2. VS Code itself has OS focus (not minimized, not in the
+  //      background behind a browser / Slack / terminal)
+  return !!vscode.window.activeTextEditor && vscode.window.state.focused;
 }
 
 function markActivity(): void {
@@ -97,6 +110,18 @@ export function startSessionTracker(
     }),
     vscode.window.onDidChangeTextEditorSelection(() => {
       markActivity();
+    }),
+    // Window focus changes: when the user alt-tabs back to VS Code we
+    // count it as activity (resumes the session) and reset the
+    // focus-stretch start so the NEXT tick doesn't include the time
+    // they were away. When they alt-tab AWAY we just reset the stretch
+    // so any in-flight stretch ends here cleanly.
+    vscode.window.onDidChangeWindowState((s) => {
+      if (s.focused) {
+        markActivity();
+      } else {
+        notifyFocusBreak();
+      }
     })
   );
 
@@ -106,8 +131,10 @@ export function startSessionTracker(
     const now = Date.now();
     const focused = hasEditorFocus();
     if (!focused) {
-      // No editor — skip the tick. Idle detection still ticks over via
-      // the boundary check when activity resumes.
+      // Either no editor tab is active OR VS Code is in the background.
+      // Skip the tick — we only count time when the user is actually
+      // looking at the editor. Idle detection still ticks over via the
+      // boundary check when activity resumes.
       if (state.inSession && now - state.lastActivityAt > IDLE_THRESHOLD_MS) {
         b.push({
           type: "session_boundary",

@@ -115,18 +115,40 @@ export function markSigningIn(): void {
   emit();
 }
 
-/** Wire VS Code's session change event so external sign-outs propagate. */
+/** Wire VS Code's session change event so external sign-outs propagate.
+ *
+ * `onDidChangeSessions` fires for sessions ADDED, REMOVED, or CHANGED, and
+ * the public event payload doesn't tell us which. So we can't blindly wipe
+ * the cache on every fire — the user's own sign-in flow ALSO triggers this
+ * (a fresh session was just added), and wiping there would flip the UI
+ * back to signed-out the instant after `getGitHubUser(true)` succeeded,
+ * forcing a second sign-in click. Instead, re-probe silently: if VS Code
+ * still has a session, keep our cache; if it returns null, the user signed
+ * out from the Accounts panel and we clear. */
+// Must match SCOPES in auth.ts — VS Code matches sessions per
+// (extension, exact-scope-list), so a different list here would miss the
+// existing session and falsely report signed-out. Duplicated rather than
+// imported to avoid a circular dep (auth.ts already imports this module).
+const GITHUB_SCOPES = ["user:email"];
 export function installAuthSessionListener(
   context: vscode.ExtensionContext
 ): void {
-  const sub = vscode.authentication.onDidChangeSessions((e) => {
+  const sub = vscode.authentication.onDidChangeSessions(async (e) => {
     if (e.provider.id !== "github") return;
-    // Re-probe silently; the auth module owns the actual lookup. We just
-    // clear our cache so the next requireUserId() forces a fresh probe.
-    if (cachedUser) {
-      cachedUser = null;
-      state = "signed-out";
-      emit();
+    try {
+      const session = await vscode.authentication.getSession(
+        "github",
+        GITHUB_SCOPES,
+        { silent: true }
+      );
+      if (!session && cachedUser) {
+        cachedUser = null;
+        state = "signed-out";
+        emit();
+      }
+    } catch {
+      // Probe failure is non-fatal — leave cache alone. A real sign-out
+      // will fire the event again and re-probe.
     }
   });
   context.subscriptions.push(sub);

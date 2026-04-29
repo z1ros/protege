@@ -55,6 +55,44 @@
   --radius-sm: 8px;
   --radius: 12px;
   --radius-lg: 16px;
+  --radius-pill: 999px;
+  --radius-circle: 50%;
+
+  /* ---- Motion -------------------------------------------------------
+     Two easing curves cover ~95% of our animations:
+       --ease-spring : the iOS-style "settle" — bouncy at the start,
+                       calm at the end. Used for width/transform on
+                       hero plates, progress bars, panel reveals.
+       --ease-snap   : a tighter, less playful curve for chips, taps,
+                       hover lifts where you want quick snap-into-place
+                       without the spring feel.
+     Durations are named, not measured: small UI feedback is "fast",
+     surface transitions are "base", and meaningful state changes are
+     "slow". Use raw ms only when something genuinely doesn't fit. */
+  --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-snap: cubic-bezier(0.2, 0.9, 0.3, 1);
+  --dur-fast: 150ms;
+  --dur-base: 180ms;
+  --dur-slow: 300ms;
+
+  /* ---- Border shorthands -------------------------------------------
+     `--border-glass` is the default surface border across the app —
+     used 90+ times before tokenization. Use the shorthand instead of
+     spelling out `1px solid var(--glass-border)` every time.
+     Strong variant for "this surface is interactive / focusable / lifted". */
+  --border-glass: 1px solid var(--glass-border);
+  --border-glass-strong: 1px solid var(--glass-border-strong);
+
+  /* ---- Letter-spacing scale ----------------------------------------
+     Typography rhythm tokens — pair with text sizes consistently:
+       --ls-caps   : tiny ALL-CAPS labels (microcaps, 8–10px)
+       --ls-wide   : looser ALL-CAPS for slightly larger labels (10–11px)
+       --ls-loose  : balanced uppercase, ~12px headers
+       --ls-narrow : body text with a hint of openness, mixed case */
+  --ls-caps: 0.14em;
+  --ls-wide: 0.16em;
+  --ls-loose: 0.1em;
+  --ls-narrow: 0.04em;
 
   color-scheme: dark;
 }
@@ -87,6 +125,28 @@ select {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* ==========================================================
+   Text-selection styling.
+   The browser's default selection (vivid blue bg, white text) reads
+   as harsh-bright over Protege's dark glass surfaces — pulls the eye
+   away from the text and looks "broken" the moment it appears. Using
+   a brand-tinted electric-soft bg keeps the contrast strong while
+   matching the rest of the app's palette.
+   ::-moz-selection split out separately because Firefox doesn't read
+   the union form. Both rules carry `color: inherit` so dark-mode
+   tokens (which we always are in Protege) keep their natural color.
+   ========================================================== */
+::selection {
+  background: rgba(var(--electric-rgb), 0.32);
+  color: var(--glow);
+  text-shadow: none;
+}
+::-moz-selection {
+  background: rgba(var(--electric-rgb), 0.32);
+  color: var(--glow);
+  text-shadow: none;
+}
+
 html,
 body,
 #root {
@@ -105,31 +165,31 @@ html { background: var(--ink); }
 #root { background: transparent; }
 
 body {
+  /* Single uniform grid (2026-04-23): the previous setup stacked a 40px
+     "minor" grid on top of a 120px "major" grid at slightly different
+     opacities. Every 120px the two patterns overlapped at the same
+     pixels, doubling their alpha and producing visibly brighter lines —
+     "some are more white than others." Collapsed to one grid with one
+     opacity so every line is identical. */
   background:
-    /* MINOR grid — whisper quiet, 40px. */
-    linear-gradient(rgba(var(--text-rgb), 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(var(--text-rgb), 0.035) 1px, transparent 1px),
-    /* MAJOR grid — same opacity as minor, just wider spacing. */
-    linear-gradient(rgba(var(--text-rgb), 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(var(--text-rgb), 0.035) 1px, transparent 1px),
+    linear-gradient(rgba(var(--text-rgb), 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(var(--text-rgb), 0.06) 1px, transparent 1px),
     /* Cinematic blue wash top-center — same as website hero */
     radial-gradient(ellipse 100% 60% at 50% -10%, rgba(var(--electric-rgb), 0.22), transparent 60%),
     radial-gradient(ellipse 70% 50% at 110% 110%, rgba(var(--electric-rgb), 0.1), transparent 60%),
     radial-gradient(ellipse 50% 40% at -10% 90%, rgba(var(--electric-rgb), 0.08), transparent 60%),
     /* Edge vignette — pulls the eye to center like a theater */
-    radial-gradient(ellipse 130% 85% at 50% 50%, transparent 35%, rgba(0, 0, 0, 0.72) 100%),
+    radial-gradient(ellipse 130% 85% at 50% 50%, transparent 45%, rgba(0, 0, 0, 0.45) 100%),
     var(--ink);
   background-size:
     40px 40px,
     40px 40px,
-    120px 120px,
-    120px 120px,
     auto,
     auto,
     auto,
     auto,
     auto;
-  background-position: 0 0, 0 0, 0 0, 0 0, center, center, center, center, center;
+  background-position: 0 0, 0 0, center, center, center, center, center;
 }
 
 /* Subtle film-grain noise layer over the whole app — kills the "flat digital"

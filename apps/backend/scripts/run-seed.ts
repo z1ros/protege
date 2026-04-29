@@ -1,7 +1,11 @@
 import { readFileSync } from "fs";
 
-const url = process.env.SUPABASE_URL ?? "https://lfckgmlfvkwfskpsoovq.supabase.co";
+const url = process.env.SUPABASE_URL;
 const key = process.env.SUPABASE_SERVICE_KEY ?? "";
+
+if (!url) {
+  throw new Error("SUPABASE_URL env var required. Set it in apps/backend/.env");
+}
 
 const sql = readFileSync(new URL("../supabase-seed.sql", import.meta.url), "utf-8");
 

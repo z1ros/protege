@@ -25,11 +25,6 @@
           "type": "webview",
           "id": "protege.launcher",
           "name": "Protege"
-        },
-        {
-          "type": "webview",
-          "id": "protege.fileWalk",
-          "name": "File Walk"
         }
       ]
     },
@@ -91,20 +86,12 @@
         "title": "Protege: Explain selection"
       },
       {
-        "command": "protege.why",
-        "title": "Protege: Why — git intent behind the selection"
-      },
-      {
-        "command": "protege.findSimilar",
-        "title": "Protege: Find similar code in this workspace"
-      },
-      {
-        "command": "protege.trace",
-        "title": "Protege: Trace symbol (definition + callers)"
-      },
-      {
         "command": "protege.compare",
         "title": "Protege: Compare — senior-style rewrite of the selection"
+      },
+      {
+        "command": "protege.fixIt",
+        "title": "Protege: Fix it — diagnose and propose a corrected version"
       },
       {
         "command": "protege.summarizeFile",
@@ -301,59 +288,8 @@
       {
         "command": "protege.aiBlocks.dismissAllInFile",
         "title": "Protege: AI blocks — dismiss all in this file"
-      },
-      {
-        "command": "protege.startFileWalk",
-        "title": "Protege: Walk this file",
-        "icon": "$(debug-step-into)"
-      },
-      {
-        "command": "protege.fileWalk.next",
-        "title": "Protege: File Walk — next step",
-        "icon": "$(arrow-right)"
-      },
-      {
-        "command": "protege.fileWalk.prev",
-        "title": "Protege: File Walk — previous step",
-        "icon": "$(arrow-left)"
-      },
-      {
-        "command": "protege.fileWalk.exit",
-        "title": "Protege: File Walk — exit",
-        "icon": "$(close)"
       }
     ],
-    "menus": {
-      "editor/title": [
-        {
-          "command": "protege.startFileWalk",
-          "when": "!protege.fileWalk.active && resourceLangId =~ /^(typescript|typescriptreact|javascript|javascriptreact|python|go|rust|java|cpp|c|csharp|ruby|php|swift)$/",
-          "group": "navigation@97"
-        },
-        {
-          "command": "protege.fileWalk.prev",
-          "when": "protege.fileWalk.active",
-          "group": "navigation@97"
-        },
-        {
-          "command": "protege.fileWalk.next",
-          "when": "protege.fileWalk.active",
-          "group": "navigation@98"
-        },
-        {
-          "command": "protege.fileWalk.exit",
-          "when": "protege.fileWalk.active",
-          "group": "navigation@99"
-        }
-      ],
-      "explorer/context": [
-        {
-          "command": "protege.startFileWalk",
-          "when": "resourceLangId =~ /^(typescript|typescriptreact|javascript|javascriptreact|python|go|rust|java|cpp|c|csharp|ruby|php|swift)$/",
-          "group": "9_protege"
-        }
-      ]
-    },
     "configuration": {
       "title": "Protege",
       "properties": {
@@ -516,7 +452,6 @@
   },
   "activationEvents": [
     "onStartupFinished",
-    "onView:protege.launcher",
     "workspaceContains:**/*"
   ],
   "scripts": {
@@ -531,6 +466,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@blocknote/core": "^0.49.0",
+    "@blocknote/mantine": "^0.49.0",
+    "@blocknote/react": "^0.49.0",
     "@iconify-json/devicon-plain": "^1.2.57",
     "@iconify-json/simple-icons": "^1.2.78",
     "@iconify/react": "^6.0.2",

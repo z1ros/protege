@@ -18,7 +18,7 @@
   flex: 1;
   padding: 7px 10px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: 8px;
   color: var(--text);
   font-family: var(--font-mono);
@@ -31,7 +31,7 @@
 .st-level-select {
   padding: 7px 8px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: 8px;
   color: var(--text);
   font-family: var(--font-mono);
@@ -47,7 +47,7 @@
   gap: 4px;
   padding: 6px 12px 6px 8px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: 8px;
   color: var(--text-dim);
   font-family: inherit;
@@ -71,7 +71,7 @@
   align-items: center;
   justify-content: center;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: 8px;
   color: var(--text-dim);
   cursor: pointer;
@@ -136,7 +136,7 @@
 
 /* Specialty level — top grouping */
 .st-specialty {
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: var(--radius);
   overflow: hidden;
 }
@@ -177,15 +177,15 @@
   width: 50px;
   height: 3px;
   background: var(--glass-2);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   overflow: hidden;
 }
 
 .st-specialty-bar-fill {
   height: 100%;
   background: linear-gradient(90deg, var(--electric-deep), var(--electric));
-  border-radius: 999px;
-  transition: width 400ms cubic-bezier(0.16, 1, 0.3, 1);
+  border-radius: var(--radius-pill);
+  transition: width 400ms var(--ease-spring);
 }
 
 .st-specialty-domains {
@@ -220,7 +220,7 @@
   width: 100%;
   padding: 12px 14px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: var(--radius);
   color: inherit;
   font: inherit;
@@ -260,13 +260,13 @@
 .st-domain-bar {
   height: 4px;
   background: var(--glass-2);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   overflow: hidden;
 }
 .st-domain-bar-fill {
   height: 100%;
-  border-radius: 999px;
-  transition: width 400ms cubic-bezier(0.16, 1, 0.3, 1);
+  border-radius: var(--radius-pill);
+  transition: width 400ms var(--ease-spring);
 }
 .st-chevron {
   width: 14px;
@@ -329,12 +329,12 @@
 .st-topic-bar {
   height: 3px;
   background: var(--glass-2);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   overflow: hidden;
 }
 .st-topic-bar-fill {
   height: 100%;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   transition: width 300ms ease;
 }
 
@@ -351,8 +351,8 @@
   gap: 6px;
   padding: 5px 10px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
-  border-radius: 999px;
+  border: var(--border-glass);
+  border-radius: var(--radius-pill);
   color: inherit;
   font: inherit;
   font-size: 10px;
@@ -395,13 +395,13 @@
   width: 30px;
   height: 2px;
   background: var(--glass-2);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   overflow: hidden;
   flex: 0 0 30px;
 }
 .st-skill-bar-fill {
   height: 100%;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 .st-skill-diff {
   font-size: 6px;

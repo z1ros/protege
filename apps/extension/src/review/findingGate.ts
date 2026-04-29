@@ -11,19 +11,26 @@ import { log } from "../log.js";
  * `pendingFixByUri` checks. The gate itself is stateful only in-memory
  * and clears on reload.
  *
- * === A1 — suppress findings where the user is still working ===
+ * === A1 — suppress findings on freshly-edited code ===
  *
- * A finding is suppressed if EITHER:
- *   (a) its line was edited within LINE_EDIT_WINDOW_MS (45s), OR
- *   (b) a visible editor's cursor is on its line OR within
- *       ±CURSOR_PROXIMITY_LINES (2) lines.
+ * Two-tier window, split by severity:
+ *   - "warn" / "perf" (real bugs)  — suppress for LINE_EDIT_WINDOW_MS
+ *     (8s). Bugs need fast feedback; you wrote it 30s ago, you want to
+ *     know now.
+ *   - "info" (teaching, observations, praise/concept patterns) —
+ *     suppress for INFO_LINE_EDIT_WINDOW_MS (3min). Code you just wrote
+ *     isn't ready for a lesson; let it settle. The model only teaches
+ *     about code that's been alive in the file for 3+ minutes.
  *
- * Together these give "quiet where the user is working" — typing
- * suppresses via (a), thinking/reading-pauses suppress via (b).
+ * The two-tier shape was the user's call: focus teaching on settled
+ * code, not half-written thoughts, but don't delay genuine bugs.
  *
- * For block/flow-scope findings, we check the whole range: any line in
- * [range.start.line, range.end.line] being touched recently OR any
- * cursor within ±2 of that range suppresses.
+ * The cursor-proximity arm was retired 2026-04-29 — clicks are
+ * navigation, not edits, and the lens vanishing on click felt random.
+ *
+ * For block/flow-scope findings, line-recency checks the whole range:
+ * any line in [range.start.line, range.end.line] touched recently
+ * suppresses the finding for that scope.
  *
  * === B1 — same ruleId can't re-surface for 5min unless file churns ===
  *
@@ -51,13 +58,15 @@ import { log } from "../log.js";
 // typing into a line, short enough that post-paste surfaces in ~12s
 // total (3s scan debounce + AI call + window lift).
 const LINE_EDIT_WINDOW_MS = 8_000;
-// Tuned 2026-04-23 from 1 → 0. ±1 line still smothered "I just fixed
-// line N, cursor is there, Protege went silent on line N-1 and N+1
-// where there are real issues." Exact-line match only — if the cursor
-// is ON the finding's line we suppress (user is editing it right now);
-// one line away is plenty of breathing room to let it surface.
-const CURSOR_PROXIMITY_LINES = 0;
-const LINE_PRUNE_MS = LINE_EDIT_WINDOW_MS * 3; // ~24s
+// Teaching-tier window — info-severity findings (praise/concept
+// patterns, observational tips) hold off until the line has been
+// untouched for 3 minutes. Lets the user finish a thought before
+// Protege starts teaching about it. Bugs (warn/perf) still use the 8s
+// window above so genuine issues surface fast.
+const INFO_LINE_EDIT_WINDOW_MS = 3 * 60_000;
+// Pruning runs against the longest window so info entries survive long
+// enough to keep gating their findings.
+const LINE_PRUNE_MS = INFO_LINE_EDIT_WINDOW_MS * 1.5; // ~4.5min
 const lineTouchedAt = new Map<string, Map<number, number>>();
 
 // ---- B1 state ----
@@ -97,27 +106,39 @@ export const onGateChanged: vscode.Event<void> = gateEmitter.event;
 // pathological keystroke storm cannot grow the map unbounded.
 const GATE_CLEAR_TIMER_CAP = 200;
 const GATE_CLEAR_FIRE_BUFFER_MS = 500;
+// Two timers per touched line: one fires when the warn/perf window
+// expires (8s) so bug findings can re-surface; one fires when the info
+// window expires (3min) so teaching findings can re-surface. Keys are
+// suffixed `:warn` / `:info` so each kind gets its own slot.
 const pendingGateClearTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-function scheduleGateClearFire(uriKey: string, line: number): void {
-  const timerKey = `${uriKey}:${line}`;
-  const existing = pendingGateClearTimers.get(timerKey);
-  if (existing) clearTimeout(existing);
-  if (pendingGateClearTimers.size >= GATE_CLEAR_TIMER_CAP) {
-    // FIFO eviction — drop the oldest pending timer. Map iteration order
-    // is insertion order, so the first key is the oldest.
-    const firstKey = pendingGateClearTimers.keys().next().value;
-    if (firstKey !== undefined) {
-      const t = pendingGateClearTimers.get(firstKey);
-      if (t) clearTimeout(t);
-      pendingGateClearTimers.delete(firstKey);
-    }
+function evictOldestIfFull(): void {
+  if (pendingGateClearTimers.size < GATE_CLEAR_TIMER_CAP) return;
+  // FIFO eviction — drop the oldest pending timer. Map iteration order
+  // is insertion order, so the first key is the oldest.
+  const firstKey = pendingGateClearTimers.keys().next().value;
+  if (firstKey !== undefined) {
+    const t = pendingGateClearTimers.get(firstKey);
+    if (t) clearTimeout(t);
+    pendingGateClearTimers.delete(firstKey);
   }
-  const handle = setTimeout(() => {
-    pendingGateClearTimers.delete(timerKey);
-    gateEmitter.fire();
-  }, LINE_EDIT_WINDOW_MS + GATE_CLEAR_FIRE_BUFFER_MS);
-  pendingGateClearTimers.set(timerKey, handle);
+}
+
+function scheduleGateClearFire(uriKey: string, line: number): void {
+  for (const [suffix, windowMs] of [
+    ["warn", LINE_EDIT_WINDOW_MS],
+    ["info", INFO_LINE_EDIT_WINDOW_MS],
+  ] as const) {
+    const timerKey = `${uriKey}:${line}:${suffix}`;
+    const existing = pendingGateClearTimers.get(timerKey);
+    if (existing) clearTimeout(existing);
+    evictOldestIfFull();
+    const handle = setTimeout(() => {
+      pendingGateClearTimers.delete(timerKey);
+      gateEmitter.fire();
+    }, windowMs + GATE_CLEAR_FIRE_BUFFER_MS);
+    pendingGateClearTimers.set(timerKey, handle);
+  }
 }
 
 
@@ -234,13 +255,9 @@ export function registerFindingGate(
     })
   );
 
-  // Cursor movement updates the (b) arm of A1. Fire the event so
-  // surfaces (Ghost CodeLens, Underline Whisper, Inlay) can refresh.
-  disposables.push(
-    vscode.window.onDidChangeTextEditorSelection(() => {
-      gateEmitter.fire();
-    })
-  );
+  // (Cursor-move re-render removed 2026-04-29 along with the
+  // cursor-proximity arm of A1 — cursor position no longer affects
+  // suppression, so firing on every selection change was wasted work.)
 
   disposables.push({
     dispose() {
@@ -277,7 +294,7 @@ export function shouldSuppress(
     return "rule-on-cooldown";
   }
 
-  // --- A1 — line-recency + cursor proximity ---
+  // --- A1 — line-recency, severity-tiered ---
   const touchedMap = lineTouchedAt.get(uri);
   const startLine = finding.range.start.line;
   const endLine =
@@ -285,31 +302,27 @@ export function shouldSuppress(
       ? finding.range.end.line
       : startLine;
 
-  // Line-recency: any line in [startLine, endLine] touched recently?
+  // Bugs (warn/perf) get the short 8s window — fast feedback. Teaching
+  // (info: praise/concept patterns, observational tips) gets the long
+  // 3min window — let the user finish the thought before lecturing.
+  const windowMs =
+    finding.severity === "info"
+      ? INFO_LINE_EDIT_WINDOW_MS
+      : LINE_EDIT_WINDOW_MS;
+
   if (touchedMap && touchedMap.size > 0) {
     for (let ln = startLine; ln <= endLine; ln++) {
       const ts = touchedMap.get(ln);
-      if (ts && now - ts < LINE_EDIT_WINDOW_MS) {
+      if (ts && now - ts < windowMs) {
         return "line-still-being-edited";
       }
     }
   }
 
-  // Cursor proximity: any visible editor for this URI with cursor
-  // within ±CURSOR_PROXIMITY_LINES of the finding's range? Iterating
-  // visibleTextEditors covers split-pane / multi-window cases where a
-  // single URI can be open in more than one place.
-  for (const editor of vscode.window.visibleTextEditors) {
-    if (editor.document.uri.toString() !== uri) continue;
-    const cur = editor.selection.active.line;
-    if (
-      cur >= startLine - CURSOR_PROXIMITY_LINES &&
-      cur <= endLine + CURSOR_PROXIMITY_LINES
-    ) {
-      return "cursor-near-line";
-    }
-  }
-
+  // Cursor-proximity check intentionally absent — see header comment.
+  // Lens stays visible regardless of where the user clicks; the only
+  // signals that hide it are active typing on the same line and explicit
+  // dismiss (handled by the dismissedByUri set in liveReview).
   return null;
 }
 

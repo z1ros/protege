@@ -1,4 +1,5 @@
 import React, { useLayoutEffect, useRef, useEffect, useMemo, useState } from "react";
+import type { DailyIqPoint } from "@protege/types";
 
 /* ================================================================
    Types
@@ -8,22 +9,22 @@ interface DayEntry {
   date: string;
   active: boolean;
   iqGained: number;
-  conceptsUsed: number;
-  topConcept?: string;
-  filesEdited: number;
   streak: number;
 }
 
 interface StreakReward {
   days: number;
   label: string;
-  reward: string;
   unlocked: boolean;
 }
 
 interface Props {
   currentStreak: number;
   longestStreak: number;
+  /** Real cumulative-IQ-per-day data from MeResponse (Supabase-backed
+   *  via apps/backend/src/store.ts). Up to 30 days. Older days outside
+   *  this window render as inactive (0 IQ) cells in the heatmap. */
+  dailyIq: DailyIqPoint[];
 }
 
 /**
@@ -51,64 +52,72 @@ interface TooltipPosition {
    Mock data (unchanged — same deterministic seed)
    ================================================================ */
 
-const CONCEPTS = [
-  "async/await", "React hooks", "closures", "destructuring",
-  "template literals", "optional chaining", "map/filter/reduce",
-  "error handling", "TS generics", "promises", "arrow functions",
-  "spread operator", "module imports", "null coalescing",
-  "type guards", "iterators", "proxy/reflect", "decorators",
-];
+/**
+ * Build the heatmap's 365-day array from real `dailyIq` data.
+ *
+ * The backend stores cumulative `codeIq` per day (last 30 days). We
+ * convert to per-day IQ DELTAS (today − yesterday), then pad the rest
+ * of the year with 0 so the heatmap geometry stays the same. Streak
+ * counters are recomputed from the deltas so they stay in sync with
+ * the activity pattern shown.
+ */
+function buildHeatmapData(dailyIq: DailyIqPoint[]): DayEntry[] {
+  // Sort ascending so cumulative deltas come out positive.
+  const sorted = [...dailyIq].sort((a, b) => a.date.localeCompare(b.date));
+  const deltaByDate = new Map<string, number>();
+  let prev = 0;
+  for (const point of sorted) {
+    const delta = Math.max(0, Math.round(point.codeIq - prev));
+    deltaByDate.set(point.date, delta);
+    prev = point.codeIq;
+  }
 
-function generateMockData(): DayEntry[] {
   const days: DayEntry[] = [];
   const today = new Date();
-  let seed = 42;
-  const rand = () => { seed = (seed * 16807 + 0) % 2147483647; return (seed - 1) / 2147483646; };
-
   let streak = 0;
-  // 365 days of activity — one full year, same scroll pattern the heatmap
-  // container already handles. (Was 180; widened per user request.)
   for (let i = 364; i >= 0; i--) {
     const d = new Date(today);
     d.setDate(d.getDate() - i);
     const dateStr = d.toISOString().split("T")[0];
-    const dow = d.getDay();
-    const recency = Math.max(0, 1 - i / 180);
-    const weekday = dow > 0 && dow < 6 ? 0.25 : 0;
-    const active = rand() < 0.3 + recency * 0.4 + weekday;
-
+    const delta = deltaByDate.get(dateStr) ?? 0;
+    const active = delta > 0;
     if (active) {
       streak++;
       days.push({
-        date: dateStr, active: true,
-        iqGained: Math.floor(rand() * 9 + 1),
-        conceptsUsed: Math.floor(rand() * 5 + 1),
-        topConcept: CONCEPTS[Math.floor(rand() * CONCEPTS.length)],
-        filesEdited: Math.floor(rand() * 7 + 1),
+        date: dateStr,
+        active: true,
+        iqGained: delta,
         streak,
       });
     } else {
       streak = 0;
       days.push({
-        date: dateStr, active: false,
-        iqGained: 0, conceptsUsed: 0, filesEdited: 0, streak: 0,
+        date: dateStr,
+        active: false,
+        iqGained: 0,
+        streak: 0,
       });
     }
   }
   return days;
 }
 
-const MOCK_DATA = generateMockData();
-
-const STREAK_REWARDS: StreakReward[] = [
-  { days: 7,   label: "First week", reward: "Badge",           unlocked: false },
-  { days: 14,  label: "Fortnight",  reward: "Priority queue",  unlocked: false },
-  { days: 30,  label: "One month",  reward: "10% off",         unlocked: false },
-  { days: 60,  label: "Two months", reward: "20% off",         unlocked: false },
-  { days: 90,  label: "Quarter",    reward: "Free month",      unlocked: false },
-  { days: 180, label: "Half year",  reward: "30% off",         unlocked: false },
-  { days: 270, label: "Three-quarter", reward: "Two free months", unlocked: false },
-  { days: 365, label: "One year",   reward: "Legend badge",    unlocked: false },
+/**
+ * Streak milestones — pure day counts. The previous list carried fake
+ * "rewards" ("Priority queue", "Free month", "30% off") that implied
+ * monetary or feature unlocks Protege doesn't actually grant. Removed
+ * to avoid promising things the product doesn't deliver. Pure
+ * day-count badges remain — that's what the streak actually is.
+ */
+const STREAK_REWARDS: Omit<StreakReward, "unlocked">[] = [
+  { days: 7,   label: "First week" },
+  { days: 14,  label: "Fortnight" },
+  { days: 30,  label: "One month" },
+  { days: 60,  label: "Two months" },
+  { days: 90,  label: "Quarter" },
+  { days: 180, label: "Half year" },
+  { days: 270, label: "Three quarters" },
+  { days: 365, label: "One year" },
 ];
 
 /* ================================================================
@@ -136,7 +145,10 @@ function intensity(iq: number): number {
    Component
    ================================================================ */
 
-export function StreakJournal({ currentStreak, longestStreak }: Props) {
+export function StreakJournal({ currentStreak, longestStreak, dailyIq }: Props) {
+  // Real heatmap data, recomputed when `dailyIq` changes (incoming
+  // iq/update broadcasts after a save → backend → MeResponse refresh).
+  const heatmapDays = useMemo(() => buildHeatmapData(dailyIq), [dailyIq]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
   const [tooltipPos, setTooltipPos] = useState<TooltipPosition | null>(null);
@@ -192,14 +204,15 @@ export function StreakJournal({ currentStreak, longestStreak }: Props) {
     if (scrollRef.current) scrollRef.current.scrollLeft = scrollRef.current.scrollWidth;
   }, []);
 
-  // Weeks + month labels for heatmap
+  // Weeks + month labels for heatmap (re-derived from real heatmapDays).
   const { weeks, monthLabels } = useMemo(() => {
     const ws: DayEntry[][] = [];
     let cur: DayEntry[] = [];
-    const first = new Date(MOCK_DATA[0].date + "T00:00:00");
+    if (heatmapDays.length === 0) return { weeks: ws, monthLabels: [] };
+    const first = new Date(heatmapDays[0].date + "T00:00:00");
     for (let i = 0; i < first.getDay(); i++)
-      cur.push({ date: "", active: false, iqGained: 0, conceptsUsed: 0, filesEdited: 0, streak: 0 });
-    for (const day of MOCK_DATA) {
+      cur.push({ date: "", active: false, iqGained: 0, streak: 0 });
+    for (const day of heatmapDays) {
       cur.push(day);
       if (cur.length === 7) { ws.push(cur); cur = []; }
     }
@@ -216,14 +229,20 @@ export function StreakJournal({ currentStreak, longestStreak }: Props) {
       }
     });
     return { weeks: ws, monthLabels: ml };
-  }, []);
+  }, [heatmapDays]);
 
-  const totalActive = MOCK_DATA.filter(d => d.active).length;
-  const totalIq = MOCK_DATA.reduce((s, d) => s + d.iqGained, 0);
-  const avgIqPerDay = totalActive > 0 ? (totalIq / totalActive).toFixed(1) : "0";
+  const totalActive = useMemo(
+    () => heatmapDays.filter((d) => d.active).length,
+    [heatmapDays]
+  );
+  // "IQ earned" / "Avg per day" stats removed 2026-04-23 — the
+  // Code IQ term is retired across the app, so showing "+388 IQ
+  // earned" was leftover terminology. The remaining streak stats
+  // (Longest + Active days) describe the streak itself, not IQ.
 
-  // Mark rewards unlocked based on longest streak
-  const rewards = STREAK_REWARDS.map(r => ({
+  // Mark rewards unlocked based on longest streak (real value from
+  // backend: `streak.longest` ← Supabase via store.ts).
+  const rewards = STREAK_REWARDS.map((r) => ({
     ...r,
     unlocked: longestStreak >= r.days,
   }));
@@ -240,7 +259,7 @@ export function StreakJournal({ currentStreak, longestStreak }: Props) {
     }
     if (nextReward) {
       const diff = nextReward.days - currentStreak;
-      return `${diff} ${diff === 1 ? "day" : "days"} until ${nextReward.reward.toLowerCase()}`;
+      return `${diff} ${diff === 1 ? "day" : "days"} until ${nextReward.label.toLowerCase()}`;
     }
     return `You've unlocked every milestone — legendary.`;
   })();
@@ -258,7 +277,9 @@ export function StreakJournal({ currentStreak, longestStreak }: Props) {
         </div>
         <div className="sj-hero-caption">{heroCaption}</div>
 
-        {/* Mini stat row — 4 compact metrics */}
+        {/* Mini stat row — 2 streak-focused metrics now (was 4; the
+            IQ-flavored stats came out with the rest of the Code IQ
+            terminology removal). */}
         <div className="sj-hero-stats">
           <div className="sj-mini-stat">
             <div className="sj-mini-stat-value">{longestStreak}</div>
@@ -267,14 +288,6 @@ export function StreakJournal({ currentStreak, longestStreak }: Props) {
           <div className="sj-mini-stat">
             <div className="sj-mini-stat-value">{totalActive}</div>
             <div className="sj-mini-stat-label">Active days</div>
-          </div>
-          <div className="sj-mini-stat">
-            <div className="sj-mini-stat-value">+{totalIq}</div>
-            <div className="sj-mini-stat-label">IQ earned</div>
-          </div>
-          <div className="sj-mini-stat">
-            <div className="sj-mini-stat-value">{avgIqPerDay}</div>
-            <div className="sj-mini-stat-label">Avg / day</div>
           </div>
         </div>
       </section>
@@ -354,17 +367,14 @@ export function StreakJournal({ currentStreak, longestStreak }: Props) {
               <div className="sj-tt-date">{fmtFull(tooltip.day.date)}</div>
               {tooltip.day.active ? (
                 <div className="sj-tt-stats">
-                  <span><strong>+{tooltip.day.iqGained}</strong> IQ</span>
-                  <span>·</span>
-                  <span>{tooltip.day.conceptsUsed} concept{tooltip.day.conceptsUsed !== 1 ? "s" : ""}</span>
-                  <span>·</span>
-                  <span>{tooltip.day.filesEdited} file{tooltip.day.filesEdited !== 1 ? "s" : ""}</span>
+                  {tooltip.day.streak > 1 ? (
+                    <span>day {tooltip.day.streak} of streak</span>
+                  ) : (
+                    <span>Active</span>
+                  )}
                 </div>
               ) : (
                 <div className="sj-tt-rest">Rest day</div>
-              )}
-              {tooltip.day.topConcept && (
-                <div className="sj-tt-concept">{tooltip.day.topConcept}</div>
               )}
             </div>
           )}
@@ -438,7 +448,9 @@ export function StreakJournal({ currentStreak, longestStreak }: Props) {
                     </div>
                     <div className="sj-tile-meta">
                       <div className="sj-tile-label">{r.label}</div>
-                      <div className="sj-tile-prize">{r.reward}</div>
+                      <div className="sj-tile-prize">
+                        {r.days} {r.days === 1 ? "day" : "days"}
+                      </div>
                     </div>
                   </div>
                 );

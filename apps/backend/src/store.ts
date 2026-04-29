@@ -113,7 +113,8 @@ export type MemoryType =
   | "win"        // first-time successes, breakthroughs worth remembering
   | "decision"   // architectural choices they made & why
   | "preference" // style preferences: terse/verbose, direct/socratic
-  | "context";   // short-term project notes
+  | "context"    // short-term project notes
+  | "concept";   // verified mastery — "user owns: [name] — verified [date]"
 
 export interface MemoryRow {
   id: string;
@@ -524,6 +525,9 @@ async function load(): Promise<StoreShape> {
 const TYPE_WEIGHT_RAW: Record<MemoryType, number> = {
   profile: 1.0,
   preference: 0.9,
+  // Owned concepts rank high — they directly shape "don't re-teach this"
+  // decisions in the teaching loop, so we want them surfaced reliably.
+  concept: 0.85,
   struggle: 0.7,
   decision: 0.5,
   win: 0.4,

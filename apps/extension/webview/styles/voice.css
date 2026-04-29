@@ -20,8 +20,8 @@
   gap: 6px;
   padding: 6px 10px 6px 8px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
-  border-radius: 999px;
+  border: var(--border-glass);
+  border-radius: var(--radius-pill);
   color: var(--text-dim);
   cursor: pointer;
   transition: color 150ms ease, background 150ms ease, border-color 150ms ease;
@@ -44,7 +44,7 @@
   align-items: center;
   gap: 28px;
   padding: 32px 24px;
-  animation: msg-in 320ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: msg-in 320ms var(--ease-spring);
   overflow-y: auto;
   /* min-height: 0 is the magic flex incantation — without it the child
      won't shrink below its content size and overflow-y gets ignored. */
@@ -98,7 +98,7 @@
     0 0 0 1px rgba(var(--text-rgb), 0.12) inset,
     0 20px 60px rgba(var(--electric-rgb), 0.35),
     0 0 0 1px rgba(var(--electric-rgb), 0.3);
-  transition: transform 200ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 200ms ease;
+  transition: transform 200ms var(--ease-spring), box-shadow 200ms ease;
   z-index: 2;
 }
 .voice-orb:hover { transform: scale(1.04); }
@@ -156,7 +156,7 @@
   max-width: 260px;
   height: 4px;
   margin-top: 4px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: rgba(255, 255, 255, 0.06);
   overflow: hidden;
 }
@@ -167,7 +167,7 @@
     rgb(var(--electric-rgb)) 0%,
     rgba(var(--electric-rgb), 0.7) 100%
   );
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   transition: width 300ms ease;
 }
 
@@ -250,7 +250,7 @@
   align-items: center;
   gap: 10px;
   padding: 8px 20px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, sans-serif);
   font-size: 12px;
   font-weight: 600;
@@ -501,7 +501,7 @@
   align-items: center;
   gap: 5px;
   padding: 5px 11px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: 10px;
   font-weight: 500;
   letter-spacing: 0.06em;
@@ -570,7 +570,7 @@
   line-height: 1.7;
   padding: 16px 20px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: var(--radius);
 }
 .voice-unsupported code {
@@ -588,8 +588,8 @@
   gap: 4px;
   padding: 4px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
-  border-radius: 999px;
+  border: var(--border-glass);
+  border-radius: var(--radius-pill);
 }
 .voice-pill {
   display: inline-flex;
@@ -599,7 +599,7 @@
   background: transparent;
   color: var(--text-dim);
   border: none;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-family: inherit;
   font-size: 11px;
   font-weight: 500;
@@ -631,8 +631,8 @@
   font-size: 13px;
   background: var(--glass-1);
   color: var(--text);
-  border: 1px solid var(--glass-border);
-  border-radius: 999px;
+  border: var(--border-glass);
+  border-radius: var(--radius-pill);
   outline: none;
   transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
 }
@@ -645,7 +645,7 @@
 .voice-type-fallback .send-btn {
   height: 40px;
   width: 40px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 
 /* When in type mode, shrink the orb so the input is the star */
@@ -673,7 +673,7 @@
   color: var(--text-dim);
   padding: 12px 16px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: var(--radius);
 }
 .voice-mic-hint strong {
@@ -691,7 +691,7 @@
   padding: 6px 14px;
   background: rgba(var(--electric-rgb), 0.08);
   border: 1px solid rgba(var(--electric-rgb), 0.28);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: 11px;
   color: var(--electric-soft);
   letter-spacing: 0.02em;
@@ -710,7 +710,7 @@
   font-size: 11px;
   color: var(--muted);
   padding: 4px 12px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.06);
   letter-spacing: 0.01em;
@@ -755,7 +755,7 @@
 .mic-action-btn {
   padding: 8px 14px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: 8px;
   color: var(--text);
   font-family: var(--font-mono);
@@ -826,8 +826,8 @@
   gap: 6px;
   padding: 7px 14px;
   background: var(--glass-1);
-  border: 1px solid var(--glass-border);
-  border-radius: 999px;
+  border: var(--border-glass);
+  border-radius: var(--radius-pill);
   color: var(--text-dim);
   font-family: inherit;
   font-size: 10px;

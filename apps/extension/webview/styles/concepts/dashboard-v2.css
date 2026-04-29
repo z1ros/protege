@@ -4,7 +4,7 @@
 
 /* ---- Level card: animated ring fill + pulse dot ---- */
 .level-ring-fill {
-  animation: ringFill 1400ms cubic-bezier(0.16, 1, 0.3, 1) 200ms backwards;
+  animation: ringFill 1400ms var(--ease-spring) 200ms backwards;
 }
 @keyframes ringFill {
   from {
@@ -64,7 +64,7 @@
 .traj-line-animated {
   stroke-dasharray: 2000;
   stroke-dashoffset: 2000;
-  animation: trajDraw 1200ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: trajDraw 1200ms var(--ease-spring) forwards;
 }
 @keyframes trajDraw {
   to { stroke-dashoffset: 0; }
@@ -293,7 +293,7 @@
 .radar-polygon {
   transform-origin: center;
   transform-box: fill-box;
-  animation: radarIn 900ms cubic-bezier(0.16, 1, 0.3, 1) 400ms backwards;
+  animation: radarIn 900ms var(--ease-spring) 400ms backwards;
 }
 @keyframes radarIn {
   from { opacity: 0; transform: scale(0.7); }
@@ -366,7 +366,7 @@
   gap: 2px;
   padding: 2px;
   background: rgba(var(--text-rgb), 0.04);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: 7px;
 }
 .traj-range-btn {
@@ -401,7 +401,7 @@
   align-items: center;
   gap: 8px;
   margin: 6px 0 2px;
-  animation: dashCardIn 280ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: dashCardIn 280ms var(--ease-spring);
 }
 .traj-date-label {
   display: flex;
@@ -509,14 +509,14 @@
 .focus-bar {
   height: 5px;
   background: rgba(var(--text-rgb), 0.06);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   overflow: hidden;
 }
 .focus-bar-fill {
   height: 100%;
   background: linear-gradient(90deg, var(--electric-deep), var(--electric));
   box-shadow: 0 0 10px rgba(var(--electric-rgb), 0.55);
-  transition: width 700ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: width 700ms var(--ease-spring);
 }
 
 /* ---- Skill map: expand button + zoom overlay ---- */
@@ -532,7 +532,7 @@
   align-items: center;
   justify-content: center;
   background: rgba(var(--text-rgb), 0.04);
-  border: 1px solid var(--glass-border);
+  border: var(--border-glass);
   border-radius: 6px;
   color: var(--text-dim);
   cursor: pointer;
@@ -556,7 +556,7 @@
   align-items: center;
   justify-content: center;
   padding: 20px;
-  animation: dashCardIn 260ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: dashCardIn 260ms var(--ease-spring);
 }
 .skill-zoom-inner {
   width: 100%;
@@ -578,8 +578,8 @@
   align-items: center;
   justify-content: center;
   background: rgba(var(--text-rgb), 0.05);
-  border: 1px solid var(--glass-border);
-  border-radius: 999px;
+  border: var(--border-glass);
+  border-radius: var(--radius-pill);
   color: var(--text-dim);
   cursor: pointer;
   transition: color 150ms ease, transform 150ms ease;
@@ -710,7 +710,7 @@
   padding: 3px 8px;
   background: rgba(var(--electric-rgb), 0.16);
   border: 1px solid rgba(var(--electric-rgb), 0.4);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-family: var(--font-mono);
   font-size: 8px;
   letter-spacing: 0.14em;

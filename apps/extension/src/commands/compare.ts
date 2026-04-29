@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { aiQuery } from "../ai/aiBackend.js";
+import { withProtegeEditing } from "../ai/tools.js";
 import { log, logBlock } from "../log.js";
 
 /**
@@ -46,6 +47,8 @@ interface ActiveDiff {
   original: string;
   rewrite: string;
   language: string;
+  reasons: string[];
+  tradeoffs?: string;
 }
 
 const activeDiffs = new Map<string, ActiveDiff>();
@@ -65,7 +68,14 @@ class CompareContentProvider implements vscode.TextDocumentContentProvider {
     const side = segments[1]?.split(".")[0]; // "original" | "rewrite"
     const session = activeDiffs.get(sessionId);
     if (!session) return "";
-    return side === "rewrite" ? session.rewrite : session.original;
+    if (side === "rewrite") {
+      // Bake the reasoning right into the rewrite's body as a comment
+      // header so the diff is self-documenting — the user sees the *why*
+      // next to the *what* without hunting for the bottom-right
+      // notification popup. Works in any language we know how to comment in.
+      return renderRewriteWithHeader(session);
+    }
+    return session.original;
   }
 }
 
@@ -213,6 +223,8 @@ async function presentDiff(
     original,
     rewrite: result.rewrite,
     language,
+    reasons: result.reasons,
+    tradeoffs: result.tradeoffs,
   });
 
   // Cap retained sessions so long-running editor sessions don't leak
@@ -225,17 +237,22 @@ async function presentDiff(
   const left = vscode.Uri.parse(`${COMPARE_SCHEME}:/${sessionId}/original.${ext}`);
   const right = vscode.Uri.parse(`${COMPARE_SCHEME}:/${sessionId}/rewrite.${ext}`);
 
+  const headline = result.reasons[0]
+    ? truncate(result.reasons[0], 120)
+    : "Rewrite ready.";
+
+  // Tab title carries the headline reason so the user sees the *why*
+  // before clicking the diff — much more useful than the generic
+  // "you ↔ senior rewrite" label that was there before.
+  const tabTitle = `Protege · ${truncate(headline, 60)}`;
+
   await vscode.commands.executeCommand(
     "vscode.diff",
     left,
     right,
-    "Protege · Compare (you ↔ senior rewrite)",
+    tabTitle,
     { preview: true, viewColumn: vscode.ViewColumn.Beside }
   );
-
-  const headline = result.reasons[0]
-    ? truncate(result.reasons[0], 120)
-    : "Rewrite ready.";
 
   const choice = await vscode.window.showInformationMessage(
     headline,
@@ -263,8 +280,15 @@ async function applyRewrite(
     (e) => e.document.uri.toString() === editor.document.uri.toString()
   );
   const target = liveEditor ?? editor;
-  await target.edit((eb) => {
-    eb.replace(range, rewrite);
+  // Wrap with `withProtegeEditing` so the change-origin detector knows
+  // this insertion came from Protege itself and doesn't classify it as
+  // "auto-inserted by another AI" — otherwise the AI-block lens would
+  // pop right after the user clicked Apply, asking them to teach
+  // themselves about code Protege just wrote with their consent.
+  await withProtegeEditing(async () => {
+    await target.edit((eb) => {
+      eb.replace(range, rewrite);
+    });
   });
 }
 
@@ -349,4 +373,83 @@ function extensionFor(language: string): string {
 
 function truncate(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+}
+
+/**
+ * Wrap the senior rewrite with a comment header that lists the reasons
+ * (and optional tradeoffs). The header uses the right comment syntax
+ * for the file's language so the result still parses if the user
+ * copy-pastes it. We deliberately do NOT mutate `session.rewrite` —
+ * `applyRewrite` should still drop in the bare code, no header.
+ */
+function renderRewriteWithHeader(session: ActiveDiff): string {
+  if (session.reasons.length === 0 && !session.tradeoffs) return session.rewrite;
+  const c = commentSyntaxFor(session.language);
+  const lines: string[] = [];
+  if (c.block) {
+    lines.push(c.block.open);
+    lines.push(`${c.block.line} Protege · senior rewrite`);
+    lines.push(c.block.line);
+    for (const r of session.reasons) lines.push(`${c.block.line} • ${r}`);
+    if (session.tradeoffs) {
+      lines.push(c.block.line);
+      lines.push(`${c.block.line} Tradeoff: ${session.tradeoffs}`);
+    }
+    lines.push(c.block.close);
+  } else {
+    lines.push(`${c.line} Protege · senior rewrite`);
+    lines.push(c.line);
+    for (const r of session.reasons) lines.push(`${c.line} • ${r}`);
+    if (session.tradeoffs) {
+      lines.push(c.line);
+      lines.push(`${c.line} Tradeoff: ${session.tradeoffs}`);
+    }
+  }
+  lines.push(""); // blank line between header and code
+  lines.push(session.rewrite);
+  return lines.join("\n");
+}
+
+interface CommentSyntax {
+  /** Line-comment prefix — used when a block style isn't worth it. */
+  line: string;
+  /** Optional block-comment delimiters. When present, the header uses
+   *  `open` / per-line `line` / `close` so the whole header reads as a
+   *  single contiguous block in the diff. */
+  block?: { open: string; line: string; close: string };
+}
+
+function commentSyntaxFor(language: string): CommentSyntax {
+  switch (language) {
+    case "typescript":
+    case "typescriptreact":
+    case "javascript":
+    case "javascriptreact":
+    case "go":
+    case "rust":
+    case "java":
+    case "csharp":
+    case "swift":
+    case "kotlin":
+    case "cpp":
+    case "c":
+    case "php":
+      return { line: "//", block: { open: "/**", line: " *", close: " */" } };
+    case "python":
+    case "ruby":
+    case "shellscript":
+    case "yaml":
+      return { line: "#" };
+    case "html":
+    case "xml":
+      return { line: "<!--", block: { open: "<!--", line: "  ", close: "-->" } };
+    case "css":
+    case "scss":
+    case "less":
+      return { line: "/*", block: { open: "/*", line: " *", close: " */" } };
+    case "sql":
+      return { line: "--" };
+    default:
+      return { line: "//" };
+  }
 }

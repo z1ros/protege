@@ -21,9 +21,6 @@ interface Props {
   liveReviewOn: boolean;
   onToggleLiveReview: () => void;
   modelStatus: ModelStatus;
-  /** Teach-click delivery mode. Hoisted to App so tab switches don't lose it. */
-  explainMode: "text" | "voice" | "both";
-  onExplainModeChange: (mode: "text" | "voice" | "both") => void;
 }
 
 interface AnalysisItem {
@@ -45,21 +42,23 @@ interface LastCall {
   };
 }
 
+// "haiku" here means "any cloud call" — but the backend now actually
+// routes cheap-tier (live scans) to GPT-4o-mini and only premium-tier
+// (chat / teach / Compare / Fix it) to Claude Haiku. We can't tell from
+// `LastCall.backend` alone which was used, so the label says both. If
+// you want one-or-the-other clarity here, add an `openai` variant to
+// the LastCall.backend type + thread it through aiBackend.recordCall().
 const BACKEND_LABEL: Record<LastCall["backend"], string> = {
   "on-device": "Qwen 7B (on-device)",
-  haiku: "Claude Haiku 4.5",
+  haiku: "GPT-4o-mini · Haiku 4.5 (cloud)",
   sonnet: "Claude Sonnet 4.5",
 };
-
-type ExplainMode = "text" | "voice" | "both";
 
 export function LiveTab({
   fileName,
   liveReviewOn,
   onToggleLiveReview,
   modelStatus,
-  explainMode,
-  onExplainModeChange,
 }: Props) {
   const [inlineErrors, setInlineErrors] = useState(true);
   const [didYouKnow, setDidYouKnow] = useState(true);
@@ -89,8 +88,6 @@ export function LiveTab({
         // after the user picked On-Device.
         setLastCall(null);
       }
-      // `explainMode/state` is handled in App.tsx — hoisted so tab
-      // switches don't lose hydration. LiveTab just reads the prop.
     });
     return off;
   }, []);
@@ -118,11 +115,6 @@ export function LiveTab({
     if ((backend === "on-device" || backend === "auto") && !modelReady && !modelStatus.loading) {
       vscode.postMessage({ type: "ai/downloadModel" });
     }
-  };
-
-  // Mode change bubbles up to App (which owns the state) + posts to host.
-  const handleExplainModeChange = (mode: ExplainMode) => {
-    onExplainModeChange(mode);
   };
 
   return (
@@ -153,10 +145,10 @@ export function LiveTab({
             <button
               className={`max-plan-option ${aiBackend === "haiku" ? "active" : ""}`}
               onClick={() => handleBackendChange("haiku")}
-              title="Claude Haiku 4.5 — cloud, ~$0.15/month"
+              title="Cloud routing: GPT-4o-mini for live scans · Haiku 4.5 for chat & teach"
             >
-              <div className="max-plan-option-label">Haiku 4.5</div>
-              <div className="max-plan-option-sub">cloud · fast</div>
+              <div className="max-plan-option-label">Cloud</div>
+              <div className="max-plan-option-sub">GPT-4o-mini · Haiku 4.5</div>
             </button>
           </div>
         </div>
@@ -165,7 +157,7 @@ export function LiveTab({
           <AiOption
             id="auto"
             label="Smart Mix"
-            description="Qwen 7B for live scans · Haiku for Explain / Teach / Chat"
+            description="Qwen 7B for live scans · GPT-4o-mini cloud · Haiku 4.5 for chat & teach"
             active={aiBackend === "auto"}
             onClick={() => handleBackendChange("auto")}
             badge="recommended"
@@ -180,14 +172,14 @@ export function LiveTab({
           />
           <AiOption
             id="haiku"
-            label="Haiku 4.5"
-            description="Claude · fast · cloud · ~$0.15/mo"
+            label="Cloud"
+            description="GPT-4o-mini for live scans · Haiku 4.5 for chat · ~$0.15/mo"
             active={aiBackend === "haiku"}
             onClick={() => handleBackendChange("haiku")}
           />
-          {/* Sonnet temporarily hidden — all cloud calls route to Haiku
-              for the moment. Restore by un-commenting + reverting the
-              coercion in aiBackend.ts / chatRunner.ts. */}
+          {/* Sonnet temporarily hidden — premium-tier cloud calls route
+              to Haiku, cheap-tier (live scans) route to GPT-4o-mini.
+              See live-review-cost-cut plan + apps/backend/src/routes/chat.ts. */}
         </div>
         {modelDownloading && !modelReady && (
           <div className="live-download-bar">
@@ -306,45 +298,6 @@ export function LiveTab({
               vscode.postMessage({ type: "feature/toggle", feature: "didYouKnow", enabled: next });
             }}
           />
-        </div>
-      </div>
-
-      {/* ---- Explain mode (voice / text / both) ----
-          Moved OUT of VS Code Settings so the user can flip it without
-          digging into settings.json. Writes to `protege.explainMode`;
-          the host rebroadcasts `explainMode/state` to every panel. */}
-      <div className="live-section">
-        <div className="live-section-label microcaps">Teach delivery</div>
-        <div className="max-plan-switch">
-          <div className="max-plan-label microcaps">
-            When you click Teach
-          </div>
-          <div className="max-plan-options">
-            <button
-              className={`max-plan-option ${explainMode === "text" ? "active" : ""}`}
-              onClick={() => handleExplainModeChange("text")}
-              title="Open the sidebar and send a chat request (~150 words)"
-            >
-              <div className="max-plan-option-label">Text</div>
-              <div className="max-plan-option-sub">chat reply</div>
-            </button>
-            <button
-              className={`max-plan-option ${explainMode === "voice" ? "active" : ""}`}
-              onClick={() => handleExplainModeChange("voice")}
-              title="Protege speaks a short explanation — no chat message"
-            >
-              <div className="max-plan-option-label">Voice</div>
-              <div className="max-plan-option-sub">~8s spoken</div>
-            </button>
-            <button
-              className={`max-plan-option ${explainMode === "both" ? "active" : ""}`}
-              onClick={() => handleExplainModeChange("both")}
-              title="Speak AND send the chat reply"
-            >
-              <div className="max-plan-option-label">Both</div>
-              <div className="max-plan-option-sub">voice + chat</div>
-            </button>
-          </div>
         </div>
       </div>
 

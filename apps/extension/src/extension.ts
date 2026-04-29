@@ -2,7 +2,8 @@ import * as vscode from "vscode";
 import { exec } from "node:child_process";
 import type { MeResponse, HostToWebview } from "@protege/types";
 import { openProtegePanel } from "./panel.js";
-import { LauncherProvider, updateLauncherStats } from "./launcher.js";
+import { LauncherProvider, updateLauncherStats, updateLauncherAuth } from "./launcher.js";
+import { getAuthSnapshot } from "./user/authState.js";
 import { registerAnalyzer } from "./review/analyzer.js";
 import { FindingCodeLensProvider } from "./review/codeLens.js";
 import { broadcast, pushTeachFinding, toggleGlobalWake } from "./chat/webviewHost.js";
@@ -29,7 +30,9 @@ import { registerConceptTrail } from "./concepts/conceptTrail.js";
 import { dispatchTeachConcept } from "./teaching/teachConceptDispatch.js";
 import { registerInsetExperiment } from "./hints/insetExperiment.js";
 import { registerFindingGate } from "./review/findingGate.js";
-import { registerProjectMap } from "./workspace/projectMap.js";
+// Project Map tab retired 2026-04-23 — Map removed from the header
+// nav. Module kept on disk; not imported.
+// import { registerProjectMap } from "./workspace/projectMap.js";
 import { registerArchitectureTour } from "./teaching/architectureTour.js";
 import { registerExplainBack } from "./teaching/explainBack.js";
 import { registerLearningMode, getLatestTrace } from "./teaching/learningMode.js";
@@ -66,12 +69,18 @@ import { registerOnDeviceModel } from "./ai/onDeviceModel.js";
 import { initAiBackend, onBackendCall } from "./ai/aiBackend.js";
 import { registerExerciseEngine } from "./teaching/exerciseEngine.js";
 import { initChatHistory, disposeChatHistory } from "./chat/chatHistory.js";
+import { initNotesStore } from "./notes/notesStore.js";
 import { runWakeCalibration, hasCompletedWakeCalibration, getWakeEnabled as getWakeEnabledFor } from "./voice/wakeWordCalibration.js";
 import { stopWakeWordListener, isWakeWordListening } from "./voice/voiceCapture.js";
 import { registerVoiceStatusBar, setVoiceState } from "./voice/voiceStatusBar.js";
 import { initEcho, openEchoPanel, getEventStreamChannel } from "./echo/index.js";
-import { registerFileWalk } from "./walk/fileWalk.js";
-import { WalkViewProvider } from "./walk/walkView.js";
+// File Walk retired 2026-04-28 — sticky sidebar view + status-bar
+// shortcut + webview provider all removed. Module kept on disk;
+// re-enable by restoring this import, the registerFileWalk() call,
+// the WalkViewProvider import + registerWebviewViewProvider, the
+// fileWalkDisposables push, and the package.json view registration.
+// import { registerFileWalk } from "./walk/fileWalk.js";
+// import { WalkViewProvider } from "./walk/walkView.js";
 
 let output: vscode.OutputChannel;
 
@@ -148,6 +157,9 @@ export async function activate(context: vscode.ExtensionContext) {
   // ===== Chat history persistence =====
   initChatHistory(context);
 
+  // ===== Notes tab persistence =====
+  initNotesStore(context);
+
   // ===== Echo — behavior observation dashboard (infrastructure layer) =====
   // Starts the batcher, session tracker, line differ, paste classifier, and
   // git commit watcher. Widget agents will fill in visualizations against
@@ -222,12 +234,10 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // HighlightCodeLensProvider renders the "Apply fix · Teach me · Dismiss"
   // row ABOVE any line Protege has highlighted via the highlight_code tool.
-  // Replaces the old right-side italic `← <tag>` inline after-decoration —
-  // now the primary action surface is the CodeLens; the hover stays as the
-  // deeper-detail tooltip on mouseover.
-  context.subscriptions.push(
-    gated("aiHighlights.chatHighlights", () => registerHighlightCodeLens())
-  );
+  // Hard-coupled to the highlight system: whenever a highlight paints, the
+  // lens must show — otherwise the user has no clickable affordance for the
+  // fix/teach actions.
+  context.subscriptions.push(registerHighlightCodeLens());
   // Did-You-Know tip row above the line — replaces the old right-side
   // `💡 tip` after-decoration so the Learn more / Dismiss actions are
   // always visible, not buried behind a mouseover.
@@ -329,6 +339,18 @@ export async function activate(context: vscode.ExtensionContext) {
   // ===== Launcher (activity bar) =====
   const launcher = new LauncherProvider(context);
 
+  // Feed the launcher current + future auth state so the sidebar swaps
+  // between the normal entry point and a "Sign in with GitHub" CTA.
+  // Without this the launcher silently shows the stats card even after
+  // the user denies the OAuth dialog, leaving them with no obvious way
+  // to retry. Seeding with the current snapshot covers the case where
+  // the silent session probe has already resolved before activate()
+  // got here.
+  updateLauncherAuth(getAuthSnapshot());
+  context.subscriptions.push(
+    new vscode.Disposable(onAuthChange((snap) => updateLauncherAuth(snap)))
+  );
+
   // Highlights now persist until the user EXPLICITLY dismisses them via:
   //   1. Escape key (keybinding gated by protege.hasHighlights context key)
   //   2. "Clear highlights" link in the hover popup
@@ -372,12 +394,6 @@ export async function activate(context: vscode.ExtensionContext) {
   // selection change) are wired before the surface providers subscribe
   // to `onGateChanged`. See ~/.claude/plans/finding-gate-a1-b1.md.
   const findingGateDisposables = registerFindingGate(context);
-  // Project Map (A1) — binds `context` so the file-summary cache can
-  // write to globalState. No listeners/commands; the webview tab
-  // requests data on demand via `map/*` messages in webviewHost.ts.
-  const projectMapDisposables = [
-    gated("recap.projectMap", () => registerProjectMap(context)),
-  ];
   // Architecture Tour (A2) — guided walk through 5 key files. We pass
   // `broadcast` through so the orchestrator can push `tour/state` +
   // `tour/narrationReady` messages without taking a dependency on
@@ -594,10 +610,7 @@ export async function activate(context: vscode.ExtensionContext) {
   const workspaceIndexDisposables = registerWorkspaceIndex(context);
   const findingDiagnosticsDisposables = registerFindingDiagnostics(context);
 
-  // ===== File Walk — sequential mentor walkthrough =====
-  // Triggered from the editor title bar icon or the explorer context menu.
-  // Backend caches by file hash + caps at 5 fresh walks/user/day.
-  const fileWalkDisposables = registerFileWalk(context);
+  // File Walk retired 2026-04-28 — see top-of-file note.
 
   // ===== JARVIS Layer 5: Command palette commands =====
   const commandDisposables = registerCommands(context);
@@ -612,7 +625,6 @@ export async function activate(context: vscode.ExtensionContext) {
     ...peekTeachDisposables,
     ...liveReviewDisposables,
     ...findingGateDisposables,
-    ...projectMapDisposables,
     ...architectureTourDisposables,
     ...explainBackDisposables,
     ...learningModeDisposables,
@@ -638,7 +650,6 @@ export async function activate(context: vscode.ExtensionContext) {
     ...lessonCommentDisposables,
     ...workspaceIndexDisposables,
     ...findingDiagnosticsDisposables,
-    ...fileWalkDisposables,
     ...didYouKnowDisposables,
     ...findingHoverDisposables,
     registerInsetWizardCommand(context),
@@ -648,10 +659,6 @@ export async function activate(context: vscode.ExtensionContext) {
     ...registerOnDeviceModel(context),
     ...registerExerciseEngine(context),
     vscode.window.registerWebviewViewProvider("protege.launcher", launcher),
-    vscode.window.registerWebviewViewProvider(
-      "protege.fileWalk",
-      new WalkViewProvider()
-    ),
     vscode.commands.registerCommand("protege.toggle", () =>
       openProtegePanel(context)
     ),
@@ -731,7 +738,7 @@ export async function activate(context: vscode.ExtensionContext) {
       vscode.window.showInformationMessage(
         next === "on-device"
           ? "Protege: switched to Qwen 7B (on-device)"
-          : "Protege: switched to Haiku 4.5 (cloud)"
+          : "Protege: switched to Cloud (GPT-4o-mini · Haiku 4.5)"
       );
     }),
     vscode.commands.registerCommand("protege.toggleVoiceExplain", async () => {
@@ -824,17 +831,97 @@ export async function activate(context: vscode.ExtensionContext) {
     ),
     vscode.commands.registerCommand(
       "protege.teachHighlight",
-      (args: { kind?: string; label?: string }) => {
-        // User clicked "Teach me more" inside a highlight hover popup.
-        // Open the panel, then send a chat/autoSend message into the
-        // webview — it routes through the same code path as if the user
-        // had typed + clicked send.
+      async (args: {
+        kind?: string;
+        label?: string;
+        issue?: string;
+        fix?: string;
+        explanation?: string;
+        path?: string;
+        startLine?: number;
+        endLine?: number;
+      }) => {
+        // User clicked "Teach me" above a highlight. The previous version
+        // forwarded only `{kind, label}` and let the next turn re-discover
+        // what the highlight meant — which produced generic answers that
+        // didn't actually teach the issue. Now we pass the full payload
+        // (issue, fix, explanation) AND quote the real code from the
+        // anchor-corrected line range, so the model teaches THIS specific
+        // thing as a back-and-forth instead of starting over.
         openProtegePanel(context);
         const kind = args?.kind ?? "focus";
-        const label = args?.label ?? "";
-        const prompt = label
-          ? `Can you teach me more about this ${kind} you highlighted: "${label}"? Walk me through it with a real example.`
-          : `Can you explain the ${kind} you just highlighted in the editor?`;
+        const label = args?.label?.trim() ?? "";
+        const issue = args?.issue?.trim() ?? "";
+        const fix = args?.fix?.trim() ?? "";
+        const explanation = args?.explanation?.trim() ?? "";
+        const filePath = args?.path ?? "";
+        const startLine = args?.startLine ?? 0;
+        const endLine = args?.endLine ?? startLine;
+
+        // Pull the actual lines from disk so the model is teaching the
+        // current code, not what it imagined when the highlight was
+        // created. If the file moved or got cleared, fall back to the
+        // remembered metadata.
+        let codeQuote = "";
+        if (filePath && startLine > 0) {
+          try {
+            const uri = filePath.startsWith("/")
+              ? vscode.Uri.file(filePath)
+              : vscode.workspace.workspaceFolders?.[0]
+              ? vscode.Uri.joinPath(
+                  vscode.workspace.workspaceFolders[0].uri,
+                  filePath
+                )
+              : null;
+            if (uri) {
+              const doc = await vscode.workspace.openTextDocument(uri);
+              const startIdx = Math.max(0, startLine - 1);
+              const endIdx = Math.min(doc.lineCount - 1, endLine - 1);
+              const lines: string[] = [];
+              for (let i = startIdx; i <= endIdx; i++) {
+                lines.push(doc.lineAt(i).text);
+              }
+              codeQuote = lines.join("\n");
+            }
+          } catch {
+            // non-fatal — model still gets the structured payload
+          }
+        }
+
+        // Build a teach-this-specific prompt. The contract: the model
+        // already identified the issue + drafted the explanation, so it
+        // should TEACH that — not re-think from scratch. Two-way learning
+        // means it asks a checkpoint question after the explanation so
+        // the user actually engages instead of nodding past the answer.
+        const parts: string[] = [];
+        parts.push(
+          `I clicked "Teach me" on a ${kind} you highlighted${
+            label ? ` (“${label}”)` : ""
+          }.`
+        );
+        const FENCE = "```";
+        if (filePath && codeQuote) {
+          const range =
+            endLine !== startLine ? `${startLine}-${endLine}` : `${startLine}`;
+          parts.push(
+            `\nThe highlighted code at \`${filePath}:${range}\`:\n` +
+              `${FENCE}\n${codeQuote}\n${FENCE}`
+          );
+        }
+        if (issue) parts.push(`\nYou flagged: ${issue}`);
+        if (explanation) parts.push(`Your reasoning: ${explanation}`);
+        if (fix) {
+          parts.push(`Your proposed fix:\n${FENCE}\n${fix}\n${FENCE}`);
+        }
+        parts.push(
+          `\nTeach this to me as a two-way exchange — not a lecture:\n` +
+            `1. State the underlying concept in one sentence (no jargon).\n` +
+            `2. Show why the current code triggers it, pointing at the exact tokens.\n` +
+            `3. Ask me ONE checkpoint question that proves I get it before moving on.\n` +
+            `Stay focused on this specific issue. Don't re-explain everything you've already said in this thread.`
+        );
+
+        const prompt = parts.join("\n");
         setTimeout(() => {
           broadcast({ type: "chat/autoSend", message: prompt });
         }, 300);
