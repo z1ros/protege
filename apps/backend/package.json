@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch --env-file=.env src/index.ts",
     "build": "node scripts/prepare-kokoro.mjs && tsc",
-    "start": "node --env-file-if-exists=.env dist/index.js",
+    "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "prepare-kokoro": "node scripts/prepare-kokoro.mjs",
     "seed:echo": "tsx --env-file=.env scripts/seed-echo.ts",
