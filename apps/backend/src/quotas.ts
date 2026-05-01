@@ -55,7 +55,19 @@ export const USER_FACING_LIMITS = {
   voice_minutes: 25, // tts text-derived + stt audio-derived
 } as const;
 
-export const DAILY_USD_HARD_CAP = 2.0;
+// Daily $ ceiling per user. Trips before per-route caps in unusual
+// usage patterns (e.g. heavy voice + heavy chat in the same day);
+// otherwise route caps trip first.
+//
+// 2026-05-01: lowered 2.00 → 0.50 to match a ~$10/user/month beta
+// budget. With gpt-5-mini chat (~$0.0045/turn) and nano scans
+// (~$0.0001/scan), $0.50/day allows ~100 chat turns OR ~30 voice min
+// OR a mix — covers an actively-coding day for typical users.
+//
+// Heavy users (8-hour deep coding sessions) may hit this; intended.
+// If they keep hitting it, we look at per-user analytics and decide
+// whether to bump the cap or charge those users.
+export const DAILY_USD_HARD_CAP = 0.5;
 
 const COLUMN_BY_KIND: Record<QuotaKind, string> = {
   scan: "scan_calls",

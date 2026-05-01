@@ -827,33 +827,40 @@ function isFileMidEdit(editor: vscode.TextEditor): boolean {
 }
 
 /**
- * Hybrid Live Review — the "free first, expensive only on signal" path.
+ * Hybrid Live Review — the "wide-net then refine" path.
  *
- * Phase 1 (always): scan via on-device Qwen 7B. Free. Sees if there's
- *   anything teachable on this file at all.
+ * Phase 1 (always): scan via cloud cheap-tier (gpt-5-nano). Wide-net
+ *   prompt against the full file. Cheap (~$0.0002/scan) — used to
+ *   identify whether there's anything teachable here at all.
  * Phase 2 (only if phase 1 returned ≥ 1 finding): schedule a cloud
- *   refinement CLOUD_REFINE_DELAY_MS later. Cloud (gpt-4o-mini) takes
- *   the same code, runs the rich prompt, and produces polished
- *   teaching-quality findings that overwrite the rough Qwen ones.
+ *   refinement CLOUD_REFINE_DELAY_MS later. Same nano model, but with
+ *   a narrow refinement prompt over only the candidate ranges
+ *   (~75% smaller context). Produces polished teaching-quality
+ *   findings that overwrite the phase-1 rough ones.
  *
- * Cost shape: a "clean code" 20s-pause scan stays at $0 forever (Qwen
- * returns [], no cloud call). Only signal-bearing pauses incur cloud
- * cost — and at most one cloud call per 60s window because the timer
- * collapses rapid phase-1 hits.
+ * Architecture note (2026-05-01): on-device Qwen 7B retired from the
+ * scan path. The 4.5GB RAM tax + battery drain + 1-3s scan latency
+ * was a worse user experience than ~$0.0002/scan on cloud nano with
+ * 50ms latency on Groq-class hardware. On-device infrastructure
+ * remains in the codebase (aiBackend.ts, onDeviceModel.ts) for
+ * potential future use — offline mode, privacy-conscious users —
+ * but is no longer the default scan path.
+ *
+ * Cost shape: a "clean code" 20s-pause scan still stays cheap
+ * (~$0.0002 for the phase-1 nano call). Phase-2 only fires when
+ * phase 1 found candidates AND no signature dedup hit, so most
+ * scans are phase-1 only.
  *
  * Falls back gracefully:
- *   - on-device not ready → phase 1 silently no-ops (the existing
- *     aiQuery routing handles this), nothing is rendered, no cloud call.
- *     Wait for the model to load, or pick "cloud" for cloud-only.
- *   - cloud unreachable → phase 2 fails silently, the rough Qwen
- *     findings from phase 1 stay visible.
+ *   - cloud unreachable → both phases fail silently; surfaces stay
+ *     stable on whatever findings we last had.
  */
 async function runHybridScan(editor: vscode.TextEditor): Promise<void> {
   const fileName = editor.document.fileName.split(/[\\/]/).pop() ?? "file";
   const uriKey = editor.document.uri.toString();
 
-  log("liveReview", `[HYBRID] ▸ phase-1 starting · ${fileName} · backend=QWEN (free)`);
-  const phase1 = await runReview(editor, { forceBackend: "on-device" });
+  log("liveReview", `[HYBRID] ▸ phase-1 starting · ${fileName} · backend=NANO cloud (cheap-tier via kind:scan)`);
+  const phase1 = await runReview(editor, { forceBackend: "cloud" });
 
   // Phase 1 didn't actually run an LLM call — distinguish the cases for
   // honest logging. "QWEN clean" should mean "Qwen ran and saw nothing
