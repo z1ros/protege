@@ -68,6 +68,18 @@ export interface ChatCallOptions {
    * the file is sitting right there). Empty / undefined = pass all.
    */
   excludeTools?: string[];
+  /**
+   * Stable per-user identifier for OpenAI prompt-cache routing.
+   * OpenAI auto-caches prompts ≥ 1024 tokens for ~5–10 min, but
+   * `prompt_cache_key` ensures consecutive calls from the same user
+   * route to the same cache shard so cache hits are reliable. Without
+   * it, multi-tool round-trips within a single user turn re-pay for
+   * the file context every round (the dominant cost driver).
+   *
+   * Anthropic uses `cache_control: ephemeral` markers on system blocks
+   * (already wired below) — the userId here is purely for OpenAI.
+   */
+  userId?: string;
 }
 
 export async function callChat(opts: ChatCallOptions): Promise<ChatResult> {
@@ -157,12 +169,23 @@ async function callOpenAI(opts: ChatCallOptions): Promise<ChatResult> {
   // for "low" so the model actually reads structural rules in the
   // prompt instead of defaulting to its training prior.
   const reasoningEffort = opts.reasoningEffort ?? "minimal";
+  // OpenAI prompt-cache routing — keyed by userId so all of a user's
+  // calls within a session route to the same cache shard. Cache hits
+  // give 50% off cached input tokens, which on a multi-tool turn
+  // (where the same file context is re-sent across rounds) is the
+  // single biggest cost reduction available without refactoring.
+  // Falls back to undefined when no userId is provided; OpenAI still
+  // auto-caches but routing reliability drops.
+  const promptCacheKey = opts.userId
+    ? `protege:${opts.userId}`
+    : undefined;
   const res = await openai.chat.completions.create({
     model,
     max_completion_tokens: completionBudget,
     messages,
     ...(tools ? { tools } : {}),
     ...(isReasoningModel ? { reasoning_effort: reasoningEffort } : {}),
+    ...(promptCacheKey ? { prompt_cache_key: promptCacheKey } : {}),
   });
 
   const choice = res.choices[0];

@@ -1084,6 +1084,7 @@ chatRoute.post("/", async (c) => {
     useTools,
     reasoningEffort,
     excludeTools,
+    userId,
   });
 
   console.log(
@@ -1219,6 +1220,7 @@ chatRoute.post("/", async (c) => {
       anthropicMessages: am2,
       useTools: true,
       reasoningEffort,
+      userId,
     });
     const text2 = result2.text;
     const toolUses2 = result2.toolUses;
