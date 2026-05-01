@@ -1,0 +1,32 @@
+# Railway deployment config for the Protege backend.
+#
+# Required env (set in Railway dashboard → Variables):
+#   ANTHROPIC_API_KEY, ANTHROPIC_MODEL
+#   OPENAI_API_KEY,   OPENAI_MODEL
+#   AI_PROVIDER
+#   SUPABASE_URL,     SUPABASE_SERVICE_KEY
+#   DATABASE_URL,     DIRECT_URL          (Prisma)
+#   PROTEGE_AUTH_REQUIRED=true
+#   PROTEGE_ALLOW_DEV_USER=false
+#   PROTEGE_QUOTAS=true
+#   NODE_ENV=production
+#   (Optional) PROTEGE_CORS_ORIGINS=...    Comma-separated allowlist
+#   (Optional) KOKORO_VOICE_FEMALE/MALE, KOKORO_DTYPE
+#
+# DO NOT set PORT — Railway injects it; the server reads process.env.PORT.
+
+[build]
+builder = "NIXPACKS"
+buildCommand = """
+corepack enable && \
+pnpm install --frozen-lockfile && \
+pnpm --filter @protege/backend exec prisma generate && \
+pnpm --filter @protege/backend build
+"""
+
+[deploy]
+startCommand = "pnpm --filter @protege/backend start"
+healthcheckPath = "/healthz"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3

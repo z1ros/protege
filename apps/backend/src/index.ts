@@ -21,7 +21,24 @@ import { chatHistoryRoute } from "./routes/chatHistory.js";
 
 const app = new Hono();
 
-app.use("*", cors());
+// CORS allowlist via env (comma-separated). Empty/unset = allow all
+// origins, which is fine because every protected route is gated by the
+// GitHub Bearer auth middleware. Set PROTEGE_CORS_ORIGINS in production
+// to lock the browser-callable surface to known origins.
+const corsOrigins = process.env.PROTEGE_CORS_ORIGINS
+  ?.split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+app.use(
+  "*",
+  cors({
+    origin: corsOrigins && corsOrigins.length > 0 ? corsOrigins : "*",
+    allowHeaders: ["Authorization", "Content-Type", "X-Protege-Reason"],
+    allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    exposeHeaders: ["X-Protege-Tts"],
+  })
+);
 
 app.onError((err, c) => {
   console.error("[protege] error:", err);
@@ -31,6 +48,7 @@ app.onError((err, c) => {
 });
 
 app.get("/", (c) => c.json({ name: "protege-backend", status: "ok" }));
+app.get("/healthz", (c) => c.json({ status: "ok" }));
 
 app.post("/log", async (c) => {
   const { tag, msg } = (await c.req.json()) as { tag?: string; msg?: string };

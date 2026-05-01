@@ -4,6 +4,7 @@ out
 *.vsix
 .env
 .env.local
+.env.railway
 .protege-store.json
 .DS_Store
 .turbo

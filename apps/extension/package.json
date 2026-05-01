@@ -293,6 +293,11 @@
     "configuration": {
       "title": "Protege",
       "properties": {
+        "protege.backendUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Backend URL for the Protege API. Leave empty to use the shipped default. Set to your own deployment (e.g. https://your-protege-backend.up.railway.app) to self-host. The PROTEGE_BACKEND_URL environment variable overrides this. Reload the window after changing."
+        },
         "protege.autoAcceptEdits": {
           "type": "boolean",
           "default": false,

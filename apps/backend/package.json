@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch --env-file=.env src/index.ts",
-    "build": "tsc",
-    "start": "node --env-file=.env dist/index.js",
+    "build": "node scripts/prepare-kokoro.mjs && tsc",
+    "start": "node --env-file-if-exists=.env dist/index.js",
     "typecheck": "tsc --noEmit",
     "prepare-kokoro": "node scripts/prepare-kokoro.mjs",
     "seed:echo": "tsx --env-file=.env scripts/seed-echo.ts",

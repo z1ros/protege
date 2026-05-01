@@ -2,8 +2,32 @@ import * as vscode from "vscode";
 import type { AnalyzeResponse, Finding, MeResponse } from "@protege/types";
 import { authHeaders, getCachedGitHubUser, getGitHubUser, clearCachedUser } from "./auth.js";
 
-export const BACKEND_URL =
-  process.env.PROTEGE_BACKEND_URL ?? "http://localhost:8787";
+/**
+ * Resolution order:
+ *   1. PROTEGE_BACKEND_URL env var (developer override)
+ *   2. `protege.backendUrl` VS Code setting (per-user override / self-hosting)
+ *   3. Hardcoded production default
+ *
+ * Read once at module load. Changing the setting requires reloading the
+ * window — the extension caches BACKEND_URL across all callers.
+ */
+const PROD_BACKEND_URL = "http://localhost:8787";
+
+function resolveBackendUrl(): string {
+  const envOverride = process.env.PROTEGE_BACKEND_URL;
+  if (envOverride && envOverride.trim()) return envOverride.trim();
+  try {
+    const setting = vscode.workspace
+      .getConfiguration("protege")
+      .get<string>("backendUrl");
+    if (setting && setting.trim()) return setting.trim();
+  } catch {
+    // vscode API not available (e.g. during unit tests) — fall through.
+  }
+  return PROD_BACKEND_URL;
+}
+
+export const BACKEND_URL = resolveBackendUrl();
 
 const LEGACY_USER_ID_KEY = "protege.userId";
 

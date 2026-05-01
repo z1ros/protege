@@ -67,7 +67,8 @@ const COLUMN_BY_KIND: Record<QuotaKind, string> = {
 };
 
 export function quotasEnforced(): boolean {
-  return process.env.PROTEGE_QUOTAS === "on";
+  const v = process.env.PROTEGE_QUOTAS?.toLowerCase();
+  return v === "on" || v === "true" || v === "1";
 }
 
 /**
