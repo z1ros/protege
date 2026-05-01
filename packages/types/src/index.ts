@@ -673,6 +673,7 @@ export type WebviewToHost =
    *  refresh-now button. */
   | { type: "quota/get" }
   | { type: "ai/downloadModel" }
+  | { type: "ai/removeModel" }
   | { type: "feature/toggle"; feature: "inlineErrors" | "didYouKnow"; enabled: boolean }
   | { type: "explainMode/set"; mode: "text" | "voice" | "both" }
   | { type: "chat/search"; query: string }
@@ -829,6 +830,11 @@ export type HostToWebview =
   | { type: "voice/error"; error: string }
   | { type: "wake/state"; active: boolean; status?: string }
   | { type: "liveReview/state"; active: boolean }
+  /** Live Review master-switch state. Distinct from `liveReview/state`
+   *  (which is in-flight scan activity). The webview uses this to bop
+   *  a red attention dot on the Live tab when 24/7 review is OFF so
+   *  the user knows scanning isn't running. */
+  | { type: "liveReview/enabled"; enabled: boolean }
   | {
       type: "tip/detail";
       tip: {

@@ -202,6 +202,9 @@ export async function initOnDeviceModel(
       });
 
       log("onDevice", `[ON-DEVICE] download complete · saved to ${modelPath}`);
+      // Fresh download supersedes any prior user-removal so the auto
+      // router stops falling back to cloud and uses on-device again.
+      userRemovedModel = false;
     } else {
       log("onDevice", `[ON-DEVICE] model file already present at ${modelPath} · skipping download`);
       downloadProgress = 100;
@@ -336,6 +339,18 @@ export function isOnDeviceLoading(): boolean {
   return loading;
 }
 
+/** Sticky flag — set true the moment the user removes the model via the
+ *  Live tab button or the palette command, cleared the moment a fresh
+ *  download finishes. Used by the auto-mode router to fall back to
+ *  cloud (instead of silent-skip) so 24/7 Live Review keeps working
+ *  when the user reclaims disk. Distinct from "isOnDeviceLoading"
+ *  (briefly false during initial activation but model file IS on disk
+ *  — those still want silent-skip until load finishes). */
+let userRemovedModel = false;
+export function isOnDeviceRemovedByUser(): boolean {
+  return userRemovedModel;
+}
+
 /**
  * Unload the model and free memory.
  */
@@ -358,12 +373,79 @@ export async function disposeOnDeviceModel(): Promise<void> {
   notifyStatus();
 }
 
+/**
+ * Free memory + DELETE the cached model file from disk. Reverses the
+ * one-time download so the user can reclaim the ~4.7 GB. Live Review
+ * keeps working — `aiQuery` falls through to cloud (Haiku) when
+ * `isOnDeviceReady()` returns false.
+ */
+export async function removeOnDeviceModel(
+  storagePath: string
+): Promise<{ removed: boolean; bytesFreed: number; error?: string }> {
+  await disposeOnDeviceModel();
+  try {
+    const cacheDir = path.join(storagePath, "model-cache");
+    const modelPath = path.join(cacheDir, MODEL_FILE);
+    if (!fs.existsSync(modelPath)) {
+      log("onDevice", `[ON-DEVICE] remove: nothing to remove · ${modelPath}`);
+      return { removed: false, bytesFreed: 0 };
+    }
+    const stat = fs.statSync(modelPath);
+    const bytes = stat.size;
+    fs.unlinkSync(modelPath);
+    log(
+      "onDevice",
+      `[ON-DEVICE] removed model file · freed ${(bytes / 1_000_000_000).toFixed(2)} GB · ${modelPath}`
+    );
+    downloadProgress = 0;
+    error = null;
+    // Sticky flag — auto-mode router checks this to decide whether to
+    // fall back to cloud. Cleared on a future fresh download.
+    userRemovedModel = true;
+    notifyStatus();
+    return { removed: true, bytesFreed: bytes };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log("onDevice", `[ON-DEVICE] remove failed · ${msg}`);
+    return { removed: false, bytesFreed: 0, error: msg };
+  }
+}
+
 export function registerOnDeviceModel(
   context: vscode.ExtensionContext
 ): vscode.Disposable[] {
   return [
     vscode.commands.registerCommand("protege.downloadOnDeviceModel", () => {
       initOnDeviceModel(context.globalStorageUri.fsPath);
+    }),
+    vscode.commands.registerCommand("protege.removeOnDeviceModel", async () => {
+      // Confirm — 4.7 GB takes 5+ minutes to redownload on a normal
+      // connection, so a stray click shouldn't nuke the file.
+      const choice = await vscode.window.showWarningMessage(
+        "Remove the on-device Qwen 7B model?",
+        {
+          modal: true,
+          detail:
+            "Frees ~4.7 GB of disk. Live Review will keep working — it'll route to cloud (Haiku) instead. You can re-download anytime via 'Protege: Download On-Device Model'.",
+        },
+        "Remove"
+      );
+      if (choice !== "Remove") return;
+      const result = await removeOnDeviceModel(context.globalStorageUri.fsPath);
+      if (result.removed) {
+        const gb = (result.bytesFreed / 1_000_000_000).toFixed(2);
+        vscode.window.showInformationMessage(
+          `Protege: removed on-device model — freed ${gb} GB. Live Review now uses cloud.`
+        );
+      } else if (result.error) {
+        vscode.window.showErrorMessage(
+          `Protege: failed to remove on-device model — ${result.error}`
+        );
+      } else {
+        vscode.window.showInformationMessage(
+          "Protege: on-device model wasn't downloaded — nothing to remove."
+        );
+      }
     }),
     // Smoke test — a one-shot "does the local model answer?" probe the
     // user can run from the palette to verify the pipeline end-to-end.

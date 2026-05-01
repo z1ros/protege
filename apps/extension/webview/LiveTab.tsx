@@ -266,6 +266,29 @@ export function LiveTab({
             </button>
           </div>
         )}
+        {/* Manage on-device model — visible when model is loaded so the
+            user can reclaim disk space. Removing falls back to cloud
+            (Haiku) automatically; Live Review keeps working. */}
+        {modelReady && (
+          <div
+            className="live-download-bar"
+            style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}
+          >
+            <div
+              className="live-download-label microcaps"
+              style={{ flex: 1, color: "var(--vscode-descriptionForeground)" }}
+            >
+              On-device model loaded · ~4.7 GB on disk
+            </div>
+            <button
+              className="live-action-btn"
+              onClick={() => vscode.postMessage({ type: "ai/removeModel" })}
+              title="Remove the cached Qwen 7B file. Live Review will route to cloud (Haiku) until you re-download."
+            >
+              <span className="live-action-label">Remove model</span>
+            </button>
+          </div>
+        )}
 
         {/* Live "last call" chip — proves which backend actually ran.
             When a fallback happened (user wanted on-device but we went to
@@ -286,7 +309,12 @@ export function LiveTab({
             <span className="live-lastcall-sep">·</span>
             <span className="live-lastcall-time">{lastCall.durationMs}ms</span>
             <span className="live-lastcall-sep">·</span>
-            <span className="live-lastcall-ago">{formatAgo(now - lastCall.atMs)}</span>
+            <span
+              className="live-lastcall-ago"
+              title={`exact: ${formatAbsTime(lastCall.atMs)}`}
+            >
+              {formatAgo(now - lastCall.atMs)}
+            </span>
             {!lastCall.ok && <span className="live-lastcall-warn">failed</span>}
             {lastCall.fallback && (
               <span className="live-lastcall-fallback">
@@ -439,9 +467,26 @@ function formatAgo(ms: number): string {
   if (s < 1) return "just now";
   if (s < 60) return `${s}s ago`;
   const m = Math.floor(s / 60);
+  // Show minute+second for the first 5 minutes so the user can SEE
+  // the timestamp ticking — formerly just "Xm ago", which froze for
+  // 60s at a time and felt stuck (user reported "didn't update for
+  // 25m ago"). The interval still ticks every 3s; this just gives
+  // the rendered string sub-minute resolution to match.
+  if (m < 5) {
+    const remS = s - m * 60;
+    return remS === 0 ? `${m}m ago` : `${m}m ${remS}s ago`;
+  }
   if (m < 60) return `${m}m ago`;
   const h = Math.floor(m / 60);
-  return `${h}h ago`;
+  const remM = m - h * 60;
+  return remM === 0 ? `${h}h ago` : `${h}h ${remM}m ago`;
+}
+
+/** Absolute clock time of the last call — shown in the tooltip so the
+ *  user can sanity-check a stale-feeling relative timestamp. */
+function formatAbsTime(atMs: number): string {
+  const d = new Date(atMs);
+  return d.toLocaleTimeString();
 }
 
 /* ==========================================================

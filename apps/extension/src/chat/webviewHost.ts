@@ -29,6 +29,7 @@ import {
   collectWakeAudio,
   setStrictWakeMode,
   setWakeSuspended,
+  setRequestInFlight,
   triggerFollowUp,
 } from "../voice/voiceCapture.js";
 import {
@@ -416,10 +417,59 @@ export function mountProtegeWebview(
       // Abort the in-flight turn so the user can interrupt a long
       // generation. Doesn't clear the user's message — only kills the
       // pending response.
+      //
+      // Two distinct things to stop, depending on what's currently
+      // happening:
+      //   1. fetch + tool loop in flight → activeAbort.abort()
+      //      ("stop generating")
+      //   2. TTS playback in progress → stopHostAudio()
+      //      ("stop talking" — the chat call already returned, audio is
+      //       playing host-side via afplay/aplay/powershell, separate
+      //       from the abort controller)
+      // Both can happen back-to-back; we fire both unconditionally so
+      // the button reliably stops EVERYTHING the bot is doing.
+      let didStop = false;
       if (activeAbort) {
         activeAbort.abort();
         activeAbort = null;
         broadcast({ type: "chat/loading", loading: false });
+        didStop = true;
+      }
+      try {
+        const { stopHostAudio, isHostAudioPlaying } = await import(
+          "../voice/hostAudio.js"
+        );
+        if (isHostAudioPlaying()) {
+          stopHostAudio();
+          // Clear loading explicitly. stopHostAudio's preemption guard
+          // skips the onEnd hook (it's designed for "preempted by NEW
+          // playback" where the new caller owns state), so the
+          // chat/loading=false broadcast in onEnd never fires after
+          // a user-initiated abort. Without this explicit clear, the
+          // stop button would remain visible after the audio dies.
+          broadcast({ type: "chat/loading", loading: false });
+          // Restore chip to its resting state — stopHostAudio doesn't
+          // call setVoiceState because it's also used as a no-op step
+          // before kicking off a NEW playback (where flipping to idle
+          // would flicker). On a user-initiated abort, we want the
+          // chip to drop out of "speaking" immediately.
+          setVoiceState(isWakeWordListening() ? "idle" : "off");
+          // Clear any post-reply follow-up trigger so we don't auto-
+          // open the mic right after the user just told us to shut up.
+          pendingFollowUpMode = null;
+          setStrictWakeMode(false);
+          // Also unsuspend wake — TTS path had set it true; without
+          // this, the user would have to wait for a stale 500ms decay
+          // timer before "Protege" worked again.
+          if (isWakeWordListening()) setWakeSuspended(false);
+          didStop = true;
+        }
+      } catch (err) {
+        console.warn(
+          `[protege] chat/abort: stopHostAudio failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+      if (didStop) {
         console.log("[protege] chat aborted by user");
       }
       return;
@@ -516,6 +566,15 @@ export function mountProtegeWebview(
           fallback: last.fallback,
         });
       }
+      // Push the Live Review master-switch state so the webview can
+      // bop a red dot on the Live tab when 24/7 review is OFF.
+      const liveReviewEnabled = vscode.workspace
+        .getConfiguration("protege")
+        .get<boolean>("codeReview.liveReview", true);
+      post(webview, {
+        type: "liveReview/enabled",
+        enabled: liveReviewEnabled !== false,
+      });
 
       // Fresh-chat-on-open policy (2026-04-23): the webview always
       // starts with an empty main chat when Cursor/VS Code is reopened
@@ -751,6 +810,8 @@ export function mountProtegeWebview(
       }
     } else if (msg.type === "ai/downloadModel") {
       vscode.commands.executeCommand("protege.downloadOnDeviceModel");
+    } else if (msg.type === "ai/removeModel") {
+      vscode.commands.executeCommand("protege.removeOnDeviceModel");
     } else if (msg.type === "openExternal") {
       // Webview can't call openExternal itself — bounce through the host.
       // Used for jumping to macOS Settings → Privacy → Microphone.
@@ -1145,6 +1206,14 @@ export async function startGlobalWakeListener(
           }, 600);
         },
         onRecordingDone: async () => {
+          // Suppress further wake fires for this turn — the user said
+          // "Protege" once, the wake binary's prob can stay elevated for
+          // a moment after their voice fades and re-fire WAKE on its own
+          // utterance tail. Without this, a single "Protege keep going"
+          // produced two wake events. Cleared in the finally so every
+          // bail-out path resets it. Fired BEFORE setVoiceState so the
+          // chip transitions don't race with a phantom new wake.
+          setRequestInFlight(true);
           try {
             const wav = collectWakeAudio();
             broadcast({ type: "voice/recording", active: false });
@@ -1220,6 +1289,11 @@ export async function startGlobalWakeListener(
             const errMsg = err instanceof Error ? err.message : String(err);
             broadcast({ type: "voice/error", error: errMsg });
             flashVoiceError();
+          } finally {
+            // Always release the wake-suppression flag, regardless of
+            // success / early-return / throw — otherwise wake stays
+            // disabled forever after one bad turn.
+            setRequestInFlight(false);
           }
         },
         onError: (err) => {
@@ -1619,6 +1693,15 @@ async function handleChat(
       content: m.content,
     }));
 
+  // Track whether TTS is in flight at function-end. If so, the finally
+  // below DEFERS the chat/loading=false broadcast — the TTS onEnd will
+  // do it instead. Without this, the stop button in the composer
+  // disappears the moment the chat fetch returns, even though the bot
+  // is still speaking for another 10–30 seconds. User reported clicking
+  // "stop" did nothing — that's because they were clicking a "send"
+  // button (the loading state had already cleared).
+  let ttsKickedOff = false;
+
   try {
     const reply = await runChat(
       userId,
@@ -1845,10 +1928,16 @@ async function handleChat(
         // on Linux. The OS has no autoplay policy, so audio plays
         // whether or not the user has clicked inside the panel.
         const { playHostAudioStreaming: playHostAudio } = await import("../voice/hostAudio.js");
+        ttsKickedOff = true; // tells the finally to defer chat/loading=false
         void playHostAudio(
           { text: spoken, voice: getVoiceGender() },
           {
             onEnd: (reason) => {
+              // Clear chat/loading now — the bot has fully finished
+              // talking. While TTS was playing the loading flag stayed
+              // true so the composer's "stop" button remained visible
+              // and clickable. Now switch back to "send" mode.
+              broadcast({ type: "chat/loading", loading: false });
               setStrictWakeMode(false);
               // Chip restoration ("idle"|"off") is owned by hostAudio.ts
               // now — see playHostAudioStreaming cleanup. Calling
@@ -1959,7 +2048,13 @@ async function handleChat(
       setVoiceState("off");
     }
   } finally {
-    broadcast({ type: "chat/loading", loading: false });
+    // If TTS started and is still playing, the onEnd hook clears
+    // chat/loading; we leave it true here so the stop button stays
+    // visible during speech. If the bot didn't speak (text mode, no
+    // TTS, or chat errored before TTS fired), clear immediately.
+    if (!ttsKickedOff) {
+      broadcast({ type: "chat/loading", loading: false });
+    }
   }
 }
 

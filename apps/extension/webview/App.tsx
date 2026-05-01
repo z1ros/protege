@@ -546,6 +546,11 @@ export function App() {
   // of the session. Dismisses automatically once audio successfully
   // plays.
   const [voiceUnlockNeeded, setVoiceUnlockNeeded] = useState(false);
+  // Live Review master-switch state — pushed by host on `ready` and on
+  // settings change. When false, we bop a red attention dot on the
+  // Live tab so the user knows 24/7 review is off and they're flying
+  // blind. Defaults true to match the package.json default.
+  const [liveReviewEnabled, setLiveReviewEnabled] = useState(true);
   const [toolActivity, setToolActivity] = useState<
     { name: string; args: Record<string, unknown>; status: "running" | "done" | "error" }[]
   >([]);
@@ -679,6 +684,8 @@ export function App() {
       } else if (msg.type === "chat/loading") {
         setLoading(msg.loading);
         if (msg.loading) setToolActivity([]);
+      } else if (msg.type === "liveReview/enabled") {
+        setLiveReviewEnabled(msg.enabled);
       } else if (msg.type === "chat/error") {
         // Daily-quota 429: render a structured limit-reached banner
         // (countdown + Profile link) instead of the generic red line.
@@ -1254,9 +1261,18 @@ export function App() {
               setOverlay(null);
               setStreakOpen(false);
             }}
+            title={
+              !liveReviewEnabled
+                ? "Live Review is OFF — 24/7 scanning disabled. Click to open Live tab and turn it on."
+                : undefined
+            }
           >
             {mode === "live" && !overlay && !streakOpen && <span className="tab-dot" />}
             Live
+            {/* Red attention dot — bops when Live Review is OFF so the
+                user knows 24/7 scanning isn't running. Auto-clears the
+                moment they flip the setting back on. */}
+            {!liveReviewEnabled && <span className="tab-attention-dot" aria-label="Live Review off" />}
           </button>
           <button
             className={`tab ${mode === "notes" && !overlay && !streakOpen ? "active" : ""}`}

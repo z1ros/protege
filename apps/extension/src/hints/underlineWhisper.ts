@@ -285,26 +285,45 @@ function renderWhispers(editor: vscode.TextEditor): void {
     // underline across 20+ lines is the "everything is highlighted"
     // chaos the user flagged. Those findings still render in the
     // CodeLens row; nothing is lost.
-    if (s.scope === "block" || s.scope === "flow") continue;
+    if (s.scope === "block" || s.scope === "flow") {
+      log("whisper", `drop ${s.ruleId}@${s.range.start.line} · scope=${s.scope}`);
+      continue;
+    }
 
     const tokenRange = resolveTokenRange(doc, s);
-    if (!tokenRange) continue;
+    if (!tokenRange) {
+      log("whisper", `drop ${s.ruleId}@${s.range.start.line} · no-token-range`);
+      continue;
+    }
 
     // Dedup against native diagnostics (TS / ESLint / cSpell / Cursor
     // agent). Cursor's "Fix with Agent" inline UI is NOT a diagnostic
     // so that dedup can't detect it — the scope skip above is what
     // prevents Protege from also covering those lines with block/flow
     // underlines.
-    if (hasNativeDiagnosticInRange(doc.uri, tokenRange)) continue;
+    if (hasNativeDiagnosticInRange(doc.uri, tokenRange)) {
+      log("whisper", `drop ${s.ruleId}@${s.range.start.line} · native-diag-overlap`);
+      continue;
+    }
 
     // Praise / concept findings are positive signals — no wavy
     // underline. Still visible via Ghost CodeLens + concept-trail dot.
-    if (s.kind === "praise" || s.kind === "concept") continue;
+    if (s.kind === "praise" || s.kind === "concept") {
+      log("whisper", `drop ${s.ruleId}@${s.range.start.line} · kind=${s.kind}`);
+      continue;
+    }
 
-    // Finding gate — suppress if user is still editing this line
-    // (±45s), cursor is within ±2 lines, or ruleId was shown in the
-    // last 5 min.
-    if (gateShouldSuppress(uriKey, s)) continue;
+    // Finding gate — suppress only on line-edit-recency. The (ruleId@line)
+    // cooldown is bypassed for render surfaces because liveReview arms
+    // the cooldown at MERGE time (before any surface paints), which used
+    // to silently drop the freshly-stored finding ("stored=1 ranges=0"
+    // pattern). Cooldown still runs at the merge gate to suppress repeats
+    // across SCANS — that's where it matters.
+    const reason = gateShouldSuppress(uriKey, s, { skipCooldown: true });
+    if (reason) {
+      log("whisper", `drop ${s.ruleId}@${s.range.start.line} · ${reason}`);
+      continue;
+    }
 
     ranges.push(tokenRange);
   }

@@ -271,10 +271,20 @@ export function registerFindingGate(
  * The core check — call before rendering a finding.
  * Returns null if the finding should render, otherwise a reason string
  * (useful for logs — callers can ignore the specific value).
+ *
+ * `opts.skipCooldown` lets render surfaces (whisper, codelens) bypass
+ * the (ruleId@line) cooldown check. The cooldown is meant to suppress
+ * the SAME finding across multiple scans within 5min — but liveReview
+ * arms the cooldown the moment a scan stores a finding, which then
+ * poisons every render surface in the same scan cycle. Render surfaces
+ * pass skipCooldown:true so the freshly-stored finding still paints
+ * for the user; the line-edit-recency check still runs to suppress
+ * findings on lines the user is actively typing on.
  */
 export function shouldSuppress(
   uri: string,
-  finding: Suggestion
+  finding: Suggestion,
+  opts: { skipCooldown?: boolean } = {}
 ): SuppressReason | null {
   const now = Date.now();
 
@@ -282,11 +292,13 @@ export function shouldSuppress(
   // Scoped per-line so multiple instances of the same rule on different
   // lines each get their own window. A URI-wide cooldown silently hid
   // up to 4/5 legitimate findings per scan.
-  const cooldownKey = `${finding.ruleId}@${finding.range.start.line}`;
-  const ruleMap = ruleCooldownByUri.get(uri);
-  const existing = ruleMap?.get(cooldownKey);
-  if (existing && now - existing.firstShownAt < RULE_COOLDOWN_MS) {
-    return "rule-on-cooldown";
+  if (!opts.skipCooldown) {
+    const cooldownKey = `${finding.ruleId}@${finding.range.start.line}`;
+    const ruleMap = ruleCooldownByUri.get(uri);
+    const existing = ruleMap?.get(cooldownKey);
+    if (existing && now - existing.firstShownAt < RULE_COOLDOWN_MS) {
+      return "rule-on-cooldown";
+    }
   }
 
   // --- A1 — line-recency, severity-tiered ---

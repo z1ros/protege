@@ -22,6 +22,19 @@ let onWakeRecordingStopped: (() => void) | null = null;
 // ~500ms after bot finishes. setSuspended(false) re-enables after buffer.
 let suspended = false;
 
+// Separate flag from `suspended` — set while we're actively processing
+// a single user utterance (STT in flight, chat call out, etc., before
+// TTS starts and `suspended` takes over). Without this, the wake binary
+// can fire WAKE:detected a second time from the tail end of the user's
+// own utterance — the prob stays elevated for a moment after the user
+// stops talking and the binary's wake-word ONNX latches onto a similar
+// pattern. Suppressing wake during this in-flight window means the
+// user only ever has to say "Protege" once.
+let requestInFlight = false;
+export function setRequestInFlight(v: boolean): void {
+  requestInFlight = v;
+}
+
 /* ============ Barge-in detection (DISABLED 2026-04-30) ============
    We tried sustained-prob detection during wake-suspension to let
    users interrupt the bot mid-sentence by speaking. It worked in
@@ -312,6 +325,18 @@ export async function startWakeWordListener(
       if (trimmed === "WAKE:detected") {
         if (suspended) {
           pipeLog("protege-wake", "wake suppressed (mic suspended during bot speech)");
+          continue;
+        }
+        if (requestInFlight) {
+          // STT/chat already running for the previous wake — ignore
+          // tail-end re-fires from the user's own voice. Without this,
+          // a single "Protege keep going" produced TWO wake events:
+          // one on "Protege" (good) and one on the tail of the user's
+          // sentence (bad — would queue a second phantom recording).
+          pipeLog(
+            "protege-wake",
+            "wake suppressed (request already in flight from previous wake)"
+          );
           continue;
         }
         if (strictMode && lastWakeAvg < STRICT_AVG_THRESHOLD) {

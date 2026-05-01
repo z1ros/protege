@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import type { ChatTier } from "@protege/types";
-import { generateLocal, isOnDeviceReady } from "./onDeviceModel.js";
+import { generateLocal, isOnDeviceReady, isOnDeviceRemovedByUser } from "./onDeviceModel.js";
 import { runSingleQuery } from "../chat/chatRunner.js";
 
 /**
@@ -361,44 +361,64 @@ export async function aiQuery(
   if (backend === "auto") {
     if (kind === "scan") {
       if (!isOnDeviceReady()) {
-        // Silent skip — the user installed "auto" for the margin, not
-        // for surprise cloud bills on every keystroke. The Live tab will
-        // show the download prompt; once Qwen is ready, scans resume.
+        // Two distinct cases when on-device isn't ready:
+        //
+        //   A) User REMOVED the model via the Live tab button (or
+        //      `protege.removeOnDeviceModel` palette command). They
+        //      explicitly opted out of on-device — fall back to cloud
+        //      so 24/7 Live Review keeps working. They reclaimed disk
+        //      space; we trust the budget cap to prevent runaway cost.
+        //
+        //   B) Model is loading / not yet downloaded for first time —
+        //      silent skip. User installed "auto" for the margin, not
+        //      for surprise cloud bills on every keystroke. Once Qwen
+        //      finishes loading, scans resume.
+        //
+        // Distinguished via isOnDeviceRemovedByUser() — sticky flag set
+        // when the user removes the model, cleared on fresh download.
+        if (isOnDeviceRemovedByUser()) {
+          fallback = {
+            requested: "auto",
+            reason: "on-device removed by user · routing scan to cloud",
+          };
+          // Fall through to the cloud path below — runs the same code
+          // as a "cloud" backend selection, with the fallback marker
+          // set so the Live tab "Last call" chip turns AMBER and shows
+          // the reason. Keeps user fully informed about what just ran.
+        } else {
+          recordCall({
+            backend: "on-device",
+            atMs: Date.now(),
+            durationMs: 0,
+            ok: false,
+            fallback: { requested: "auto", reason: "on-device not ready · scan skipped" },
+          });
+          void (async () => {
+            const { log } = await import("../log.js");
+            log(
+              "aiBackend",
+              `[QWEN] aiQuery(scan) SKIPPED · on-device model not ready (loading? not downloaded?) · refusing cloud fallback on auto+scan path`
+            );
+          })();
+          return null;
+        }
+      } else {
+        const start = Date.now();
+        const result = await generateLocal(prompt, maxTokens);
+        const duration = Date.now() - start;
         recordCall({
           backend: "on-device",
           atMs: Date.now(),
-          durationMs: 0,
-          ok: false,
-          fallback: { requested: "auto", reason: "on-device not ready · scan skipped" },
+          durationMs: duration,
+          ok: !!result,
         });
-        // Surface this to the Protege output channel — under hybrid Live
-        // Review, this is the #1 reason "Qwen never finds anything" even
-        // though the user thinks on-device should be running. Tells you
-        // exactly what to do: open Live tab, pick "On-Device" or wait
-        // for the auto pre-warm to complete.
-        void (async () => {
-          const { log } = await import("../log.js");
-          log(
-            "aiBackend",
-            `[QWEN] aiQuery(scan) SKIPPED · on-device model not ready (loading? not downloaded?) · refusing cloud fallback on auto+scan path`
-          );
-        })();
-        return null;
+        console.log(`[protege] aiQuery(scan) → on-device · ${duration}ms`);
+        return result;
       }
-      const start = Date.now();
-      const result = await generateLocal(prompt, maxTokens);
-      const duration = Date.now() - start;
-      recordCall({
-        backend: "on-device",
-        atMs: Date.now(),
-        durationMs: duration,
-        ok: !!result,
-      });
-      console.log(`[protege] aiQuery(scan) → on-device · ${duration}ms`);
-      return result;
     }
-    // kind === "teach" → fall through to Haiku path below
-    fallback = undefined;
+    // kind === "teach" → fall through to Haiku path below.
+    // (Or kind === "scan" + user-removed: fallback already set above,
+    //  same Haiku path below honors it.)
   }
 
   // ---- On-device (explicit) ----

@@ -193,6 +193,32 @@
   background: var(--glow);
   box-shadow: 0 0 4px rgba(var(--text-rgb), 0.4);
 }
+/* Red attention dot — bops next to a tab label when something needs
+   the user's eye. Used on the Live tab when 24/7 review is OFF so the
+   user knows scanning isn't running. The bop is a slow scale + glow
+   pulse — visible peripherally without being a strobe. */
+.tab-attention-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: #ff5a5a;
+  box-shadow: 0 0 6px rgba(255, 90, 90, 0.6);
+  animation: tab-attention-bop 1.4s ease-in-out infinite;
+  vertical-align: middle;
+}
+@keyframes tab-attention-bop {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 6px rgba(255, 90, 90, 0.6);
+  }
+  50% {
+    transform: scale(1.35);
+    box-shadow: 0 0 10px rgba(255, 90, 90, 0.85);
+  }
+}
 /* "Soon" pill — signals a tab whose feature is in development.
    Sits inline with the tab label, smaller + dimmer than the label
    itself so it reads as metadata, not as part of the tab name. */

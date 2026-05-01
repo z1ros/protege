@@ -7,6 +7,12 @@ import { recordSingleUtterance, scoreWavAgainstWakeModel } from "./voiceCapture.
 const STATE_KEY_THRESHOLD = "protege.wakeWordThreshold";
 const STATE_KEY_CALIBRATED = "protege.wakeWordCalibrated";
 const STATE_KEY_WAKE_ENABLED = "protege.wakeListenerEnabled";
+const STATE_KEY_PROMPT_DEFERRED_AT = "protege.wakeWordPromptDeferredAt";
+
+/** Re-prompt cooldown when the user clicks "Later" on the first-run
+ *  calibration popup. Without this we'd ask on every single Cursor
+ *  restart, which the user explicitly flagged as nag behaviour. */
+const PROMPT_DEFER_MS = 7 * 24 * 60 * 60_000;
 
 /** Threshold used when the user has not calibrated yet. Tuned for the
  *  LiveKit-trained model (2026-04-18): real-voice peaks 0.22–0.28,
@@ -33,6 +39,25 @@ export function getStoredWakeThreshold(context: vscode.ExtensionContext): number
 
 export function hasCompletedWakeCalibration(context: vscode.ExtensionContext): boolean {
   return context.globalState.get<boolean>(STATE_KEY_CALIBRATED) === true;
+}
+
+/** Returns true when the first-run calibration prompt should be shown:
+ *  user hasn't completed calibration AND hasn't clicked "Later" within
+ *  the last week. Otherwise we stay quiet — the command palette entry
+ *  (`Protege: Calibrate wake word`) is always available for manual use. */
+export function shouldShowCalibrationPrompt(context: vscode.ExtensionContext): boolean {
+  if (hasCompletedWakeCalibration(context)) return false;
+  const deferredAt = context.globalState.get<number>(STATE_KEY_PROMPT_DEFERRED_AT);
+  if (typeof deferredAt === "number" && Date.now() - deferredAt < PROMPT_DEFER_MS) {
+    return false;
+  }
+  return true;
+}
+
+export async function recordCalibrationPromptDeferred(
+  context: vscode.ExtensionContext
+): Promise<void> {
+  await context.globalState.update(STATE_KEY_PROMPT_DEFERRED_AT, Date.now());
 }
 
 /** Whether the wake-word listener should be on. Defaults to TRUE for new
