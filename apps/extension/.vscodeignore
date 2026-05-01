@@ -1,0 +1,71 @@
+# Files to exclude from the .vsix package.
+# Anything not explicitly excluded here ends up in the marketplace upload —
+# including node_modules and your .env, so this file matters.
+
+# Source — only the bundled `dist/` ships
+src/**
+webview/**
+**/*.ts
+**/*.tsx
+**/*.map
+tsconfig*.json
+tsup.config.ts
+vite.config.mts
+vitest.config.ts
+
+# Dev dependencies — `dist/` already inlines what's needed at runtime
+node_modules/**
+
+# Tests
+**/*.test.ts
+**/*.test.tsx
+
+# Local config / secrets — must NOT ship
+.env
+.env.*
+.vscode/**
+.vscode-test/**
+.git/**
+.gitignore
+.eslintrc*
+.prettierrc*
+
+# Editor cruft
+.DS_Store
+**/.DS_Store
+*.log
+
+# Build artifacts that aren't `dist/`
+.turbo/**
+.cache/**
+.next/**
+coverage/**
+
+# Native Rust source for protege-mic — only the compiled binary in
+# `bin/protege-mic-<platform>-<arch>` ships. The Rust crate (Cargo.toml,
+# src/, target/) is dev-only — target/ alone is ~1.1 GB which both
+# bloats the extension AND chokes vsce's secret scanner with files >2 GB.
+native/**
+
+# On-device model cache — the runtime downloads Qwen 7B GGUF (~4.7 GB)
+# into globalStorage at first use. A stray `.model-cache/` at the
+# extension root (from local testing or legacy paths) must NEVER be
+# packaged: it bloats the .vsix to 5+ GB AND chokes vsce's >2 GB secret
+# scanner. Marketplace also has a hard 50 MB upload limit.
+.model-cache/**
+**/.model-cache/**
+*.gguf
+*.onnx.cache
+
+# Echo + extension dev ledgers / scratch artifacts that don't belong in
+# the package (~/.claude session files, SQLite ledgers, telemetry caches).
+.lesson-sessions.json
+.protege-*
+echo.db*
+**/.cache/**
+
+# Web-extension manifests we don't ship
+.vscode-web/**
+
+# OS / IDE noise
+Thumbs.db

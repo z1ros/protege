@@ -1,10 +1,23 @@
 {
-  "name": "@protege/extension",
+  "name": "protege",
   "displayName": "Protege",
   "description": "AI coding mentor that lives in your editor",
   "version": "0.0.1",
-  "private": true,
-  "publisher": "protege",
+  "publisher": "protege-ai",
+  "license": "MIT",
+  "icon": "media/icon-128x128.png",
+  "categories": [
+    "AI",
+    "Education",
+    "Other"
+  ],
+  "keywords": [
+    "ai",
+    "tutor",
+    "learning",
+    "mentor",
+    "code review"
+  ],
   "engines": {
     "vscode": "^1.90.0"
   },
