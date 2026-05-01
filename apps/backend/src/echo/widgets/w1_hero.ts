@@ -2,7 +2,7 @@ import type { HeroWidgetPayload } from "@protege/types";
 import {
   readBehaviorRollups,
   readConceptStates,
-  readFileAuthorshipRows,
+  readEchoEvents,
 } from "../../store.js";
 import { DAY_MS, dateKey, rangeDates } from "../util/shared.js";
 
@@ -48,21 +48,39 @@ export async function assembleHeroPayload(
     conceptsMastered += 1;
   }
 
-  // Manual % — sum human + ai chars across rows touched in the window.
-  const authorshipRows = await readFileAuthorshipRows(userId);
+  // Manual % — window-bounded from raw EchoEvents to match the
+  // Independence-trend widget (W14) exactly. Bug fix (2026-04-30):
+  // the prior version summed `FileAuthorshipCounter.humanChars/aiChars`
+  // (per-file LIFETIME totals) filtered by `updatedAt in window`. So a
+  // file touched once in the window contributed ALL of its historical
+  // authorship to the "this window's ratio" — Hero would show 68%
+  // while Independence Trend showed 16% for the same window. Now both
+  // widgets read the same event stream within `[windowStart, windowEnd]`
+  // and produce the same number.
+  const eventRows = await readEchoEvents(userId, windowStart, windowEnd);
   let humanTotal = 0;
   let aiTotal = 0;
-  for (const row of authorshipRows) {
-    if (row.updatedAt < windowStartIso || row.updatedAt > windowEndIso) continue;
-    humanTotal += row.humanChars;
-    aiTotal += row.aiChars;
+  for (const row of eventRows) {
+    const p = (row.payload ?? {}) as Record<string, unknown>;
+    if (row.type === "keystroke_batch") {
+      const v = p.charsTyped;
+      if (typeof v === "number" && Number.isFinite(v) && v > 0) {
+        humanTotal += Math.floor(v);
+      }
+    } else if (row.type === "ai_suggestion_accepted") {
+      const accepted = p.charsAccepted;
+      const fallback = p.chars;
+      if (typeof accepted === "number" && Number.isFinite(accepted)) {
+        aiTotal += Math.max(0, Math.floor(accepted));
+      } else if (typeof fallback === "number" && Number.isFinite(fallback)) {
+        aiTotal += Math.max(0, Math.floor(fallback));
+      }
+    }
   }
   const manualDenom = humanTotal + aiTotal;
-  // Gate manualPct on session activity. FileAuthorshipCounter rows can exist
-  // independently of BehaviorRollup activity (counters persist across sessions,
-  // so a row's `updatedAt` can fall inside a window even when the user was
-  // not coding). Showing a ratio while timeInEditor/linesWritten are zero
-  // reads like a bug, so we hide it instead.
+  // Hide the ratio when the user wasn't actually coding in the window
+  // (timeInEditor=0). Otherwise a stray event from cross-session sync
+  // could show a number that looks like a bug to the user.
   const manualPctHidden = timeInEditor === 0;
   const manualPct =
     manualPctHidden || manualDenom === 0 ? 0 : humanTotal / manualDenom;

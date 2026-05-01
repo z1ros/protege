@@ -60,6 +60,14 @@ export interface ChatCallOptions {
    * — e.g. structured teaching beats where dropping rules costs quality.
    */
   reasoningEffort?: "minimal" | "low" | "medium" | "high";
+  /**
+   * Tool names to drop from the definitions array before sending to the
+   * model. Used to structurally enforce mode-level bans (e.g. teaching
+   * mode strips `edit_file` so the learner writes the code themselves —
+   * prompt rules alone are not enough; GPT-5 calls edit_file anyway when
+   * the file is sitting right there). Empty / undefined = pass all.
+   */
+  excludeTools?: string[];
 }
 
 export async function callChat(opts: ChatCallOptions): Promise<ChatResult> {
@@ -95,7 +103,11 @@ async function callAnthropic(opts: ChatCallOptions): Promise<ChatResult> {
     model: opts.anthropicModel,
     max_tokens: opts.maxTokens,
     system: systemBlocks,
-    ...(opts.useTools ? { tools: ANTHROPIC_TOOL_DEFINITIONS } : {}),
+    ...(opts.useTools
+      ? {
+          tools: filterTools(ANTHROPIC_TOOL_DEFINITIONS, opts.excludeTools),
+        }
+      : {}),
     messages: opts.anthropicMessages,
   });
 
@@ -126,7 +138,7 @@ async function callOpenAI(opts: ChatCallOptions): Promise<ChatResult> {
     opts.anthropicMessages
   );
   const tools = opts.useTools
-    ? anthropicToolsToOpenAI(ANTHROPIC_TOOL_DEFINITIONS)
+    ? anthropicToolsToOpenAI(filterTools(ANTHROPIC_TOOL_DEFINITIONS, opts.excludeTools))
     : undefined;
 
   // Reasoning models (gpt-5*, o1*, o3*, o4*) burn tokens on internal
@@ -295,6 +307,25 @@ async function oneShotOpenAI(opts: OneShotOptions): Promise<OneShotResult> {
     modelUsed: model,
     providerUsed: "openai",
   };
+}
+
+/** Drop tools whose name appears in `exclude`. Returns the same array
+ *  reference when there's nothing to filter so we don't allocate on the
+ *  common path. Logs once per excluded tool so it's obvious in the
+ *  terminal that the model wasn't even given the option. */
+function filterTools(
+  tools: Anthropic.Messages.Tool[],
+  exclude: string[] | undefined
+): Anthropic.Messages.Tool[] {
+  if (!exclude || exclude.length === 0) return tools;
+  const banned = new Set(exclude);
+  const kept = tools.filter((t) => !banned.has(t.name));
+  if (kept.length !== tools.length) {
+    console.log(
+      `[protege] callChat: stripped ${tools.length - kept.length} tools — banned=[${[...banned].join(",")}]`
+    );
+  }
+  return kept;
 }
 
 function anthropicToolsToOpenAI(

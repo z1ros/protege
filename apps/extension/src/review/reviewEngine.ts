@@ -1,6 +1,36 @@
 import * as vscode from "vscode";
-import { aiQuery, getAiBackend } from "../ai/aiBackend.js";
+import { aiQuery, getAiBackend, getLastCall } from "../ai/aiBackend.js";
 import { log, logBlock } from "../log.js";
+
+/**
+ * Per-scan cost estimate in USD. Uses the standard ~4-chars-per-token
+ * heuristic and the published per-million pricing for each backend.
+ * On-device runs locally so the cost is zero.
+ *
+ *   gpt-4o-mini (the "cheap" tier scans go through): $0.15/Mtok in,
+ *     $0.60/Mtok out. The Protege backend pins kind="scan" requests to
+ *     this model regardless of your local pick (see backend/routes/chat).
+ *   haiku 4.5 (only fires for kind="teach"): $1/Mtok in, $5/Mtok out.
+ *     Listed for completeness — scan-tier callsites won't see it.
+ */
+function estimateScanCostUsd(
+  backend: string,
+  inTokens: number,
+  outTokens: number
+): number {
+  if (backend === "on-device") return 0;
+  // Cloud scans go through the backend's "cheap tier" routing (see
+  // backend/routes/chat.ts → OPENAI_CHEAP_MODEL, default gpt-4o-mini).
+  // Cheap-tier published pricing: $0.15/Mtok input, $0.60/Mtok output.
+  // Teach-tier callsites go through a separate code path and aren't
+  // priced by this estimator.
+  return (inTokens * 0.15 + outTokens * 0.6) / 1_000_000;
+}
+
+/** Running totals since extension activation. Reset on reload. Surfaced
+ *  in the scan log so you can see cost climbing in real time. */
+let sessionScanCount = 0;
+let sessionCostUsd = 0;
 
 /**
  * Review Engine — AI-powered code review.
@@ -365,6 +395,103 @@ ${numberLines(code)}
 \`\`\``;
 }
 
+/**
+ * Refinement prompt — used by hybrid Live Review phase 2.
+ *
+ * Instead of asking the cloud model to re-scan the whole file, we
+ * hand it the candidate findings the on-device pass already detected
+ * and ask for two things:
+ *   1. Validate each (drop false positives).
+ *   2. Produce the rich teaching content (label, teaser, lesson,
+ *      voiceScript) the on-device prompt's minimal schema doesn't
+ *      include.
+ *
+ * Code excerpt is narrow: just the lines around each candidate (±10
+ * lines), not the whole file. Cuts phase-2 prompt size ~75% vs the
+ * detection prompt, which is the primary cost reduction in the hybrid
+ * pipeline. Latency is also faster — smaller prompt = faster TTFT.
+ */
+const REFINEMENT_CONTEXT_LINES = 10;
+
+function buildRefinementPrompt(
+  languageId: string,
+  fileName: string,
+  allLines: string[],
+  candidates: Suggestion[]
+): string {
+  // Build the union of line ranges we need to show. Adjacent / overlapping
+  // candidate windows merge so we don't emit duplicate code blocks.
+  const sortedLines = [...candidates]
+    .map((c) => c.range.start.line)
+    .sort((a, b) => a - b);
+  const ranges: Array<{ start: number; end: number }> = [];
+  for (const line of sortedLines) {
+    const start = Math.max(0, line - REFINEMENT_CONTEXT_LINES);
+    const end = Math.min(allLines.length - 1, line + REFINEMENT_CONTEXT_LINES);
+    const last = ranges[ranges.length - 1];
+    if (last && start <= last.end + 1) {
+      last.end = Math.max(last.end, end);
+    } else {
+      ranges.push({ start, end });
+    }
+  }
+
+  // Render each range as a numbered code block so line numbers in the
+  // candidates match what the model sees.
+  const codeBlocks = ranges
+    .map(({ start, end }) => {
+      const numbered = allLines
+        .slice(start, end + 1)
+        .map((l, i) => `${String(start + 1 + i).padStart(3, " ")}  ${l}`)
+        .join("\n");
+      return `\`\`\`${languageId}\n${numbered}\n\`\`\``;
+    })
+    .join("\n\n");
+
+  const candidatesJson = JSON.stringify(
+    candidates.map((c) => ({
+      line: c.range.start.line + 1,
+      ruleId: c.ruleId,
+      severity: c.severity,
+      message: c.message,
+    })),
+    null,
+    2
+  );
+
+  return `You are refining a code review. An on-device model produced the candidate findings below; your job is to (1) drop any that are false positives or not worth saying, and (2) polish the survivors into rich teaching content.
+
+File: ${fileName}
+Language: ${languageId}
+
+Code (only the regions around each candidate, ±${REFINEMENT_CONTEXT_LINES} lines):
+
+${codeBlocks}
+
+Candidate findings (from on-device pass):
+${candidatesJson}
+
+For each candidate you choose to keep, emit a JSON object with these fields:
+- "line": 1-based line — MUST match the candidate's line
+- "kind": "praise" | "concept" | "watch-out"
+- "severity": "info" for praise/concept, "warn" or "perf" for watch-out
+- "ruleId": MUST be the candidate's ruleId verbatim. Do NOT rename it, even if you think a better name exists. The orchestrator uses ruleId equality to detect which candidates you kept; renaming causes valid findings to be falsely blocklisted as false positives.
+- "label": 3–5 word concept tag
+- "message": one sentence, mentor-voice, specific to THIS code
+- "teaser": one sentence WHY this matters (≤100 chars), different phrasing from message
+- "lesson": exactly 2 sentences. Sentence 1 = what the concept is. Sentence 2 = why it matters HERE.
+- "voiceScript": 35–50 words, plain spoken English
+- "fix": OPTIONAL one-line replacement (only for watch-out)
+
+Drop a candidate (don't include it in output) when:
+- It's a false positive on closer inspection
+- The flagged line is empty / scaffolding / placeholder
+- The finding describes the code rather than teaching something
+- A senior dev would skip past it in a real PR review
+
+Return ONLY a JSON array. \`[]\` is valid if every candidate fails the bar.`;
+}
+
 // ---- Fallback synthesis ----
 // If the model omits any of label/teaser/lesson/voiceScript, derive a
 // sensible default from ruleId + message so downstream surfaces never
@@ -707,7 +834,21 @@ export async function reviewDocument(
    * prompt covers the whole file evenly. LiveReview passes the active
    * editor's cursor; SAVE/FLOW tiers don't (they want full-file view).
    */
-  activeLine?: number
+  activeLine?: number,
+  /**
+   * Override the user's persisted backend for this single call. Used by
+   * the hybrid Live Review orchestrator (phase 1 forces "on-device",
+   * phase 2 forces "cloud"). Doesn't change setAiBackend / globalState.
+   */
+  forceBackend?: import("../ai/aiBackend.js").AiBackend,
+  /**
+   * Refinement mode. When provided, the model is asked to validate +
+   * polish these specific findings (instead of detecting from scratch),
+   * and the prompt only includes the relevant line ranges + a small
+   * window of context around each. Drops phase-2 cloud cost ~75% by
+   * eliminating the "re-detect what Qwen already found" pass.
+   */
+  candidates?: Suggestion[]
 ): Promise<Suggestion[]> {
   const fullText = document.getText();
   if (!fullText.trim()) {
@@ -720,10 +861,13 @@ export async function reviewDocument(
   const code = truncated ? allLines.slice(0, MAX_FILE_LINES).join("\n") : fullText;
 
   const fileName = fileNameOf(document);
-  const prompt = buildPrompt(document.languageId, fileName, code, {
-    allLines,
-    activeLine,
-  });
+  const prompt =
+    candidates && candidates.length > 0
+      ? buildRefinementPrompt(document.languageId, fileName, allLines, candidates)
+      : buildPrompt(document.languageId, fileName, code, {
+          allLines,
+          activeLine,
+        });
 
   log(
     "reviewEngine",
@@ -731,7 +875,7 @@ export async function reviewDocument(
   );
 
   const started = Date.now();
-  const raw = await aiQuery(prompt, 512, { kind: "scan" });
+  const raw = await aiQuery(prompt, 512, { kind: "scan", forceBackend });
   const elapsed = Date.now() - started;
 
   if (signal?.cancelled) {
@@ -746,7 +890,45 @@ export async function reviewDocument(
     return [];
   }
 
-  log("reviewEngine", `scan got raw reply · ${raw.length}ch · ${elapsed}ms`);
+  // Cost + transparency log. Each scan emits one rich line so you can
+  // tail the Protege output channel and see exactly what fired, on which
+  // model, what it cost, and what the model said. ~4 chars per token is
+  // the standard rough estimate for English/code mixes; close enough for
+  // a running cost picture.
+  const lastCall = getLastCall();
+  const backendUsed = lastCall?.backend ?? "?";
+  const inTokens = Math.ceil(prompt.length / 4);
+  const outTokens = Math.ceil(raw.length / 4);
+  const costUsd = estimateScanCostUsd(backendUsed, inTokens, outTokens);
+  sessionScanCount++;
+  sessionCostUsd += costUsd;
+  // Prefix matches the hybrid orchestrator log: [QWEN] for on-device,
+  // [CLOUD] for any cloud-routed scan. The actual cloud model is decided
+  // by the backend env (OPENAI_CHEAP_MODEL, default gpt-4o-mini); the
+  // extension just labels it "cloud" generically.
+  const prefix = backendUsed === "on-device" ? "[QWEN]  " : "[CLOUD] ";
+  const displayBackend =
+    backendUsed === "on-device"
+      ? "qwen-7b (local)"
+      : "cloud (cheap-tier · model configured server-side)";
+  log(
+    "reviewEngine",
+    `${prefix}scan · ${fileName} · ` +
+      `via=${displayBackend} · ` +
+      `tokens=${inTokens}in/${outTokens}out · ` +
+      `cost=${costUsd === 0 ? "$0 (free)" : "$" + costUsd.toFixed(5)} · ` +
+      `${elapsed}ms · ` +
+      `session=${sessionScanCount} scans · $${sessionCostUsd.toFixed(4)} total`
+  );
+  // The model's raw output — truncated to 500 chars so the log stays
+  // readable but you can still see what it "thought" before our parsing
+  // and gating filtered it. Useful when a finding looks wrong: you can
+  // tell "model said X" vs "model said Y but our parser dropped it."
+  logBlock(
+    "reviewEngine",
+    `[scan] raw reply for ${fileName} (${raw.length}ch, first 500 shown)`,
+    raw.slice(0, 500)
+  );
 
   const issues = extractJsonArray(raw);
   if (!issues) {

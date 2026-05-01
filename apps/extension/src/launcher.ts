@@ -84,8 +84,19 @@ export class LauncherProvider implements vscode.WebviewViewProvider {
   constructor(private readonly ctx: vscode.ExtensionContext) {}
 
   resolveWebviewView(view: vscode.WebviewView) {
-    view.webview.options = { enableScripts: true };
-    view.webview.html = this.html();
+    // Allow the webview to load the bundled logo.svg from `media/`.
+    // Without this, asWebviewUri() generates a `vscode-webview-resource://`
+    // URL that the webview would refuse to fetch under the strict CSP.
+    view.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [
+        vscode.Uri.joinPath(this.ctx.extensionUri, "media"),
+      ],
+    };
+    const logoUri = view.webview.asWebviewUri(
+      vscode.Uri.joinPath(this.ctx.extensionUri, "media", "logo.svg")
+    );
+    view.webview.html = this.html(view.webview, logoUri);
     currentView = view;
     currentCtx = this.ctx;
 
@@ -139,13 +150,18 @@ export class LauncherProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  private html() {
+  private html(webview: vscode.Webview, logoUri: vscode.Uri) {
     const nonce = getNonce();
+    // CSP source for images. `${webview.cspSource}` is the magic origin
+    // VS Code expects in the meta CSP whenever the webview loads images
+    // via asWebviewUri(). Without this listed in `img-src`, the launcher
+    // logo would 404 with a Content-Security-Policy console error.
+    const imgSrc = `${webview.cspSource} data:`;
     return `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src data:;" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src ${imgSrc};" />
 <style>
   :root {
     --ink: #07060d;
@@ -238,30 +254,40 @@ export class LauncherProvider implements vscode.WebviewViewProvider {
     position: relative;
     z-index: 1;
   }
-  /* Orbit logo — one ring, one dot. Lives inside a softly glowing
-     plate so it reads as the product mark, not a letter. Hover
-     rotates -12° to match the brand spec (single canonical gesture).
-     Box-shadow halo (not pseudo-element) sidesteps any stacking-
-     context surprises with the parent flex row. */
+  /* Brand mark — uses the real Protege logo from media/logo.svg.
+     Previously this was an inline "Orbit" SVG (one ring + one dot)
+     drawn programmatically. Replaced 2026-04-30 with the actual logo
+     so the launcher matches the rest of the product surface.
+     Background gradient + glow softened so they don't fight the
+     full-color logo at this size. */
   .mark {
     width: 42px;
     height: 42px;
     border-radius: 12px;
-    background: radial-gradient(circle at 35% 30%, rgba(74, 158, 255, 0.35), rgba(13, 11, 24, 0.92) 70%);
+    background: rgba(13, 11, 24, 0.55);
     display: flex;
     align-items: center;
     justify-content: center;
     color: var(--glow);
     box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.1) inset,
-      0 8px 22px rgba(74, 158, 255, 0.32),
-      0 0 22px rgba(74, 158, 255, 0.18);
+      0 0 0 1px rgba(255, 255, 255, 0.08) inset,
+      0 6px 18px rgba(74, 158, 255, 0.22),
+      0 0 16px rgba(74, 158, 255, 0.12);
     flex-shrink: 0;
     animation: mark-pulse 3.2s ease-in-out infinite;
     transition: transform 320ms cubic-bezier(0.16, 1, 0.3, 1);
+    overflow: hidden;
   }
   .mark:hover { transform: rotate(-12deg); }
-  .mark svg { width: 24px; height: 24px; display: block; }
+  .mark img {
+    width: 30px;
+    height: 30px;
+    object-fit: contain;
+    display: block;
+    /* Logo's native viewBox is taller than wide (401×542) — letterboxes
+       cleanly inside the 42×42 plate without distortion thanks to
+       object-fit: contain above. */
+  }
   @keyframes mark-pulse {
     0%, 100% {
       box-shadow:
@@ -437,10 +463,7 @@ export class LauncherProvider implements vscode.WebviewViewProvider {
   <section class="hero" aria-label="Protege">
     <div class="hero-top">
       <div class="mark" aria-hidden="true">
-        <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" fill="none" role="img">
-          <circle cx="16" cy="16" r="10.5" stroke="white" stroke-width="1.9" stroke-linecap="round" />
-          <circle cx="23.42" cy="8.58" r="2.9" fill="white" />
-        </svg>
+        <img src="${logoUri}" alt="" />
       </div>
       <div class="hero-identity">
         <span class="microcaps">Mentor</span>

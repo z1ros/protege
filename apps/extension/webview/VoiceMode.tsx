@@ -356,6 +356,11 @@ export function VoiceMode({
           setPhase("listening");
           setConversation(true);
           setStatusDetail("");
+        } else {
+          // Mic just closed — STT runs next. Flip to "thinking" so the
+          // chip doesn't linger on "Listening" through the transcribe +
+          // chat-fetch window.
+          if (phaseRef.current === "listening") setPhase("thinking");
         }
       } else if (msg.type === "voice/transcript") {
         setLiveTranscript(msg.text);
@@ -364,8 +369,16 @@ export function VoiceMode({
         setWakeWordActive(msg.active);
         setWakeWordStatus(msg.status ?? "");
         if (msg.status === "listening") {
-          setPhase("idle");
-          setConversation(false);
+          // Wake re-armed for the next utterance. Don't clobber an active
+          // thinking/speaking phase — the chat fetch or TTS playback is
+          // still in flight and the chip should reflect that, not "idle".
+          if (
+            phaseRef.current !== "thinking" &&
+            phaseRef.current !== "speaking"
+          ) {
+            setPhase("idle");
+            setConversation(false);
+          }
         }
       } else if (msg.type === "voice/error") {
         setStatusDetail(msg.error);
@@ -494,20 +507,50 @@ export function VoiceMode({
 
   // Derive the visible phase the state chip should report. Matches the
   // logic further down in the fullscreen render path so both variants
-  // agree on what color the pill shows.
+  // agree on what color the pill shows. `loading` (chat fetch in flight)
+  // wins over the ambient phase so the chip never shows "Listening" while
+  // the bot is actually thinking — that state mismatch was the #1 voice
+  // mode UX complaint.
+  // Resolve the chip's current state. The wake binary is the
+  // authoritative source for "are we actually capturing audio right
+  // now?" — we trust `wakeWordStatus === "recording"` over the local
+  // `phase` flag, which can get stuck on "listening" between turns
+  // (conversation mode keeps it set even while the binary is back
+  // to passive wake-watching).
+  //
+  // Priority: tts warming > chat-loading > active recording > speaking
+  // > thinking > idle. Passive wake-on (status=listening, no recording)
+  // is treated as IDLE — the user explicitly didn't want the chip to
+  // shout "Listening" when nothing was being captured.
+  const isActivelyRecording = wakeWordStatus === "recording";
   const chipPhase: string =
-    ttsStatus === "warming" || ttsStatus === "unknown" ? "warming" : phase;
+    ttsStatus === "warming" || ttsStatus === "unknown"
+      ? "warming"
+      : loading && phase !== "speaking"
+        ? "thinking"
+        : isActivelyRecording
+          ? "listening"
+          : phase === "speaking"
+            ? "speaking"
+            : phase === "thinking"
+              ? "thinking"
+              : "idle";
 
   const statusLabel = () => {
     if (statusDetail) return statusDetail;
     if (ttsStatus === "error") return "Voice engine failed to load";
     if (ttsStatus === "warming" || ttsStatus === "unknown")
       return "Preparing voice engine";
+    // `loading` (chat fetch in flight) trumps ambient phase.
+    if (loading && phase !== "speaking") return "Thinking";
     if (phase === "warming") return "Warming up voice engine";
-    if (phase === "listening") return "Listening";
+    // Only show "Listening" when the wake binary confirms we're
+    // actively recording — passive wake-on doesn't qualify.
+    if (isActivelyRecording) return "Listening";
     if (phase === "thinking") return "Thinking";
     if (phase === "speaking") return "Speaking";
     if (showTypeUI) return "Type your question · I'll reply aloud";
+    if (wakeWordActive) return 'Say "Protege" or tap the orb';
     if (conversation) return "Conversation";
     return "Tap to talk";
   };
@@ -536,7 +579,11 @@ export function VoiceMode({
             vscode.postMessage({ type: "wake/toggle" });
           }}
           disabled={wakeWordStatus === "loading"}
-          title={wakeWordActive ? 'Wake word ON — say "Protege"' : "Enable wake word"}
+          title={
+            wakeWordActive
+              ? 'Wake word listening — say "Protege" to start a turn'
+              : 'Enable wake word — listen for "Protege"'
+          }
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <rect x="9" y="3" width="6" height="12" rx="3" />
@@ -546,8 +593,8 @@ export function VoiceMode({
           {wakeWordStatus === "loading"
             ? "Loading…"
             : wakeWordActive
-            ? '"Protege" ON'
-            : "Wake"}
+            ? 'Say "Protege"'
+            : "Wake off"}
         </button>
 
         <div
@@ -887,8 +934,8 @@ export function VoiceMode({
           wakeWordStatus === "loading"
             ? "Loading wake word models…"
             : wakeWordActive
-            ? 'Wake word ON — say "Protege" to activate'
-            : "Enable wake word detection"
+            ? 'Wake word listening — say "Protege" to start a turn'
+            : 'Enable wake word — listen for "Protege"'
         }
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -899,8 +946,8 @@ export function VoiceMode({
         {wakeWordStatus === "loading"
           ? "Loading…"
           : wakeWordActive
-          ? '"Protege" ON'
-          : "Wake word"}
+          ? 'Say "Protege"'
+          : "Wake off"}
       </button>
     </div>
   );

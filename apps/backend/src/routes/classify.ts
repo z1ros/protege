@@ -9,6 +9,7 @@ import type {
 } from "@protege/types";
 import { callOneShot } from "../llm.js";
 import { githubAuth } from "../middleware/auth.js";
+import { quotaMiddleware } from "../middleware/quota.js";
 import {
   CLASSIFIER_SYSTEM_PROMPT,
   buildClassifierUserPrompt,
@@ -34,6 +35,7 @@ import {
 export const classifyRoute = new Hono();
 
 classifyRoute.use("*", githubAuth());
+classifyRoute.use("*", quotaMiddleware("classify"));
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const CACHE_MAX_ENTRIES = 200;

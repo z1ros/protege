@@ -16,13 +16,43 @@
  */
 
 // LESSON intent — user wants a multi-turn structured teaching session.
-// "t[a-z]{1,3}ch" matches "teach" + common typos ("taech", "tach", "teahc").
-// Only imperative "teach me / walk me through / I want to learn" + clear
-// learning intent verbs. NOT bare "what is X" / "how does X work" — those
-// are quick-answer questions that get a 1-2 sentence reply, not a 5-turn
-// lesson with PROBE + practice + review.
-const LESSON_INTENT =
-  /\b(t[a-z]{1,3}(?:ch|hc)\s+me|walk\s+me\s+through|guide\s+me\s+through|deep\s+dive|i\s+(?:want|wanna)\s+to?\s+learn|help\s+me\s+(?:learn|practice|master|build)|show\s+me\s+how\s+to|how\s+(?:do|can)\s+i\s+(?:use|build|set\s*up|wire|implement|make)|i\s+(?:want|wanna)\s+to?\s+understand)\b/i;
+// "t[a-z]{1,3}ch" matches "teach" + common typos. Aligned with backend
+// TEACH_VERB_RE so chat + voice + concept extraction all agree.
+//
+// Only imperative / desire phrasings that imply being taught. NOT bare
+// "what is X" / "how does X work" — those are quick-answer questions.
+const LESSON_INTENT = new RegExp(
+  `\\b(?:` +
+    [
+      `t[a-z]{1,3}(?:ch|hc)\\s+me`,
+      `walk\\s+me\\s+through`,
+      `guide\\s+me\\s+through`,
+      `tutor\\s+me\\s+(?:on|about|in)`,
+      `go\\s+over\\s+\\S`, // "go over X" — require an X to avoid bare "let's go"
+      `break\\s+down\\s+\\S`,
+      `deep\\s+dive`,
+      `give\\s+me\\s+(?:a\\s+)?(?:rundown|overview|primer|crash\\s+course)`,
+      `i\\s+(?:want|wanna|need|should|gotta|ought\\s+to)\\s+(?:to\\s+)?(?:learn|understand|figure\\s+out|get\\s+(?:good\\s+at|the\\s+hang\\s+of)|practice|master)`,
+      `i\\s+(?:would|'?d)\\s+love\\s+to\\s+(?:learn|understand)`,
+      `i'?m\\s+trying\\s+to\\s+(?:learn|understand|figure\\s+out|get)`,
+      `i\\s+wish\\s+i\\s+(?:knew|could|would\\s+know|understood)`,
+      `(?:can|could|would)\\s+you\\s+(?:expl[a-z]+n|teach\\s+me|show\\s+me|walk\\s+me\\s+through|go\\s+over|break\\s+down|help\\s+me\\s+(?:learn|understand|with))`,
+      `help\\s+me\\s+(?:learn|practice|master|build|understand|with)`,
+      `show\\s+me\\s+how\\s+to`,
+      `how\\s+(?:do|can)\\s+i\\s+(?:use|build|set\\s*up|wire|implement|make|create|write)`,
+      `let'?s?\\s+(?:go\\s+through|understand)`,
+      // Imperative coding requests in Protege default to teaching, not
+      // silent code-write. "add me a while loop" / "write me a debouncer"
+      // / "give me an example of useEffect" — the user is here to learn,
+      // so route through the lesson prompt instead of dumping a snippet.
+      // Bare imperatives ("add a comment", "write tests") are excluded by
+      // requiring "me" to keep the trigger surface narrow.
+      `(?:add|write|give|make|build|create|show|generate)\\s+me\\s+\\S`,
+      `can\\s+you\\s+(?:add|write|give|make|build|create|show|generate)\\s+me\\s+\\S`,
+    ].join("|") +
+    `)\\b`,
+  "i"
+);
 
 // "expl[a-z]+n" catches "explain" + common typos. Only lesson-shaped when
 // followed by "how to" / "to me how to" — bare "explain X" is a quick
@@ -55,5 +85,8 @@ export function isTeachingMessage(text: string): boolean {
 // EXAMPLES:
 //   isTeachingMessage("teach me Swiper")                        → true
 //   isTeachingMessage("I don't understand why this loop runs forever") → true
+//   isTeachingMessage("add me a while loop")                    → true (imperative coding ask)
+//   isTeachingMessage("write me a debouncer")                   → true
 //   isTeachingMessage("explain")                                → false (under 3 words)
 //   isTeachingMessage("yes go ahead")                           → false (no trigger phrase)
+//   isTeachingMessage("add a comment to this fn")               → false (no "me", silent action)

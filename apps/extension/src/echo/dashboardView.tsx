@@ -22,7 +22,6 @@ import { LinesWritten } from "./widgets/LinesWritten.js";
 // like nagging more than insight ("rewritten 7× this window"). Kept
 // on disk in case the rewrite-rate metric resurfaces in another form.
 // import { LineThatWontDie } from "./widgets/LineThatWontDie.js";
-import { CommitStories } from "./widgets/CommitStories.js";
 // SaveTape (Recent saves) retired 2026-04-28 — the timeline of
 // individual save events was high-volume / low-signal noise next to
 // the higher-level Lines/Commits widgets. Widget file kept on disk in
@@ -146,12 +145,6 @@ export function DashboardView({
         <MonthlyHeatmap data={data?.heatmap ?? null} loading={loading} />
 
         <LinesWritten data={data?.lines ?? null} loading={loading} />
-
-        <CommitStories
-          data={data?.commits ?? null}
-          loading={loading}
-          onOpenFile={(file) => onOpenMoment(file)}
-        />
       </div>
     </div>
   );

@@ -426,3 +426,83 @@
   color: var(--text-faint);
 }
 
+
+/* ==========================================================
+   Quota status dot — small health indicator next to the
+   "Usage today" title in the Profile panel. Three states:
+     ok    — green, "connected · counters are real"
+     warn  — amber, "supabase not configured / table missing / error"
+     unknown — grey, "probe hasn't run yet"
+   ========================================================== */
+.quota-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-left: 8px;
+  vertical-align: middle;
+  flex-shrink: 0;
+  transition: background 200ms ease, box-shadow 200ms ease;
+}
+.quota-status-dot-ok {
+  background: #4ade80;
+  box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.18);
+}
+.quota-status-dot-warn {
+  background: #f0b94d;
+  box-shadow: 0 0 0 2px rgba(240, 185, 77, 0.2);
+}
+.quota-status-dot-unknown {
+  background: rgba(255, 255, 255, 0.28);
+  box-shadow: none;
+}
+
+/* Engagement split — voice vs chat minutes side-by-side. Two-segment
+   bar plus paired stat labels. Sits below the daily-limit grid,
+   sourced from `chat_minutes` + `voice_minutes` in the quota snapshot. */
+.profile-plan-engagement {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--glass-border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.profile-plan-engagement-stats {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.profile-plan-engagement-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.profile-plan-engagement-icon {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.profile-plan-engagement-icon-voice {
+  background: #b87aff;
+}
+.profile-plan-engagement-icon-chat {
+  background: var(--electric);
+}
+.profile-plan-engagement-bar {
+  height: 4px;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  display: flex;
+  background: rgba(var(--text-rgb), 0.06);
+}
+.profile-plan-engagement-voice {
+  background: linear-gradient(90deg, #8a52cc, #b87aff);
+  transition: width 240ms ease;
+}
+.profile-plan-engagement-chat {
+  background: linear-gradient(90deg, var(--electric-deep), var(--electric));
+  transition: width 240ms ease;
+}

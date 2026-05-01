@@ -313,6 +313,15 @@
           "default": "text",
           "description": "How Protege delivers the Ghost Lens \"Explain\" action. `text` (default) opens the sidebar with a chat reply. `voice` speaks a short explanation through Kokoro TTS while your eyes stay on the code. `both` does both at once. Modifier keys still override per-click: hold ⌘ to force voice, ⇧ to force text."
         },
+        "protege.voice.gender": {
+          "type": "string",
+          "enum": [
+            "female",
+            "male"
+          ],
+          "default": "female",
+          "description": "Which Kokoro voice Protege speaks with. `female` (af_bella, default) is warmer; `male` (am_michael) is lower-pitched. Applies to all TTS — voice mode replies, Ghost Lens \"Explain\", teaching narrations."
+        },
         "protege.ownership.invitations": {
           "type": "string",
           "enum": [

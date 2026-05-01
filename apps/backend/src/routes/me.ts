@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { MeResponse } from "@protege/types";
 import { githubAuth, resolveUserId } from "../middleware/auth.js";
 import { ensureUser, getUserSnapshot, RULE_COUNT, MAX_IQ } from "../store.js";
+import { getTodayQuota, snapshotFromRow } from "../quotas.js";
 
 export const meRoute = new Hono();
 
@@ -35,4 +36,19 @@ meRoute.get("/", async (c) => {
     iqV2: snap.iqV2,
   };
   return c.json(res);
+});
+
+/**
+ * Today's quota usage for the authenticated user. Lets the extension
+ * render mini progress bars + a $ pill in the Live tab so users see
+ * how close they are to the daily ceiling before they hit a 429.
+ *
+ * Resets implicitly at 00:00 UTC — see quotas.ts for the table shape.
+ * Returns the same shape regardless of whether enforcement is on, so
+ * the UI can render the picture even on a not-yet-enforcing deployment.
+ */
+meRoute.get("/quota", async (c) => {
+  const userId = resolveUserId(c, undefined);
+  const row = await getTodayQuota(userId);
+  return c.json(snapshotFromRow(userId, row));
 });

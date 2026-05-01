@@ -18,6 +18,15 @@ export default defineConfig({
     "process.env.PROTEGE_SHOW_CODEIQ": JSON.stringify(
       process.env.PROTEGE_SHOW_CODEIQ ?? ""
     ),
+    // Same backend URL the host extension uses (PROTEGE_BACKEND_URL),
+    // injected so the webview can fetch /tts, /log, etc. against the
+    // same server. Without this define the webview falls back to its
+    // hardcoded `http://localhost:8787` default — which silently fails
+    // on machines hitting the prod backend, leaving voice mode stuck
+    // on "Speaking" because audio never starts.
+    __PROTEGE_BACKEND_URL__: JSON.stringify(
+      process.env.PROTEGE_BACKEND_URL ?? "http://localhost:8787"
+    ),
   },
   root: resolve(__dirname, "webview"),
   // Relative asset paths — the webview HTML sets <base href> to the

@@ -11,6 +11,36 @@ import type {
   ToolResult,
 } from "@protege/types";
 import { BACKEND_URL, authedFetch, NotAuthenticatedError } from "../user/protegeClient.js";
+
+/**
+ * Thrown when /chat returns 429 with the daily-quota body shape. Carries
+ * the structured fields the webview needs to render a friendly banner
+ * (used / limit / resetAt) instead of a generic red error line.
+ *
+ * Caught in `webviewHost.ts` and converted to a `chat/error` message
+ * with the `quota` field populated.
+ */
+export class QuotaExceededChatError extends Error {
+  readonly kind: string;
+  readonly used: number;
+  readonly limit: number;
+  readonly resetAt: number;
+
+  constructor(payload: {
+    kind: string;
+    used: number;
+    limit: number;
+    resetAt: number;
+    message?: string;
+  }) {
+    super(payload.message ?? "daily quota exceeded");
+    this.name = "QuotaExceededChatError";
+    this.kind = payload.kind;
+    this.used = payload.used;
+    this.limit = payload.limit;
+    this.resetAt = payload.resetAt;
+  }
+}
 import { executeTool, buildWorkspaceContext } from "../ai/tools.js";
 import { isTeachingMessage } from "../intent/teachingTrigger.js";
 
@@ -130,13 +160,38 @@ export async function runChat(
     }
 
     const raw = await res.text();
-    let data: ChatRunResponse & { error?: string } = { messages: [] };
+    let data: ChatRunResponse & {
+      error?: string;
+      kind?: string;
+      used?: number;
+      limit?: number;
+      resetAt?: number;
+    } = { messages: [] };
     try {
       data = JSON.parse(raw);
     } catch {
       throw new Error(
         `Backend non-JSON (HTTP ${res.status}): ${raw.slice(0, 200)}`
       );
+    }
+    // 429 daily-quota response: throw a typed error so the host can
+    // render a friendly banner (with countdown + Profile link) instead
+    // of the generic red error line. The shape mirrors what
+    // `enforceQuotaInline` returns in apps/backend/src/middleware/quota.ts.
+    if (
+      res.status === 429 &&
+      data.error === "daily quota exceeded" &&
+      typeof data.kind === "string" &&
+      typeof data.used === "number" &&
+      typeof data.limit === "number" &&
+      typeof data.resetAt === "number"
+    ) {
+      throw new QuotaExceededChatError({
+        kind: data.kind,
+        used: data.used,
+        limit: data.limit,
+        resetAt: data.resetAt,
+      });
     }
     if (!res.ok || data.error) {
       throw new Error(data.error ?? `HTTP ${res.status}`);

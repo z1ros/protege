@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { vscode, onHostMessage } from "./vscode.js";
+import type { QuotaSnapshot } from "@protege/types";
 
 /**
  * Live Tab — JARVIS mission control.
@@ -29,29 +30,26 @@ interface AnalysisItem {
   line: number;
 }
 
-type AiBackend = "on-device" | "haiku" | "sonnet" | "auto";
+type AiBackend = "on-device" | "cloud" | "auto";
 
 interface LastCall {
-  backend: "on-device" | "haiku" | "sonnet";
+  backend: "on-device" | "cloud";
   atMs: number;
   durationMs: number;
   ok: boolean;
   fallback?: {
-    requested: "on-device" | "haiku" | "sonnet" | "auto";
+    requested: "on-device" | "cloud" | "auto";
     reason: string;
   };
 }
 
-// "haiku" here means "any cloud call" — but the backend now actually
-// routes cheap-tier (live scans) to GPT-4o-mini and only premium-tier
-// (chat / teach / Compare / Fix it) to Claude Haiku. We can't tell from
-// `LastCall.backend` alone which was used, so the label says both. If
-// you want one-or-the-other clarity here, add an `openai` variant to
-// the LastCall.backend type + thread it through aiBackend.recordCall().
+// "cloud" means "send to backend, let it route." The actual model is
+// decided by the backend's env (OPENAI_CHEAP_MODEL for scans, premium
+// model for chat/teach). We don't know provider/model here without
+// threading that through recordCall, so the label is generic.
 const BACKEND_LABEL: Record<LastCall["backend"], string> = {
   "on-device": "Qwen 7B (on-device)",
-  haiku: "GPT-4o-mini · Haiku 4.5 (cloud)",
-  sonnet: "Claude Sonnet 4.5",
+  cloud: "Cloud (provider configured server-side)",
 };
 
 export function LiveTab({
@@ -66,30 +64,94 @@ export function LiveTab({
   const [aiBackend, setAiBackend] = useState<AiBackend>("auto");
   const [lastCall, setLastCall] = useState<LastCall | null>(null);
   const [now, setNow] = useState(Date.now());
+  const [quota, setQuota] = useState<QuotaSnapshot | null>(null);
 
   // Subscribe to host pushes for backend state + live call events so the
   // Live tab (a) hydrates on mount from persisted globalState and (b)
   // reflects every aiQuery() call as it happens.
   useEffect(() => {
+    // Migration shim — two layers:
+    //   1. Legacy values "haiku" / "sonnet" → "cloud" (kept so the
+    //      LastCall chip can still render "this turn ran on cloud"
+    //      truthfully when a server-routed Haiku call comes back).
+    //   2. The visible AiBackend selector is temporarily restricted to
+    //      "auto" only (cloud option hidden per 2026-04-30 user
+    //      request). Coerce any persisted "cloud" / legacy value to
+    //      "auto" before it reaches React state — otherwise the panel
+    //      would show no active option since the Cloud card no longer
+    //      renders.
+    const migrateBackend = (
+      b: "on-device" | "cloud" | "auto" | "haiku" | "sonnet"
+    ): AiBackend => {
+      if (b === "haiku" || b === "sonnet" || b === "cloud") return "auto";
+      return b;
+    };
+    const migrateActual = (
+      b: "on-device" | "cloud" | "haiku" | "sonnet"
+    ): LastCall["backend"] => (b === "haiku" || b === "sonnet" ? "cloud" : b);
+
     const off = onHostMessage((msg) => {
       if (msg.type === "ai/backend") {
-        setAiBackend(msg.backend);
+        const migrated = migrateBackend(msg.backend);
+        setAiBackend(migrated);
+        // If the host sent us a value we no longer surface (cloud /
+        // haiku / sonnet), persist the migrated "auto" back so the
+        // next mount doesn't have to migrate again. One-shot fix-up
+        // per user the first time they open Live after the picker
+        // simplification ships.
+        if (msg.backend !== migrated) {
+          vscode.postMessage({ type: "ai/setBackend", backend: migrated });
+        }
       } else if (msg.type === "ai/lastCall") {
         setLastCall({
-          backend: msg.backend,
+          backend: migrateActual(msg.backend),
           atMs: msg.atMs,
           durationMs: msg.durationMs,
           ok: msg.ok,
-          fallback: msg.fallback,
+          fallback: msg.fallback
+            ? {
+                requested: migrateBackend(msg.fallback.requested),
+                reason: msg.fallback.reason,
+              }
+            : undefined,
         });
       } else if (msg.type === "ai/lastCallCleared") {
         // User switched backend — drop the stale chip from the prior
         // backend so the UI doesn't keep showing "last call: Sonnet"
         // after the user picked On-Device.
         setLastCall(null);
+      } else if (msg.type === "quota/snapshot") {
+        // Today's per-route usage + cost. Push-driven from the host so
+        // the panel updates after every quota-gated call without us
+        // having to poll.
+        setQuota(msg.snapshot);
       }
     });
+    // Actively re-request the backend on mount. The host posts ai/backend
+    // once on the webview's `ready` event — but if THIS tab mounts later
+    // (the user opened Chat first, then switched to Live), that message
+    // already fired and was lost. Without this re-request the React
+    // state stays at the useState default ("auto") forever, which makes
+    // the UI lie: it shows Smart Mix highlighted even when the persisted
+    // value is "cloud", and clicking Smart Mix again is a no-op for
+    // React state so no setBackend message goes out and the value never
+    // actually persists.
+    vscode.postMessage({ type: "ai/getBackend" });
+    // Also request the quota snapshot so the "Today's usage" panel
+    // hydrates on mount. Host listener will push fresh snapshots after
+    // any subsequent quota-gated call.
+    vscode.postMessage({ type: "quota/get" });
     return off;
+  }, []);
+
+  // Refresh quota every 60s while the Live tab is mounted. Cheap GET
+  // backed by a 30s server-side cache window. Belt-and-suspenders for
+  // 429 cases where the user wants to confirm the panel matches reality.
+  useEffect(() => {
+    const id = setInterval(() => {
+      vscode.postMessage({ type: "quota/get" });
+    }, 60_000);
+    return () => clearInterval(id);
   }, []);
 
   // Keep the "X seconds ago" text fresh — cheap, one interval per tab.
@@ -102,6 +164,32 @@ export function LiveTab({
   const modelDownloading = modelStatus.loading && !modelStatus.ready;
   const downloadProgress = modelStatus.downloadProgress;
   const modelError = modelStatus.error;
+
+  // Auto-prefetch the on-device model when the Live tab opens. Now that
+  // the engine selector hides Cloud, every user is on Smart Mix —
+  // which uses Qwen 7B for live scans. Without an explicit "On-Device"
+  // click users used to be the trigger, the download never fires and
+  // the first scan stalls until the user notices and clicks something.
+  // Kicking it off on mount means the model is downloaded and warmed
+  // up the first time someone visits Live, so by the time they actually
+  // type code the scan engine is ready.
+  //
+  // The `ai/downloadModel` host handler routes through
+  // `initOnDeviceModel`, which is fully idempotent (no-ops if already
+  // loading or already ready). So firing this whenever modelStatus
+  // changes is safe — the host self-deduplicates.
+  //
+  // A ref guards against re-firing during the same mount even if the
+  // status flips back and forth (e.g. a transient error then retry).
+  const autoDownloadDispatchedRef = useRef(false);
+  useEffect(() => {
+    if (autoDownloadDispatchedRef.current) return;
+    if (modelReady) return; // already loaded — nothing to do
+    if (modelDownloading) return; // already in flight — host pushes progress
+    if (modelError) return; // surfaced via the retry UI; don't auto-loop
+    autoDownloadDispatchedRef.current = true;
+    vscode.postMessage({ type: "ai/downloadModel" });
+  }, [modelReady, modelDownloading, modelError]);
 
   const shortName = fileName
     ? fileName.split(/[\\/]/).pop() ?? fileName
@@ -123,63 +211,31 @@ export function LiveTab({
       <div className="live-section">
         <div className="live-section-label microcaps">AI Engine</div>
 
-        {/* Max Plan — fast A/B switch between the two backends the Max
-            tier gives you (Qwen 7B on-device + Haiku cloud). One tap to
-            flip, side by side, with the currently-active one highlighted.
-            Keeps the full engine list below for power users. */}
-        <div className="max-plan-switch">
-          <div className="max-plan-label microcaps">
-            Max Plan · quick switch
-          </div>
-          <div className="max-plan-options">
-            <button
-              className={`max-plan-option ${aiBackend === "on-device" ? "active" : ""}`}
-              onClick={() => handleBackendChange("on-device")}
-              title="Qwen 7B running locally on your machine"
-            >
-              <div className="max-plan-option-label">Qwen 7B</div>
-              <div className="max-plan-option-sub">
-                {modelReady ? "on-device · ready" : modelDownloading ? `downloading · ${downloadProgress}%` : "on-device · not loaded"}
-              </div>
-            </button>
-            <button
-              className={`max-plan-option ${aiBackend === "haiku" ? "active" : ""}`}
-              onClick={() => handleBackendChange("haiku")}
-              title="Cloud routing: GPT-4o-mini for live scans · Haiku 4.5 for chat & teach"
-            >
-              <div className="max-plan-option-label">Cloud</div>
-              <div className="max-plan-option-sub">GPT-4o-mini · Haiku 4.5</div>
-            </button>
-          </div>
-        </div>
+        {/* AI engine selector temporarily simplified to a single option
+            (2026-04-30, user request): "remove cloud at all so it will
+            be always mix". Hides:
+              - the Max Plan Qwen↔Cloud quick switch
+              - the standalone "On-Device" choice
+              - the standalone "Cloud" choice
+            Smart Mix stays as the only visible card and acts as a
+            status indicator. The "auto" backend internally still uses
+            on-device for cheap scans + cloud for premium refines, so
+            no inference path is broken — the user just isn't asked to
+            pick. To restore the full picker, revert this block.
 
+            Migration: any user whose persisted preference was "cloud"
+            (or legacy "haiku"/"sonnet") is coerced to "auto" in the
+            useEffect above, so reopening the panel doesn't show an
+            invalid selection. */}
         <div className="live-ai-selector">
           <AiOption
             id="auto"
             label="Smart Mix"
-            description="Qwen 7B for live scans · GPT-4o-mini cloud · Haiku 4.5 for chat & teach"
-            active={aiBackend === "auto"}
+            description="Qwen 7B for live scans · cloud only when there's signal worth refining"
+            active
             onClick={() => handleBackendChange("auto")}
-            badge="recommended"
+            badge="active"
           />
-          <AiOption
-            id="on-device"
-            label="On-Device"
-            description="Qwen 7B · free · offline · ~5–10s/scan"
-            active={aiBackend === "on-device"}
-            onClick={() => handleBackendChange("on-device")}
-            badge={modelReady ? "ready" : modelDownloading ? "downloading" : "~4.7 GB download"}
-          />
-          <AiOption
-            id="haiku"
-            label="Cloud"
-            description="GPT-4o-mini for live scans · Haiku 4.5 for chat · ~$0.15/mo"
-            active={aiBackend === "haiku"}
-            onClick={() => handleBackendChange("haiku")}
-          />
-          {/* Sonnet temporarily hidden — premium-tier cloud calls route
-              to Haiku, cheap-tier (live scans) route to GPT-4o-mini.
-              See live-review-cost-cut plan + apps/backend/src/routes/chat.ts. */}
         </div>
         {modelDownloading && !modelReady && (
           <div className="live-download-bar">
@@ -249,6 +305,9 @@ export function LiveTab({
           </div>
         )}
       </div>
+
+      {/* ---- Today's usage ---- */}
+      <QuotaPanel quota={quota} now={now} />
 
       {/* ---- Current file ---- */}
       <div className="live-section">
@@ -383,4 +442,118 @@ function formatAgo(ms: number): string {
   if (m < 60) return `${m}m ago`;
   const h = Math.floor(m / 60);
   return `${h}h ago`;
+}
+
+/* ==========================================================
+   Today's usage — quota panel.
+
+   Shows the user where they stand against the daily caps so they
+   can self-regulate before they hit a 429. Six route bars + a $
+   pill, with a "resets in N" microcaps line. Renders even when
+   the snapshot is null (placeholder zeros) so the panel doesn't
+   pop in/out as the host fetches.
+   ========================================================== */
+
+interface QuotaPanelProps {
+  quota: QuotaSnapshot | null;
+  now: number;
+}
+
+const QUOTA_ROW_LABELS: Array<{
+  key: keyof QuotaSnapshot["usage"];
+  label: string;
+  hint: string;
+  unit?: string;
+}> = [
+  {
+    key: "chat_messages",
+    label: "Chat messages",
+    hint: "Premium /chat turns — counts each message you send to Protege.",
+  },
+  {
+    key: "tool_calls",
+    label: "Tool calls",
+    hint: "Each time the model uses a tool (read_file, edit_file, grep…) inside chat.",
+  },
+  {
+    key: "voice_minutes",
+    label: "Voice minutes",
+    hint: "Combined text-to-speech + speech-to-text time.",
+    unit: "min",
+  },
+];
+
+function QuotaPanel({ quota, now }: QuotaPanelProps) {
+  const resetIn = useMemo(() => {
+    if (!quota) return "—";
+    const ms = Math.max(0, quota.resetAt - now);
+    const total = Math.floor(ms / 1000);
+    const hours = Math.floor(total / 3600);
+    const mins = Math.floor((total % 3600) / 60);
+    if (hours > 0) return `${hours}h ${mins}m`;
+    return `${mins}m`;
+  }, [quota, now]);
+
+  const cost = quota?.usage.cost;
+  const costPct = cost && cost.limitUsd > 0 ? Math.min(100, (cost.used / cost.limitUsd) * 100) : 0;
+
+  return (
+    <div className="live-section">
+      <div className="live-section-label microcaps">
+        Today's usage{quota ? ` · resets in ${resetIn}` : ""}
+      </div>
+
+      <div className="quota-rows">
+        {QUOTA_ROW_LABELS.map(({ key, label, hint, unit }) => {
+          const cell = quota?.usage[key] as { used: number; limit: number } | undefined;
+          const used = cell?.used ?? 0;
+          const limit = cell?.limit ?? 0;
+          const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
+          const isFull = limit > 0 && used >= limit;
+          const isWarn = !isFull && pct >= 80;
+          const cls = `quota-row${isFull ? " quota-row-full" : isWarn ? " quota-row-warn" : ""}`;
+          // Voice minutes are fractional (e.g. 6.4) — render with one
+          // decimal. Counts are integers — render plain. The unit
+          // suffix only renders for voice ("min").
+          const usedDisplay =
+            unit === "min" ? used.toFixed(1) : Math.floor(used).toString();
+          const unitSuffix = unit ? ` ${unit}` : "";
+          return (
+            <div key={key} className={cls} title={hint}>
+              <div className="quota-row-head">
+                <span className="quota-row-label">{label}</span>
+                <span className="quota-row-counts">
+                  {usedDisplay}
+                  <span className="quota-row-counts-sep"> / </span>
+                  {limit || "—"}{unitSuffix}
+                </span>
+              </div>
+              <div className="quota-row-bar-track">
+                <div
+                  className="quota-row-bar-fill"
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {cost && (
+        <div
+          className={`quota-cost-row${cost.used >= cost.limitUsd ? " quota-cost-row-full" : ""}`}
+          title="Estimated $ spent today (token-derived). Soft signal, not a billing source of truth."
+        >
+          <span className="quota-cost-label microcaps">Estimated $ today</span>
+          <span className="quota-cost-pill">
+            ${cost.used.toFixed(3)}
+            <span className="quota-cost-pill-sep"> / </span>${cost.limitUsd.toFixed(2)}
+          </span>
+          <div className="quota-cost-bar-track">
+            <div className="quota-cost-bar-fill" style={{ width: `${costPct}%` }} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }

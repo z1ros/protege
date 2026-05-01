@@ -8,6 +8,7 @@ import type {
 } from "@protege/types";
 import { callOneShot } from "../llm.js";
 import { githubAuth } from "../middleware/auth.js";
+import { quotaMiddleware } from "../middleware/quota.js";
 import {
   VERIFIER_SYSTEM_PROMPT,
   buildVerifierUserPrompt,
@@ -37,6 +38,7 @@ import {
 export const verifyRoute = new Hono();
 
 verifyRoute.use("*", githubAuth());
+verifyRoute.use("*", quotaMiddleware("verify"));
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const CACHE_MAX_ENTRIES = 200;

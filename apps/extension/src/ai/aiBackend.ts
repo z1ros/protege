@@ -8,27 +8,28 @@ import { runSingleQuery } from "../chat/chatRunner.js";
  *
  * The user chooses their preferred backend in the Live tab:
  *   - "on-device" → Qwen2.5-Coder 7B via llama.cpp (free, offline, ~5-10s/scan)
- *   - "haiku"     → Claude Haiku 4.5 via API (fast, cheap, cloud)
- *   - "sonnet"    → Claude Sonnet 4.5 via API (best quality, cloud)
- *   - "auto"      → on-device if ready, fall back to haiku
+ *   - "cloud"     → backend dispatches to the configured provider (OpenAI
+ *                   gpt-4o-mini class for scan, gpt-4.1 for teach by
+ *                   default; pluggable via env)
+ *   - "auto"      → on-device if ready, fall back to cloud
  *
  * All JARVIS features call `aiQuery()` instead of directly calling
- * Claude or the local model. This single function handles the routing.
+ * the cloud or the local model. This single function handles the routing.
  *
- * Persistence uses `context.globalState` — `localStorage` does NOT exist
- * in VS Code's Node extension host, so the previous impl silently lost
- * the user's choice on every reload.
+ * Persistence uses `context.globalState`. Legacy persisted values
+ * "haiku" and "sonnet" (from when this extension defaulted to
+ * Anthropic) are migrated to "cloud" on load — see initAiBackend.
  */
 
-export type AiBackend = "on-device" | "haiku" | "sonnet" | "auto";
-export type ActualBackend = "on-device" | "haiku" | "sonnet";
+export type AiBackend = "on-device" | "cloud" | "auto";
+export type ActualBackend = "on-device" | "cloud";
 
 const STATE_KEY = "protege.aiBackend";
 
 /**
  * Per-hour budget for AUTO-FIRED cloud calls (kind === "scan" reaching
- * the cloud path because the user picked an explicit cloud backend like
- * "haiku"). User-triggered teach calls (chat, ⌘K P, learning mode,
+ * the cloud path because the user picked an explicit cloud backend
+ * "cloud"). User-triggered teach calls (chat, ⌘K P, learning mode,
  * voice Explain) bypass this cap entirely.
  *
  * Configurable via the `protege.autoBudgetPerHour` setting. Default 30 ≈
@@ -103,12 +104,20 @@ const callListeners: Array<(info: LastCallInfo) => void> = [];
  *  fresh install / new machine where globalState is empty. */
 export function initAiBackend(context: vscode.ExtensionContext): void {
   ctx = context;
-  const saved = context.globalState.get<AiBackend>(STATE_KEY);
-  if (saved === "on-device" || saved === "haiku" || saved === "sonnet" || saved === "auto") {
-    // TEMP: Sonnet is hidden from the UI; if someone had it persisted
-    // from before, transparently flip them to Haiku so the picker
-    // doesn't end up with a phantom "no option selected" state.
-    currentBackend = saved === "sonnet" ? "haiku" : saved;
+  // Read as raw string and migrate. The persisted value may be the new
+  // canonical "cloud" or one of the legacy aliases ("haiku" / "sonnet")
+  // from when this extension defaulted to Anthropic. Any of those is
+  // treated as the same thing — "use the cloud backend, let it route."
+  const raw = context.globalState.get<string>(STATE_KEY);
+  if (raw === "on-device" || raw === "auto") {
+    currentBackend = raw;
+  } else if (raw === "cloud" || raw === "haiku" || raw === "sonnet") {
+    currentBackend = "cloud";
+    if (raw !== "cloud") {
+      // Persist the migrated value so the legacy alias only triggers
+      // this branch once. Saves a tiny bit of confusion on next load.
+      void context.globalState.update(STATE_KEY, "cloud");
+    }
   }
 
   // Cloud hydration — fire-and-forget. If the user has a preference saved
@@ -125,15 +134,16 @@ export function initAiBackend(context: vscode.ExtensionContext): void {
     try {
       const { fetchPreferences, getUserId } = await import("../user/protegeClient.js");
       const prefs = await fetchPreferences(getUserId(context));
-      const cloud = prefs.aiBackend;
-      if (
-        cloud !== "on-device" &&
-        cloud !== "haiku" &&
-        cloud !== "sonnet" &&
-        cloud !== "auto"
-      ) {
-        return;
-      }
+      const rawCloud = prefs.aiBackend;
+      // Same migration as the local-load path: collapse legacy haiku/
+      // sonnet aliases onto the new "cloud" value before adopting.
+      const cloud: AiBackend | null =
+        rawCloud === "on-device" || rawCloud === "auto"
+          ? rawCloud
+          : rawCloud === "cloud" || rawCloud === "haiku" || rawCloud === "sonnet"
+            ? "cloud"
+            : null;
+      if (!cloud) return;
 
       // Re-read — not the captured `saved`. If the user picked in the
       // meantime, globalState now has their choice. Don't clobber it.
@@ -164,12 +174,26 @@ export function initAiBackend(context: vscode.ExtensionContext): void {
   if (currentBackend === "on-device" || currentBackend === "auto") {
     void (async () => {
       try {
+        const { log } = await import("../log.js");
         const { initOnDeviceModel } = await import("./onDeviceModel.js");
-        console.log(`[protege] Pre-warming on-device model for saved backend=${currentBackend}`);
+        log(
+          "aiBackend",
+          `[ON-DEVICE] pre-warm START on activate · backend=${currentBackend}`
+        );
         await initOnDeviceModel(context.globalStorageUri.fsPath);
+        log("aiBackend", `[ON-DEVICE] pre-warm exited (check ON-DEVICE logs above for outcome)`);
       } catch (err) {
-        console.error("[protege] Pre-warm failed:", err);
+        const { log } = await import("../log.js");
+        log("aiBackend", `[ON-DEVICE] pre-warm THREW · ${err instanceof Error ? err.message : String(err)}`);
       }
+    })();
+  } else {
+    void (async () => {
+      const { log } = await import("../log.js");
+      log(
+        "aiBackend",
+        `[ON-DEVICE] pre-warm SKIPPED · backend=${currentBackend} · pick "auto" or "on-device" in Live tab to enable Qwen`
+      );
     })();
   }
 }
@@ -212,6 +236,39 @@ export function setAiBackend(backend: AiBackend): void {
         console.warn("[protege] aiBackend cloud sync failed:", err);
       }
     })();
+
+    // Switching TO on-device or auto must also kick the model load if it
+    // isn't already ready / loading. The Live-tab picker handles this
+    // separately via an `ai/downloadModel` message, but other callsites
+    // (the `protege.toggleMaxPlanBackend` command, programmatic flips)
+    // would otherwise leave on-device unloaded — the next scan would
+    // hit `isOnDeviceReady() === false` and silently return null with
+    // no findings. Folding the trigger in here covers every caller.
+    if (
+      previous !== backend &&
+      (backend === "on-device" || backend === "auto")
+    ) {
+      void (async () => {
+        try {
+          const { log } = await import("../log.js");
+          const { initOnDeviceModel, isOnDeviceReady, isOnDeviceLoading } =
+            await import("./onDeviceModel.js");
+          if (isOnDeviceReady()) {
+            log("aiBackend", `[ON-DEVICE] setAiBackend(${backend}) · already ready · skipping load`);
+            return;
+          }
+          if (isOnDeviceLoading()) {
+            log("aiBackend", `[ON-DEVICE] setAiBackend(${backend}) · already loading · skipping`);
+            return;
+          }
+          log("aiBackend", `[ON-DEVICE] setAiBackend(${backend}) → kicking on-device model load`);
+          await initOnDeviceModel(ctx!.globalStorageUri.fsPath);
+        } catch (err) {
+          const { log } = await import("../log.js");
+          log("aiBackend", `[ON-DEVICE] setAiBackend init THREW · ${err instanceof Error ? err.message : String(err)}`);
+        }
+      })();
+    }
   }
 
   // Broadcast to ALL mounted webviews so the sidebar + any editor-tab panel
@@ -279,9 +336,14 @@ export type AiIntent = "scan" | "teach";
 export async function aiQuery(
   prompt: string,
   maxTokens = 256,
-  opts: { kind?: AiIntent; tier?: ChatTier } = {}
+  opts: { kind?: AiIntent; tier?: ChatTier; forceBackend?: AiBackend } = {}
 ): Promise<string | null> {
-  const backend = currentBackend;
+  // `forceBackend` overrides the user's saved pick for this single call.
+  // Used by the hybrid Live Review orchestrator: phase-1 forces on-device,
+  // phase-2 forces cloud. Doesn't touch persisted state — just the
+  // routing of this one call. Safe under the live-review single-flight
+  // guard (isScanning); no concurrent inversions.
+  const backend = opts.forceBackend ?? currentBackend;
   const kind: AiIntent = opts.kind ?? "scan";
   // Default tier follows kind: auto-fired scans get the cheap model
   // (gpt-4.1-mini / Haiku), user-triggered teach calls get the premium
@@ -309,7 +371,18 @@ export async function aiQuery(
           ok: false,
           fallback: { requested: "auto", reason: "on-device not ready · scan skipped" },
         });
-        console.log("[protege] aiQuery(scan) → skipped · on-device not ready, refusing Haiku fallback on scan path");
+        // Surface this to the Protege output channel — under hybrid Live
+        // Review, this is the #1 reason "Qwen never finds anything" even
+        // though the user thinks on-device should be running. Tells you
+        // exactly what to do: open Live tab, pick "On-Device" or wait
+        // for the auto pre-warm to complete.
+        void (async () => {
+          const { log } = await import("../log.js");
+          log(
+            "aiBackend",
+            `[QWEN] aiQuery(scan) SKIPPED · on-device model not ready (loading? not downloaded?) · refusing cloud fallback on auto+scan path`
+          );
+        })();
         return null;
       }
       const start = Date.now();
@@ -358,7 +431,10 @@ export async function aiQuery(
       return null;
     }
     const reason = "on-device model not ready (open Live tab to download/load)";
-    console.warn(`[protege] aiQuery → ${reason}`);
+    void (async () => {
+      const { log } = await import("../log.js");
+      log("aiBackend", `[QWEN] aiQuery SKIPPED · ${reason}`);
+    })();
     recordCall({
       backend: "on-device",
       atMs: Date.now(),
@@ -370,12 +446,12 @@ export async function aiQuery(
   }
 
   // ---- Cloud path ----
-  // Reached when: backend is explicit "haiku" / "sonnet" / user picked
-  // "auto" + kind=="teach". Always goes to Claude via /chat.
-  // TEMP: Sonnet is disabled — all cloud calls go to Haiku regardless of
-  // user pick. Easy revert: change `"haiku"` back to
-  // `backend === "sonnet" ? "sonnet" : "haiku"`.
-  const cloudBackend: ActualBackend = "haiku";
+  // Reached when: backend is explicit "cloud" / user picked "auto" +
+  // kind=="teach". Always goes to the configured cloud provider via
+  // the backend's /chat route — the backend decides between OpenAI,
+  // Anthropic, etc. based on env. The extension just labels the call
+  // "cloud" for cost / observability.
+  const cloudBackend: ActualBackend = "cloud";
 
   // Budget gate: cap auto-fired cloud calls (kind === "scan") at the
   // user-configured `protege.autoBudgetPerHour`. User-triggered "teach"
@@ -463,17 +539,14 @@ export async function aiQuery(
 
 /**
  * Get the name of the backend that would handle the next query.
- * Useful for showing "Powered by: Qwen 7B" or "Powered by: Haiku" in UI.
+ * Useful for showing "Powered by: …" in UI. The actual cloud model is
+ * decided by the backend env (OPENAI_CHEAP_MODEL / OPENAI_PREMIUM_MODEL
+ * / ANTHROPIC_*); the extension only labels it "cloud" generically.
  */
 export function getActiveBackendName(): string {
   if (currentBackend === "on-device") return "Qwen 7B (on-device)";
-  // TEMP: Sonnet folded into Haiku for the moment. If the user has
-  // "sonnet" persisted from before, we still report Haiku — that's
-  // what they're actually getting.
-  if (currentBackend === "haiku" || currentBackend === "sonnet") {
-    return "Claude Haiku 4.5";
-  }
+  if (currentBackend === "cloud") return "Cloud (provider configured server-side)";
   // auto
   if (isOnDeviceReady()) return "Qwen 7B (on-device)";
-  return "Claude Haiku 4.5 (fallback)";
+  return "Cloud (fallback)";
 }

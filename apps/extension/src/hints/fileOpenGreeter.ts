@@ -3,6 +3,7 @@ import { aiQuery } from "../ai/aiBackend.js";
 import { detectConcepts } from "../concepts/detector.js";
 import { log } from "../log.js";
 import { getOwnership } from "../user/ownership.js";
+import { getVoiceGender } from "../voice/voiceStatusBar.js";
 
 /**
  * File-Open Greeter — OPT-IN voice overview when the user switches files.
@@ -176,7 +177,8 @@ export function registerFileOpenGreeter(
           openProtegePanel(context);
           await new Promise((r) => setTimeout(r, 350));
         }
-        broadcast({ type: "voice/playExplain", text: entry.text });
+        const { playHostAudio } = await import("../voice/hostAudio.js");
+        void playHostAudio({ text: entry.text, voice: getVoiceGender() });
 
         const playedVariant = entry.variant;
         clearPending(uriKey);

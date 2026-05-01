@@ -52,21 +52,18 @@ import { log } from "../log.js";
  */
 
 // ---- A1 state ----
-// Tuned 2026-04-23 from 15s → 8s. With SAVE/IDLE retired, LIVE is the
-// only scan tier; over-long suppression was the #1 reason findings
-// "never appeared." 8s still silences while the user is actively
-// typing into a line, short enough that post-paste surfaces in ~12s
-// total (3s scan debounce + AI call + window lift).
-const LINE_EDIT_WINDOW_MS = 8_000;
-// Teaching-tier window — info-severity findings (praise/concept
-// patterns, observational tips) hold off until the line has been
-// untouched for 3 minutes. Lets the user finish a thought before
-// Protege starts teaching about it. Bugs (warn/perf) still use the 8s
-// window above so genuine issues surface fast.
-const INFO_LINE_EDIT_WINDOW_MS = 3 * 60_000;
-// Pruning runs against the longest window so info entries survive long
-// enough to keep gating their findings.
-const LINE_PRUNE_MS = INFO_LINE_EDIT_WINDOW_MS * 1.5; // ~4.5min
+// Unified 3-minute "leave me alone" window across ALL severities. The
+// prior split (8s for warn/perf, 3min for info) surfaced bug findings
+// the moment the user paused typing — but the user's mental model is
+// "anything I just wrote is mine, don't lecture me about it for at
+// least a few minutes regardless of how serious you think it is." A
+// real bug ALWAYS still surfaces eventually; the only question is
+// whether it does at 8s or 180s. The user prefers 180s.
+const LINE_EDIT_WINDOW_MS = 3 * 60_000;
+// Kept as an alias for code that still references the info-tier name.
+// Same value now — single window for everything.
+const INFO_LINE_EDIT_WINDOW_MS = LINE_EDIT_WINDOW_MS;
+const LINE_PRUNE_MS = LINE_EDIT_WINDOW_MS * 1.5; // ~4.5min
 const lineTouchedAt = new Map<string, Map<number, number>>();
 
 // ---- B1 state ----
@@ -125,20 +122,18 @@ function evictOldestIfFull(): void {
 }
 
 function scheduleGateClearFire(uriKey: string, line: number): void {
-  for (const [suffix, windowMs] of [
-    ["warn", LINE_EDIT_WINDOW_MS],
-    ["info", INFO_LINE_EDIT_WINDOW_MS],
-  ] as const) {
-    const timerKey = `${uriKey}:${line}:${suffix}`;
-    const existing = pendingGateClearTimers.get(timerKey);
-    if (existing) clearTimeout(existing);
-    evictOldestIfFull();
-    const handle = setTimeout(() => {
-      pendingGateClearTimers.delete(timerKey);
-      gateEmitter.fire();
-    }, windowMs + GATE_CLEAR_FIRE_BUFFER_MS);
-    pendingGateClearTimers.set(timerKey, handle);
-  }
+  // One timer per touched line, fires when the unified 3-min edit
+  // window expires so subscribers (Live Review, ghost lens) can repaint
+  // the moment the gate actually clears for that line.
+  const timerKey = `${uriKey}:${line}`;
+  const existing = pendingGateClearTimers.get(timerKey);
+  if (existing) clearTimeout(existing);
+  evictOldestIfFull();
+  const handle = setTimeout(() => {
+    pendingGateClearTimers.delete(timerKey);
+    gateEmitter.fire();
+  }, LINE_EDIT_WINDOW_MS + GATE_CLEAR_FIRE_BUFFER_MS);
+  pendingGateClearTimers.set(timerKey, handle);
 }
 
 
@@ -302,18 +297,14 @@ export function shouldSuppress(
       ? finding.range.end.line
       : startLine;
 
-  // Bugs (warn/perf) get the short 8s window — fast feedback. Teaching
-  // (info: praise/concept patterns, observational tips) gets the long
-  // 3min window — let the user finish the thought before lecturing.
-  const windowMs =
-    finding.severity === "info"
-      ? INFO_LINE_EDIT_WINDOW_MS
-      : LINE_EDIT_WINDOW_MS;
-
+  // Single 3-minute window regardless of severity. Code the user wrote
+  // recently is theirs; no lecture about it until 3 minutes have passed
+  // since they last touched the line. Real issues still surface — just
+  // 180s after the user stops editing instead of 8s.
   if (touchedMap && touchedMap.size > 0) {
     for (let ln = startLine; ln <= endLine; ln++) {
       const ts = touchedMap.get(ln);
-      if (ts && now - ts < windowMs) {
+      if (ts && now - ts < LINE_EDIT_WINDOW_MS) {
         return "line-still-being-edited";
       }
     }

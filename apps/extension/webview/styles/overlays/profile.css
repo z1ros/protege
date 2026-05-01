@@ -143,3 +143,17 @@
 .ghost-btn.danger { color: var(--rose-soft); border-color: rgba(var(--rose-soft-rgb), 0.2); }
 .ghost-btn.full-row { width: 100%; margin-top: 6px; }
 
+
+/* "×N" multiplier badge inside a win row when consecutive identical
+   gain events were collapsed into a single row. Quiet styling so it
+   reads as metadata, not a primary affordance. */
+.win-count {
+  margin-left: 6px;
+  padding: 1px 5px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--text-faint);
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius-pill);
+  letter-spacing: 0.02em;
+}

@@ -98,23 +98,42 @@
   .composer-hint { font-size: 8px; letter-spacing: 0.1em; }
 }
 
-/* ----- Wide panel (>=720px) — editor-tab mode ----- */
+/* ----- Wide panel (>=720px) — editor-tab mode -----
+   Single source of truth for the centered reading column. Every
+   surface that the user reads/writes inside (header chrome, chat
+   toolbar, messages, composer, page chrome, concept dashboards) gets
+   the SAME max-width and `margin: 0 auto` so they line up vertically
+   into one column. Mismatched caps were the visible bug — header
+   chrome at 960px vs body at 840px left a ~60px gap on each side
+   that read as a broken layout on wide panels. */
 @media (min-width: 720px) {
-  /* Cap readable widths so long lines don't stretch edge-to-edge */
-  .messages, .concepts, .page {
+  .messages,
+  .concepts,
+  .page,
+  .chat-search-wrap,
+  .composer,
+  .header > * {
     max-width: 760px;
     margin-left: auto;
     margin-right: auto;
+    width: 100%;
   }
-  .composer { max-width: 760px; margin-left: auto; margin-right: auto; }
   .header { padding: 26px clamp(22px, 4vw, 40px) 16px; }
 
   /* Cluster grid can breathe into 3 columns */
   .cluster-grid { grid-template-columns: 1fr 1fr 1fr; }
 }
 
-/* ----- Very wide panel (>=1000px) ----- */
+/* ----- Very wide panel (>=1000px) -----
+   Single column expands to 840px so code blocks have breathing room.
+   Everything still aligns. */
 @media (min-width: 1000px) {
-  .header > * { max-width: 960px; margin-left: auto; margin-right: auto; width: 100%; }
-  .messages, .concepts, .page, .composer { max-width: 840px; }
+  .messages,
+  .concepts,
+  .page,
+  .composer,
+  .chat-search-wrap,
+  .header > * {
+    max-width: 840px;
+  }
 }

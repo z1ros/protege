@@ -4,13 +4,13 @@ import type {
   ConceptKnownStatus,
   DashboardResponse,
   EchoHostToWebview,
-  EchoUserPreferences,
   EchoWebviewToHost,
   EchoWindow,
 } from "@protege/types";
 import { DashboardView } from "../../src/echo/dashboardView.js";
 import type { LiveScanState } from "../../src/echo/widgets/RepoConcepts.js";
-import { StoryModeView } from "../../src/echo/storyModeView.js";
+// Story Mode retired (2026-04-30) — UI removed from both Echo surfaces.
+// `storyModeView.tsx` stays on disk in case the surface comes back.
 import "./echo.css";
 
 interface VsCodeApi {
@@ -24,9 +24,8 @@ declare function acquireVsCodeApi(): VsCodeApi;
 const vscode: VsCodeApi = acquireVsCodeApi();
 
 function EchoApp(): JSX.Element {
-  const [activeSubPage, setActiveSubPage] = useState<"dashboard" | "story">(
-    "dashboard"
-  );
+  // activeSubPage / preferences state retired with Story Mode (2026-04-30).
+  // Echo always renders the dashboard now.
   const [window, setWindow] = useState<EchoWindow>("today");
   const [data, setData] = useState<DashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -36,9 +35,6 @@ function EchoApp(): JSX.Element {
   // instead of the dashboard; clicking the button posts `echo_signIn`,
   // the host pops OAuth, and on success the host replays echo_ready.
   const [authBlocked, setAuthBlocked] = useState(false);
-  const [preferences, setPreferences] = useState<EchoUserPreferences>({
-    storyModeNotify: false,
-  });
   // Rv5.C: live scan state overrides payload.scanState while a scan is in
   // flight. We reset back to null once the scan finishes so W17 can fall
   // back to the fresh `lastScannedAt` reported by the refetched dashboard.
@@ -69,7 +65,7 @@ function EchoApp(): JSX.Element {
           setLoading(false);
           break;
         case "echo_preferences":
-          setPreferences(msg.preferences);
+          // No-op — preferences state was retired with Story Mode.
           break;
         case "echo_commit_enriched":
           // Commit stream — hot refresh the dashboard on next tick so the
@@ -108,19 +104,14 @@ function EchoApp(): JSX.Element {
     vscode.postMessage({ type: "echo_request", window: w });
   };
 
-  const openStory = () => {
-    setActiveSubPage("story");
-    vscode.postMessage({ type: "echo_setSubPage", subPage: "story" });
+  // openStory / backToDashboard / toggleNotify retired with Story
+  // Mode (2026-04-30). DashboardView still accepts onOpenStory /
+  // onToggleNotify for prop compat — we pass no-ops.
+  const noopStory = () => {
+    /* story mode retired */
   };
-
-  const backToDashboard = () => {
-    setActiveSubPage("dashboard");
-    vscode.postMessage({ type: "echo_setSubPage", subPage: "dashboard" });
-  };
-
-  const toggleNotify = (enabled: boolean) => {
-    setPreferences((p) => ({ ...p, storyModeNotify: enabled }));
-    vscode.postMessage({ type: "echo_notifyStoryMode", enabled });
+  const noopNotify = (_enabled: boolean) => {
+    /* story mode retired */
   };
 
   const openMoment = (file: string, line?: number, ts?: number) => {
@@ -137,11 +128,6 @@ function EchoApp(): JSX.Element {
 
   const rescanRepo = () => {
     vscode.postMessage({ type: "echo_rescanRepo" });
-  };
-
-  const storyData = data?.storyMode ?? {
-    notify: preferences.storyModeNotify,
-    nextDrop: null,
   };
 
   if (authBlocked) {
@@ -174,40 +160,22 @@ function EchoApp(): JSX.Element {
     <div className="echo-root">
       <header className="echo-header">
         <div className="echo-brand">Echo</div>
-        <div className="echo-subpage-toggle">
-          {activeSubPage === "dashboard" ? (
-            <button type="button" onClick={openStory}>
-              Story Mode &rarr;
-            </button>
-          ) : (
-            <button type="button" onClick={backToDashboard}>
-              &larr; Dashboard
-            </button>
-          )}
-        </div>
+        {/* Story Mode toggle retired 2026-04-30. */}
       </header>
-      {activeSubPage === "dashboard" ? (
-        <DashboardView
-          window={window}
-          data={data}
-          loading={loading}
-          error={error}
-          liveScan={liveScan}
-          onWindowChange={requestWindow}
-          onOpenStory={openStory}
-          onToggleNotify={toggleNotify}
-          onOpenMoment={openMoment}
-          onSetConceptStatus={setConceptStatus}
-          onSetConceptLanguage={setConceptLanguage}
-          onRescanRepo={rescanRepo}
-        />
-      ) : (
-        <StoryModeView
-          data={storyData}
-          onBack={backToDashboard}
-          onToggleNotify={toggleNotify}
-        />
-      )}
+      <DashboardView
+        window={window}
+        data={data}
+        loading={loading}
+        error={error}
+        liveScan={liveScan}
+        onWindowChange={requestWindow}
+        onOpenStory={noopStory}
+        onToggleNotify={noopNotify}
+        onOpenMoment={openMoment}
+        onSetConceptStatus={setConceptStatus}
+        onSetConceptLanguage={setConceptLanguage}
+        onRescanRepo={rescanRepo}
+      />
     </div>
   );
 }

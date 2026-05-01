@@ -76,6 +76,22 @@ const SHOW_CODEIQ_TAB: boolean =
   (process as unknown as { env?: Record<string, string | undefined> })?.env
     ?.PROTEGE_SHOW_CODEIQ === "1";
 
+/**
+ * Chat composer character cap (beta tier).
+ *
+ *   MAX  — hard cap. Send button disables; backend also rejects.
+ *   WARN — soft warning. Counter chip appears in the composer corner
+ *          starting at this length, color amber → red as the user
+ *          approaches MAX.
+ *
+ * Sized so a typical "stack trace + question" fits comfortably (~2k
+ * tokens at 4 chars/token), but an "I pasted my entire 1000-line file"
+ * is rejected. Easy to tune — bump both constants up if real beta
+ * usage shows users hitting the cap on legitimate questions.
+ */
+const MAX_CHAT_CHARS = 8000;
+const WARN_CHAT_CHARS = 6000;
+
 const QUICK_PROMPTS: Array<{ icon: React.ReactNode; label: string }> = [
   { icon: <IconZap size={14} />, label: "Explain this file to me" },
   { icon: <IconBug size={14} />, label: "Find bugs and issues" },
@@ -99,13 +115,79 @@ const QUICK_PROMPTS: Array<{ icon: React.ReactNode; label: string }> = [
 // This mirrors VoiceMode.tsx's `unlockAudio()` but wires it globally so
 // every surface that plays a /tts clip benefits from the same grant.
 
-const EXPLAIN_BACKEND_URL =
+// Backend URL — primed from `__PROTEGE_BACKEND_URL__` (vite-injected
+// when PROTEGE_BACKEND_URL is in the build env) and overridden at
+// runtime by the host's `config/backend` message. Runtime override
+// is the authoritative path: the host already knows which backend
+// it's calling and ships that URL on every webview `ready`. The
+// build-time inject is just a sane initial value before the message
+// arrives (~50ms after mount).
+let resolvedBackendUrl: string =
   // @ts-expect-error — injected at build time if set, else undefined.
   (typeof __PROTEGE_BACKEND_URL__ !== "undefined" && __PROTEGE_BACKEND_URL__) ||
   "http://localhost:8787";
 
+function getBackendUrl(): string {
+  return resolvedBackendUrl;
+}
+
+export function setBackendUrl(url: string): void {
+  if (url && typeof url === "string") resolvedBackendUrl = url;
+}
+
+// Removed const EXPLAIN_BACKEND_URL — would freeze the value at module
+// load time, before the host's runtime config/backend message arrives.
+// Callsites use getBackendUrl() so they always read the latest value.
+
 let explainAudio: HTMLAudioElement | null = null;
 let audioUnlocked = false;
+
+/** Module-level helper: getter so React components can poll `audioUnlocked`
+ *  without importing the `let` binding directly (which breaks tree-shaking
+ *  and creates closure pitfalls). The `voice/playExplain` listener in App
+ *  uses this to decide whether to surface the in-panel "click to enable"
+ *  banner when a TTS clip arrives and audio hasn't been blessed yet. */
+export function isAudioUnlocked(): boolean {
+  return audioUnlocked;
+}
+
+// Web Audio path. The wake-word flow doesn't generate a user gesture
+// inside the webview frame, so HTMLAudioElement.play() rejects with
+// NotAllowedError. AudioContext.resume() is the canonical workaround:
+// once the context transitions to "running", later programmatic
+// playback works without per-call gesture context.
+let audioCtx: AudioContext | null = null;
+let currentSource: AudioBufferSourceNode | null = null;
+
+function ensureAudioCtx(): AudioContext | null {
+  if (audioCtx) return audioCtx;
+  try {
+    const Ctor = (window as unknown as {
+      AudioContext?: typeof AudioContext;
+      webkitAudioContext?: typeof AudioContext;
+    }).AudioContext ??
+      (window as unknown as { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext;
+    if (!Ctor) return null;
+    audioCtx = new Ctor();
+    return audioCtx;
+  } catch {
+    return null;
+  }
+}
+
+/** POST a debug line to the backend `/log` endpoint so audio failures
+ *  show up in the same terminal where the user reads /tts logs. Cheap
+ *  and best-effort — silently no-ops if the post itself fails. */
+function backendLog(msg: string): void {
+  try {
+    void fetch(`${getBackendUrl()}/log`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ tag: "webview-audio", msg }),
+    }).catch(() => {});
+  } catch {}
+}
 // Monotonic playback generation. Every playExplainAudio call increments this
 // and stamps its handlers; stale handlers (from a previous clip that got
 // interrupted by audio.src=newUrl) compare and no-op. Without this, an old
@@ -121,37 +203,104 @@ let playbackGen = 0;
  */
 function unlockExplainAudio(): void {
   if (audioUnlocked) return;
+  // Optimistic flip — we're inside a user gesture, so we have the grant.
+  // Don't wait for async confirmations: if a wake fires 50ms after the
+  // click, the gate must already be open. Both HTMLAudio + AudioContext
+  // are best-effort warmups — neither needs to resolve for this turn.
   audioUnlocked = true;
+  // (1) HTMLAudio bless — primes the persistent <audio> element so
+  //     later .src = newBlob + .play() inherits the gesture grant.
   try {
-    // Create + play a tiny silent WAV inside the gesture. The browser
-    // "blesses" the element; future `.play()` calls on it succeed even
-    // when triggered async by a host message.
     const silentWav =
       "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=";
     const persistent = new Audio(silentWav);
     persistent.volume = 0.01;
     explainAudio = persistent;
-    persistent.play().catch(() => {
-      // Silent clip may still reject in some environments — that's fine,
-      // the element was still created inside a gesture so it's blessed.
-    });
-    console.log("[protege-audio] unlocked explainAudio element");
+    persistent
+      .play()
+      .then(() => backendLog("unlock OK — HTMLAudio silent play resolved"))
+      .catch(() => {});
   } catch {}
+  // (2) AudioContext warmup — safety net for the wake-word path which
+  //     fires without a fresh gesture. Created + resumed inside this
+  //     gesture so later .start() calls succeed without per-call grant.
+  const ctx = ensureAudioCtx();
+  if (ctx) {
+    try {
+      const buf = ctx.createBuffer(1, 1, 22050);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      src.start(0);
+    } catch {}
+    if (ctx.state === "suspended") {
+      ctx.resume().catch(() => {});
+    }
+  }
 }
 
-// Also unlock on any key press or pointerdown inside the webview window.
-// Just clicking the textarea's contenteditable area or pressing Enter
-// already qualifies as a user gesture — we shouldn't need the user to
-// hit the exact root div. This fires the unlock on the very first key
-// stroke they make.
+/** Last clip whose `playExplainAudio` call failed because the audio
+ *  element was still locked by Chromium's autoplay policy. We stash
+ *  it so the in-panel "Tap to enable voice" banner can replay it
+ *  immediately after the click — without this, the user clicks the
+ *  banner, audio unlocks, but the reply they triggered is silently
+ *  dropped and they'd have to re-trigger another wake. 30s TTL: any
+ *  older and the conversation has moved on. */
+interface PendingClip {
+  text: string;
+  voice: "female" | "male";
+  requestId?: string;
+  ts: number;
+}
+let pendingClip: PendingClip | null = null;
+const PENDING_CLIP_TTL_MS = 30_000;
+
+function stashPendingClip(c: PendingClip): void {
+  pendingClip = c;
+}
+
+/** Called from the unlock click. If a recent clip failed to play,
+ *  replay it now that audio is blessed. */
+export function replayPendingClipIfAny(): void {
+  if (!pendingClip) return;
+  const stale = Date.now() - pendingClip.ts > PENDING_CLIP_TTL_MS;
+  const c = pendingClip;
+  pendingClip = null;
+  if (stale) return;
+  // Defer one tick so the unlock side-effects (Audio creation,
+  // AudioContext.resume) settle before we kick off a fresh play.
+  setTimeout(() => {
+    void playExplainAudio(c.text, c.voice, c.requestId);
+  }, 50);
+}
+
+/** Attempt to (re)resume the AudioContext outside of any gesture. Some
+ *  webview hosts honor a deferred resume() if the context was created
+ *  during an earlier gesture. Best-effort — no-op on failure. */
+async function tryResumeAudioCtx(): Promise<void> {
+  const ctx = ensureAudioCtx();
+  if (!ctx) return;
+  if (ctx.state === "suspended") {
+    try {
+      await ctx.resume();
+    } catch {}
+  }
+  if (ctx.state === "running") audioUnlocked = true;
+}
+
+// Listen on EVERY gesture, not just the first — the retry loop above
+// keeps trying silent unlock on each keydown/pointerdown until one
+// resolves and flips audioUnlocked true. Cheap (early-return when
+// already unlocked) and saves us from cold-start silence.
 if (typeof window !== "undefined") {
-  const onFirstGesture = () => {
+  const onGesture = () => {
     if (audioUnlocked) return;
     unlockExplainAudio();
   };
-  window.addEventListener("keydown", onFirstGesture, { capture: true });
-  window.addEventListener("pointerdown", onFirstGesture, { capture: true });
-  window.addEventListener("touchstart", onFirstGesture, { capture: true });
+  window.addEventListener("keydown", onGesture, { capture: true });
+  window.addEventListener("pointerdown", onGesture, { capture: true });
+  window.addEventListener("touchstart", onGesture, { capture: true });
+  window.addEventListener("click", onGesture, { capture: true });
 }
 
 async function playExplainAudio(
@@ -194,8 +343,15 @@ async function playExplainAudio(
     return;
   }
 
+  // Defensive pre-flight: re-attempt unlock + AudioContext resume on
+  // every play. Idempotent when already unlocked; rescues the case where
+  // an earlier gesture's resume() raced past audio playback and the flag
+  // was never flipped.
+  if (!audioUnlocked) unlockExplainAudio();
+  await tryResumeAudioCtx();
+
   try {
-    const res = await fetch(`${EXPLAIN_BACKEND_URL}/tts`, {
+    const res = await fetch(`${getBackendUrl()}/tts`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text, voice }),
@@ -230,29 +386,31 @@ async function playExplainAudio(
       reportDone("error");
       return;
     }
+    // HTMLAudio is the PRIMARY playback path — when the persistent
+    // <audio> element was blessed by an earlier user gesture (any click
+    // anywhere in the webview), `.src = newBlob; .play()` works without
+    // a per-call gesture. This is what worked historically; Web Audio
+    // gets used only as a last-resort fallback after HTMLAudio rejects.
     const url = URL.createObjectURL(blob);
-
     if (!explainAudio) explainAudio = new Audio();
     const audio = explainAudio;
     const prevUrl = audio.src;
-
-    // Hard stop whatever's currently on the shared element before we
-    // reassign src — otherwise the old clip's internal state machine can
-    // still fire onended after we've loaded the new blob, even though
-    // we null out handlers below. Pause + src clear forces a clean reset.
     try {
       audio.pause();
     } catch {}
     audio.onplaying = null;
     audio.onended = null;
     audio.onerror = null;
-
     audio.src = url;
     audio.volume = 0.9;
-
     audio.onplaying = () => {
       if (!isCurrent()) return;
+      backendLog(`playExplain OK: HTMLAudio.onplaying gen=${myGen}`);
       vscode.postMessage({ type: "voice/speaking", active: true });
+      // Dismiss the unlock banner now that audio actually started.
+      // Module-level dispatch reaches the React tree via the listener
+      // App registers in its main effect.
+      window.dispatchEvent(new CustomEvent("protege:audio-playing"));
     };
     audio.onended = () => {
       if (!isCurrent()) return;
@@ -263,23 +421,98 @@ async function playExplainAudio(
     audio.onerror = () => {
       if (!isCurrent()) return;
       vscode.postMessage({ type: "voice/speaking", active: false });
-      console.warn("[protege] voice/playExplain: audio element error", audio.error);
+      const e = audio.error;
+      backendLog(
+        `playExplain FAIL: audio.onerror code=${e?.code ?? "?"} msg=${e?.message ?? "?"}`
+      );
       reportDone("error");
     };
-
     try {
       await audio.play();
     } catch (playErr) {
       if (!isCurrent()) return;
+      const errAny = playErr as { name?: string; message?: string } | undefined;
+      // NotAllowedError = autoplay block (no user gesture). Stash the
+      // clip so the unlock banner can replay it when the user clicks,
+      // try once more, then fall through to Web Audio.
+      if (errAny?.name === "NotAllowedError") {
+        stashPendingClip({
+          text,
+          voice,
+          requestId,
+          ts: Date.now(),
+        });
+      }
+      let recovered = false;
+      if (errAny?.name === "NotAllowedError") {
+        backendLog(
+          `playExplain RETRY: HTMLAudio rejected, attempting unlock + retry. unlocked=${audioUnlocked}`
+        );
+        unlockExplainAudio();
+        await tryResumeAudioCtx();
+        try {
+          await audio.play();
+          backendLog(`playExplain RETRY OK: gen=${myGen}`);
+          recovered = true;
+        } catch (retryErr) {
+          const re = retryErr as { name?: string; message?: string } | undefined;
+          backendLog(
+            `playExplain RETRY FAIL: ${re?.name ?? "?"} ${re?.message ?? String(retryErr)} — trying Web Audio fallback.`
+          );
+        }
+      }
+      if (recovered) {
+        if (prevUrl && prevUrl.startsWith("blob:")) URL.revokeObjectURL(prevUrl);
+        return;
+      }
+      // Last-resort Web Audio fallback — the AudioContext was warmed at
+      // unlock time, so its state should be "running" if any prior gesture
+      // landed. decodeAudioData + BufferSource.start() bypasses the
+      // <audio> element's stricter NotAllowed gate.
+      const ctx = ensureAudioCtx();
+      if (ctx && ctx.state === "running") {
+        try {
+          const arrayBuffer = await blob.arrayBuffer();
+          if (!isCurrent()) return;
+          const buffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
+          if (!isCurrent()) return;
+          try {
+            currentSource?.stop();
+            currentSource?.disconnect();
+          } catch {}
+          const source = ctx.createBufferSource();
+          source.buffer = buffer;
+          source.connect(ctx.destination);
+          currentSource = source;
+          let endedFired = false;
+          source.onended = () => {
+            if (endedFired) return;
+            endedFired = true;
+            if (!isCurrent()) return;
+            vscode.postMessage({ type: "voice/speaking", active: false });
+            reportDone("ended");
+          };
+          source.start(0);
+          backendLog(
+            `playExplain OK (WebAudio fallback): gen=${myGen} dur=${buffer.duration.toFixed(2)}s`
+          );
+          vscode.postMessage({ type: "voice/speaking", active: true });
+          window.dispatchEvent(new CustomEvent("protege:audio-playing"));
+          if (url.startsWith("blob:")) URL.revokeObjectURL(url);
+          return;
+        } catch (waErr) {
+          backendLog(
+            `playExplain WebAudio FAIL: ${(waErr as Error)?.name ?? "?"} ${(waErr as Error)?.message ?? String(waErr)}`
+          );
+        }
+      }
       vscode.postMessage({ type: "voice/speaking", active: false });
-      console.warn(
-        "[protege] voice/playExplain: audio.play() rejected — likely autoplay block or missing audio codec:",
-        playErr
+      backendLog(
+        `playExplain FAIL: HTMLAudio rejected name=${errAny?.name ?? "?"} msg=${errAny?.message ?? String(playErr)} unlocked=${audioUnlocked} ctxState=${ctx?.state ?? "n/a"}`
       );
       reportDone("error");
       return;
     }
-
     if (prevUrl && prevUrl.startsWith("blob:")) URL.revokeObjectURL(prevUrl);
   } catch (err) {
     if (!isCurrent()) return;
@@ -296,6 +529,23 @@ export function App() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Structured daily-quota error from the host. When set, the chat
+  // renders a friendly limit-reached banner with a countdown and a
+  // link to the Profile usage panel — distinct from the generic red
+  // error line that handles all other failures.
+  const [quotaError, setQuotaError] = useState<{
+    kind: string;
+    used: number;
+    limit: number;
+    resetAt: number;
+  } | null>(null);
+  // True when a TTS clip arrived but the webview's audio element is
+  // still locked by the browser's autoplay policy. Renders an in-panel
+  // banner with a "Tap to enable voice" button — clicking it counts as
+  // a real user gesture, which blesses the audio element for the rest
+  // of the session. Dismisses automatically once audio successfully
+  // plays.
+  const [voiceUnlockNeeded, setVoiceUnlockNeeded] = useState(false);
   const [toolActivity, setToolActivity] = useState<
     { name: string; args: Record<string, unknown>; status: "running" | "done" | "error" }[]
   >([]);
@@ -391,6 +641,17 @@ export function App() {
   const chatInputModeRef = useRef<ChatInputMode>(chatInputMode);
   chatInputModeRef.current = chatInputMode;
 
+  // Dismiss the unlock banner the moment audio actually starts —
+  // playExplainAudio dispatches a `protege:audio-playing` event from
+  // its onplaying handler (and from the Web Audio fallback). This
+  // bridges that module-level event into React state.
+  useEffect(() => {
+    const onAudioPlaying = () => setVoiceUnlockNeeded(false);
+    window.addEventListener("protege:audio-playing", onAudioPlaying);
+    return () =>
+      window.removeEventListener("protege:audio-playing", onAudioPlaying);
+  }, []);
+
   useEffect(() => {
     const off = onHostMessage((msg) => {
       if (msg.type === "chat/history") {
@@ -418,7 +679,18 @@ export function App() {
       } else if (msg.type === "chat/loading") {
         setLoading(msg.loading);
         if (msg.loading) setToolActivity([]);
-      } else if (msg.type === "chat/error") setError(msg.error);
+      } else if (msg.type === "chat/error") {
+        // Daily-quota 429: render a structured limit-reached banner
+        // (countdown + Profile link) instead of the generic red line.
+        // The flat string fallback is kept for non-quota errors.
+        if (msg.quota) {
+          setQuotaError(msg.quota);
+          setError(null);
+        } else {
+          setError(msg.error);
+          setQuotaError(null);
+        }
+      }
       else if (msg.type === "chat/tool") {
         setToolActivity((prev) => {
           // If this tool is already running, update it; else append
@@ -487,6 +759,13 @@ export function App() {
         // persistent Audio element so browser autoplay policy keeps trust
         // across clips (same pattern as VoiceMode).
         // requestId threads through so teach_step can await a specific clip.
+        //
+        // Autoplay-policy guard: if the user hasn't clicked inside this
+        // webview yet, the browser will reject `audio.play()` and the
+        // clip silently drops. Surface an in-panel banner so the user
+        // can click ONCE to unlock the rest of the session. The banner
+        // dismisses automatically if/when audio successfully plays.
+        if (!audioUnlocked) setVoiceUnlockNeeded(true);
         void playExplainAudio(msg.text, msg.voice ?? "female", msg.requestId);
       } else if (msg.type === "liveReview/state") {
         setLiveMode(msg.active);
@@ -519,6 +798,8 @@ export function App() {
         }
       } else if (msg.type === "auth/user") {
         setAuthUser(msg.user);
+      } else if (msg.type === "config/backend") {
+        setBackendUrl(msg.url);
       } else if (msg.type === "watcher/nudge") {
         // Watcher nudges are no longer rendered in chat — they looked bad
         // inline with user messages. Keeping the handler as a no-op so any
@@ -607,6 +888,15 @@ export function App() {
   const sendMessage = (text: string, modeOverride?: ChatInputMode) => {
     const trimmed = text.trim();
     if (!trimmed || loading) return;
+    // Hard char cap (defense-in-depth — composer should already block
+    // via disabled Send, but auto-fired sendMessage paths bypass that).
+    // Backend also enforces; this just stops obvious mistakes early.
+    if (trimmed.length > MAX_CHAT_CHARS) {
+      setError(
+        `Message too long: ${trimmed.length} / ${MAX_CHAT_CHARS} characters. Trim it down or split into multiple messages.`
+      );
+      return;
+    }
     // Read mode through the ref so calls from the message listener
     // (which has stale closures) still pick up the current selection.
     // An explicit override wins — used by hover-triggered actions
@@ -628,6 +918,7 @@ export function App() {
     const contextMessages = messages;
     setMessages((m) => [...m, user]);
     setError(null);
+    setQuotaError(null);
     // Flip loading optimistically so the typing-dots bubble appears in
     // the SAME paint as the user message, not 200–500ms later when
     // chat/loading round-trips back from the host. The host will still
@@ -741,9 +1032,55 @@ export function App() {
       // that click happens in the editor (outside this webview), so the
       // audio element needs a prior in-webview gesture to be "blessed"
       // by the browser. Idempotent — subsequent clicks are no-ops.
-      onMouseDown={unlockExplainAudio}
-      onTouchStart={unlockExplainAudio}
+      onMouseDown={() => {
+        unlockExplainAudio();
+        // Any click anywhere in the panel also clears the unlock banner.
+        if (voiceUnlockNeeded) setVoiceUnlockNeeded(false);
+      }}
+      onTouchStart={() => {
+        unlockExplainAudio();
+        if (voiceUnlockNeeded) setVoiceUnlockNeeded(false);
+      }}
     >
+      {voiceUnlockNeeded && (
+        <button
+          className="voice-unlock-banner"
+          onClick={() => {
+            // The click itself counts as the activation gesture — call
+            // unlockExplainAudio() inside the same call stack so the
+            // browser-blessed Audio element is created right here.
+            unlockExplainAudio();
+            // Replay the clip whose play() rejected because audio was
+            // locked. Without this, the user clicks "enable voice" but
+            // the reply that prompted the click is silently dropped —
+            // they'd have to ask again. With it, the reply they were
+            // expecting plays immediately after the click.
+            replayPendingClipIfAny();
+            setVoiceUnlockNeeded(false);
+          }}
+          title="Click here so Protege can play voice replies"
+          aria-label="Tap to enable voice replies"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            width="14"
+            height="14"
+            aria-hidden="true"
+          >
+            <path d="M11 5L6 9H2v6h4l5 4V5z" />
+            <path d="M15.54 8.46a5 5 0 010 7.07" />
+            <path d="M19.07 4.93a10 10 0 010 14.14" />
+          </svg>
+          <span>
+            Tap to enable voice replies — autoplay needs one click here
+          </span>
+        </button>
+      )}
       {toast && (
         <div
           className={`iq-toast toast-${toast.kind ?? "concept"}`}
@@ -773,7 +1110,13 @@ export function App() {
             type="button"
             className="brand-home"
             onClick={() => {
+              // "Home" should fully reset navigation surfaces — close
+              // any overlay AND any streak journal, then land on chat.
+              // Without the streak reset, clicking the logo while the
+              // streak journal is open did nothing visible (mode was
+              // already "chat"; overlay was already null).
               setOverlay(null);
+              setStreakOpen(false);
               setMode("chat");
             }}
             title="Home"
@@ -794,7 +1137,17 @@ export function App() {
             <div
               className="status-chip"
               title={`${streak.current}d streak · longest ${streak.longest}d — click for history`}
-              onClick={() => setStreakOpen((o) => !o)}
+              onClick={() => {
+                // Mutually exclusive with overlays: opening the streak
+                // journal must close any open overlay (Profile,
+                // Subscription) so the journal isn't hidden underneath.
+                // Without this, clicking the streak chip while Profile
+                // is open silently flipped streakOpen=true with no
+                // visible change because the Overlay still stacked on
+                // top.
+                setOverlay(null);
+                setStreakOpen((o) => !o);
+              }}
               style={{ cursor: "pointer" }}
             >
               <span className="status-flame"><IconZap size={11} /></span>
@@ -826,7 +1179,12 @@ export function App() {
             {authUser ? (
               <button
                 className={`header-icon-btn header-avatar-btn ${overlay === "profile" ? "active" : ""}`}
-                onClick={() => setOverlay(overlay === "profile" ? null : "profile")}
+                onClick={() => {
+                  // Opening Profile must close the streak journal —
+                  // both render full-panel and would visually conflict.
+                  setStreakOpen(false);
+                  setOverlay(overlay === "profile" ? null : "profile");
+                }}
                 title={`${authUser.login} — ${overlay === "profile" ? "Close profile" : "Open profile"}`}
                 aria-label="Profile"
               >
@@ -954,19 +1312,29 @@ export function App() {
               : messages
           }
           onJumpTo={(id: string) => {
-            // If the clicked message is already in the current chat
-            // view, just scroll to it. If it's NOT (e.g. it belongs to
-            // a previous session the user had cleared via "New chat"),
-            // restore the full persisted history into the view first
-            // so the scroll target exists, then scroll.
+            // If the clicked message lives in the CURRENT chat view,
+            // close the panel and scroll the chat to it.
+            //
+            // If it does NOT (e.g. it belongs to a previous session the
+            // user cleared via "New chat"), keep the panel open and
+            // scroll the panel itself to that turn. Replacing `messages`
+            // with the full flat history was the source of the "history
+            // got mixed up with my new chat" bug — old + new messages
+            // would interleave in the live view with no session
+            // boundary. Browsing happens in the panel; the live chat
+            // is left alone.
             const inView = messages.some((m) => m.id === id);
-            if (!inView && historyPanelMessages.length > 0) {
-              setMessages(historyPanelMessages);
+            if (inView) {
+              setChatHistoryOpen(false);
+              requestAnimationFrame(() => {
+                const el = document.getElementById(`msg-${id}`);
+                if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+              });
+              return;
             }
-            setChatHistoryOpen(false);
-            // Wait one paint for the chat body to remount, then scroll
+            // Out-of-view: scroll within the history panel.
             requestAnimationFrame(() => {
-              const el = document.getElementById(`msg-${id}`);
+              const el = document.getElementById(`history-msg-${id}`);
               if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
             });
           }}
@@ -989,7 +1357,15 @@ export function App() {
           }}
         />
       ) : mode === "chat" ? (
-        <>
+        // Chat shell wrapper — caps the chat-mode content (search bar,
+        // messages, composer) at a consistent reading column and centers
+        // it horizontally inside the panel. Without this, on wide panels
+        // the assistant message bubble pinned left and ~70% of the width
+        // was empty grid; the composer stretched edge-to-edge while the
+        // tabs above looked centered, creating a visual mismatch. The
+        // wrapper makes all three children share one max-width so the
+        // chat reads like a column regardless of panel size.
+        <div className="chat-shell">
           {/* ---- Chat toolbar (always shown in chat mode so the history
                icon is reachable even after "New chat" emptied the view).
                Search moved INTO ChatHistoryPanel — it only appears when
@@ -1150,6 +1526,48 @@ export function App() {
                 </div>
               )}
               {error && <div className="error">{error}</div>}
+              {quotaError && (
+                <div
+                  className="quota-error"
+                  role="alert"
+                  aria-live="polite"
+                >
+                  <div className="quota-error-icon" aria-hidden>
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      width="18"
+                      height="18"
+                    >
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="12" y1="8" x2="12" y2="12" />
+                      <line x1="12" y1="16" x2="12.01" y2="16" />
+                    </svg>
+                  </div>
+                  <div className="quota-error-body">
+                    <div className="quota-error-title">
+                      Daily limit reached
+                    </div>
+                    <div className="quota-error-detail">
+                      You've used {quotaError.used} of {quotaError.limit}{" "}
+                      {humanizeQuotaKind(quotaError.kind)} for today.
+                      <br />
+                      Resets in {formatResetCountdown(quotaError.resetAt)}{" "}
+                      (00:00 UTC).
+                    </div>
+                    <button
+                      className="quota-error-action"
+                      onClick={() => setOverlay("profile")}
+                    >
+                      View usage in Profile →
+                    </button>
+                  </div>
+                </div>
+              )}
               <div ref={endRef} />
             </div>
           )}
@@ -1173,21 +1591,55 @@ export function App() {
                 onSwitchToText={() => setChatInputMode("text")}
               />
             ) : (
-              <textarea
-                ref={inputRef}
-                className="composer-input"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSend();
-                  }
-                }}
-                placeholder={loading ? "Protege is thinking…" : "Ask about your code…"}
-                rows={1}
-                disabled={loading}
-              />
+              <>
+                <textarea
+                  ref={inputRef}
+                  className="composer-input"
+                  value={input}
+                  onChange={(e) => {
+                    // Cap input at the hard ceiling on every keystroke.
+                    // This stops "I pasted my entire 800K-line file"
+                    // before it reaches setInput; the user still sees
+                    // the over-cap counter and a red border. Without
+                    // the slice, the React state would balloon to the
+                    // pasted size and freeze the editor briefly.
+                    const next =
+                      e.target.value.length > MAX_CHAT_CHARS
+                        ? e.target.value.slice(0, MAX_CHAT_CHARS)
+                        : e.target.value;
+                    setInput(next);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSend();
+                    }
+                  }}
+                  placeholder={loading ? "Protege is thinking…" : "Ask about your code…"}
+                  rows={1}
+                  disabled={loading}
+                  maxLength={MAX_CHAT_CHARS}
+                />
+                {/* Live char counter — appears once the message is at
+                    least 75% of the cap so it doesn't add visual noise
+                    for normal-length questions. Color shifts amber as
+                    the user approaches the cap, red when they hit it.
+                    `aria-live="polite"` so screen readers announce the
+                    state on each significant change without spamming. */}
+                {input.length >= WARN_CHAT_CHARS && (
+                  <div
+                    className={`composer-counter${
+                      input.length >= MAX_CHAT_CHARS
+                        ? " composer-counter--full"
+                        : " composer-counter--warn"
+                    }`}
+                    aria-live="polite"
+                  >
+                    {input.length.toLocaleString()} / {MAX_CHAT_CHARS.toLocaleString()}
+                    {input.length >= MAX_CHAT_CHARS ? " · max" : ""}
+                  </div>
+                )}
+              </>
             )}
             <div className="composer-actions">
               <div className="composer-actions-left">
@@ -1231,27 +1683,54 @@ export function App() {
               </div>
               {chatInputMode === "text" && (
                 <button
-                  className="send-btn"
-                  onClick={handleSend}
-                  disabled={loading || !input.trim()}
-                  aria-label="Send"
+                  className={`send-btn${loading ? " send-btn--stop" : ""}`}
+                  onClick={() => {
+                    if (loading) {
+                      // Mid-turn interrupt: tell host to abort the active
+                      // chat fetch + tool loop. Host's chat/abort handler
+                      // calls activeAbort.abort() and clears chat/loading.
+                      vscode.postMessage({ type: "chat/abort" });
+                    } else {
+                      handleSend();
+                    }
+                  }}
+                  disabled={
+                    !loading &&
+                    (!input.trim() || input.length > MAX_CHAT_CHARS)
+                  }
+                  aria-label={loading ? "Stop generating" : "Send"}
+                  title={
+                    loading
+                      ? "Stop generating"
+                      : input.length > MAX_CHAT_CHARS
+                        ? `Message too long (${input.length} / ${MAX_CHAT_CHARS} chars)`
+                        : "Send"
+                  }
                 >
-                  <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M7 17L17 7" />
-                    <path d="M9 7h8v8" />
-                  </svg>
+                  {loading ? (
+                    // Solid square = "halt". Click while the bot is
+                    // thinking to abort and reclaim the input.
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                      <rect x="6" y="6" width="12" height="12" rx="2" />
+                    </svg>
+                  ) : (
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M7 17L17 7" />
+                      <path d="M9 7h8v8" />
+                    </svg>
+                  )}
                 </button>
               )}
             </div>
           </footer>
-        </>
+        </div>
       ) : mode === "concepts" ? (
         <ConceptsTab
           codeIq={codeIq}
@@ -1368,6 +1847,43 @@ function parseAssistantExtras(content: string): {
 // "Reading /Users/Yura/Desktop/todo-demo/app/page.tsx" becomes
 // "Reading page.tsx". Full path is in the tool result anyway. Splits on
 // both `/` and `\` so Windows paths render the same way.
+/** Maps the backend's `quota.kind` (e.g. "teach", "tool_calls",
+ *  "voice_minutes") to a phrase that fits naturally in
+ *  "you've used N of M ___ for today". Falls back to a stripped form
+ *  of the raw kind if we don't recognize it. */
+function humanizeQuotaKind(kind: string): string {
+  switch (kind) {
+    case "chat_messages":
+    case "teach":
+      return "chat messages";
+    case "tool_calls":
+      return "tool calls";
+    case "voice_minutes":
+    case "tts":
+    case "stt":
+      return "voice minutes";
+    case "scan":
+      return "live-review scans";
+    case "verify":
+      return "intent verifications";
+    case "classify":
+      return "intent classifications";
+    default:
+      return kind.replace(/_/g, " ");
+  }
+}
+
+/** Format ms-until-reset as a friendly "Xh Ym" / "Ym" / "in <1m" string. */
+function formatResetCountdown(resetAt: number): string {
+  const ms = Math.max(0, resetAt - Date.now());
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m`;
+  return "less than a minute";
+}
+
 function shortPath(p: unknown): string {
   if (typeof p !== "string") return String(p ?? "file");
   const parts = p.split(/[\\/]/).filter(Boolean);

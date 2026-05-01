@@ -3,13 +3,14 @@ import type {
   ConceptKnownStatus,
   DashboardResponse,
   EchoHostToWebview,
-  EchoUserPreferences,
   EchoWebviewToHost,
   EchoWindow,
 } from "@protege/types";
 import { DashboardView } from "../src/echo/dashboardView.js";
 import type { LiveScanState } from "../src/echo/widgets/RepoConcepts.js";
-import { StoryModeView } from "../src/echo/storyModeView.js";
+// Story Mode retired (2026-04-30) — surfaces removed from EchoTab + the
+// standalone echo panel. The `storyModeView.tsx` module stays on disk
+// in case the surface comes back; it's just unimported here.
 import { vscode, onHostMessage } from "./vscode.js";
 import "./echo/echo.css";
 
@@ -25,16 +26,15 @@ function sendEcho(payload: EchoWebviewToHost): void {
 }
 
 export function EchoTab(): JSX.Element {
-  const [activeSubPage, setActiveSubPage] = useState<"dashboard" | "story">(
-    "dashboard"
-  );
+  // activeSubPage / story-mode toggle retired with Story Mode itself
+  // (2026-04-30). The Echo tab always renders the dashboard now.
   const [window, setWindow] = useState<EchoWindow>("today");
   const [data, setData] = useState<DashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [preferences, setPreferences] = useState<EchoUserPreferences>({
-    storyModeNotify: false,
-  });
+  // Echo preferences state retired with Story Mode (2026-04-30). The
+  // backend still emits `echo_preferences` messages, but nothing in the
+  // tab consumes them right now. We swallow them silently below.
   const [liveScan, setLiveScan] = useState<LiveScanState | null>(null);
   // Buffered concept-status edits. Each click on a mastery pill writes
   // into this map instead of firing an RPC immediately. Applying it
@@ -91,7 +91,7 @@ export function EchoTab(): JSX.Element {
           setLoading(false);
           break;
         case "echo_preferences":
-          setPreferences(inner.preferences);
+          // No-op — preferences state was retired with Story Mode.
           break;
         case "echo_commit_enriched":
           sendEcho({ type: "echo_request", window: windowRef.current });
@@ -131,19 +131,15 @@ export function EchoTab(): JSX.Element {
     sendEcho({ type: "echo_request", window: w });
   };
 
-  const openStory = (): void => {
-    setActiveSubPage("story");
-    sendEcho({ type: "echo_setSubPage", subPage: "story" });
+  // openStory / backToDashboard / toggleNotify retired with Story Mode
+  // (2026-04-30). The DashboardView still accepts `onOpenStory` /
+  // `onToggleNotify` props for backward compat with old props shape;
+  // we pass no-ops so the dashboard simply doesn't expose the entry.
+  const noopStory = (): void => {
+    /* story mode retired */
   };
-
-  const backToDashboard = (): void => {
-    setActiveSubPage("dashboard");
-    sendEcho({ type: "echo_setSubPage", subPage: "dashboard" });
-  };
-
-  const toggleNotify = (enabled: boolean): void => {
-    setPreferences((p) => ({ ...p, storyModeNotify: enabled }));
-    sendEcho({ type: "echo_notifyStoryMode", enabled });
+  const noopNotify = (_enabled: boolean): void => {
+    /* story mode retired */
   };
 
   const openMoment = (file: string, line?: number, ts?: number): void => {
@@ -182,52 +178,29 @@ export function EchoTab(): JSX.Element {
     sendEcho({ type: "echo_rescanRepo" });
   };
 
-  const storyData = data?.storyMode ?? {
-    notify: preferences.storyModeNotify,
-    nextDrop: null,
-  };
-
   return (
     <div className="echo-root echo-root--embedded">
       <header className="echo-header">
         <div className="echo-brand">Echo</div>
-        <div className="echo-subpage-toggle">
-          {activeSubPage === "dashboard" ? (
-            <button type="button" onClick={openStory}>
-              Story Mode &rarr;
-            </button>
-          ) : (
-            <button type="button" onClick={backToDashboard}>
-              &larr; Dashboard
-            </button>
-          )}
-        </div>
+        {/* Story Mode toggle retired 2026-04-30. */}
       </header>
-      {activeSubPage === "dashboard" ? (
-        <DashboardView
-          window={window}
-          data={data}
-          loading={loading}
-          error={error}
-          liveScan={liveScan}
-          pendingStatus={pendingStatus}
-          onWindowChange={requestWindow}
-          onOpenStory={openStory}
-          onToggleNotify={toggleNotify}
-          onOpenMoment={openMoment}
-          onSetConceptStatus={setConceptStatus}
-          onSaveConceptStatuses={saveConceptStatuses}
-          onDiscardConceptStatuses={discardConceptStatuses}
-          onSetConceptLanguage={setConceptLanguage}
-          onRescanRepo={rescanRepo}
-        />
-      ) : (
-        <StoryModeView
-          data={storyData}
-          onBack={backToDashboard}
-          onToggleNotify={toggleNotify}
-        />
-      )}
+      <DashboardView
+        window={window}
+        data={data}
+        loading={loading}
+        error={error}
+        liveScan={liveScan}
+        pendingStatus={pendingStatus}
+        onWindowChange={requestWindow}
+        onOpenStory={noopStory}
+        onToggleNotify={noopNotify}
+        onOpenMoment={openMoment}
+        onSetConceptStatus={setConceptStatus}
+        onSaveConceptStatuses={saveConceptStatuses}
+        onDiscardConceptStatuses={discardConceptStatuses}
+        onSetConceptLanguage={setConceptLanguage}
+        onRescanRepo={rescanRepo}
+      />
     </div>
   );
 }

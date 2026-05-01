@@ -18,21 +18,43 @@ export type VoiceState =
 let item: vscode.StatusBarItem | null = null;
 let currentState: VoiceState = "off";
 
+// Watchdog: if the chip enters "listening" and nothing else transitions
+// it for LISTENING_WATCHDOG_MS, force it back to "idle". The wake binary
+// is supposed to pair every WAKE:detected with a RECORDING:stopped, but
+// in practice false-positive wakes (bot voice bleed, ambient noise that
+// the wake-word ONNX scores low-but-positive) sometimes leave the chip
+// dangling. 20s sits well past the binary's 12s recording safety cap,
+// so a real recording always finishes before the watchdog fires.
+const LISTENING_WATCHDOG_MS = 20_000;
+let listeningWatchdog: ReturnType<typeof setTimeout> | null = null;
+
 const ICON: Record<VoiceState, string> = {
   off: "mic-filled",
   idle: "mic",
   listening: "pulse",
   thinking: "sync~spin",
+  // Speaker volume icon — semantically clear, paired with the
+  // warningBackground flip in render() and the SPEAKING ●●● label
+  // for unmissable visibility. Was briefly "broadcast~spin" but
+  // ~spin only animates on a small whitelist of codicons (sync,
+  // loading); broadcast renders static at best. The bg-color flip
+  // is the dominant signal — the icon is just decoration.
   speaking: "unmute",
   error: "warning",
 };
 
 const LABEL: Record<VoiceState, string> = {
-  off: "Protege · Wake OFF",
-  idle: "Protege · Wake ON",
+  // Idle now reads as just "Protege" — minimal, doesn't shout "Listening"
+  // when nothing is actually happening. The chip only shows an active
+  // verb when the system is doing something: listening (mic capture
+  // after wake), thinking (LLM/STT in flight), or speaking (TTS).
+  off: "Protege · off",
+  idle: "Protege",
   listening: "Protege · Listening",
   thinking: "Protege · Thinking",
-  speaking: "Protege · Speaking",
+  // Three dots + caps for stronger visual signal. Combined with the
+  // background-color flip in render(), this makes the chip pop.
+  speaking: "Protege · SPEAKING ●●●",
   error: "Protege · Voice error",
 };
 
@@ -71,8 +93,35 @@ export function registerVoiceStatusBar(
 
 export function setVoiceState(state: VoiceState): void {
   if (!item) return;
+  // "Listening" should NOT override an active Thinking or Speaking
+  // state — those are running real work and a wake-fire mid-reply
+  // (echo through speakers) shouldn't downgrade the chip.
+  if (state === "listening") {
+    if (currentState === "thinking" || currentState === "speaking") {
+      return; // don't downgrade busy states
+    }
+  }
   if (state === currentState) return;
   currentState = state;
+  // Cancel any prior watchdog — every state transition resets it.
+  if (listeningWatchdog) {
+    clearTimeout(listeningWatchdog);
+    listeningWatchdog = null;
+  }
+  // Re-arm watchdog when we ENTER listening. False-positive wakes that
+  // don't produce a normal RECORDING:stopped event (bot voice bleed,
+  // brief ambient spikes) used to leave the chip stuck on "Listening"
+  // until the next wake-firing — visibly broken UX. 20s window is
+  // longer than any real recording (binary caps at 12s).
+  if (state === "listening") {
+    listeningWatchdog = setTimeout(() => {
+      listeningWatchdog = null;
+      if (currentState === "listening") {
+        currentState = "idle";
+        render("idle");
+      }
+    }, LISTENING_WATCHDOG_MS);
+  }
   render(state);
 }
 
@@ -81,6 +130,19 @@ function render(state: VoiceState): void {
   item.text = `$(${ICON[state]}) ${LABEL[state]}`;
   const colorId = COLOR_ID[state];
   item.color = colorId ? new vscode.ThemeColor(colorId) : undefined;
+  // BACKGROUND color flip for the most-attention-grabbing states.
+  // VS Code only ships two background tokens for status-bar items
+  // (warning + error); we co-opt warning for "speaking" so the chip
+  // turns into a yellow/orange block that's impossible to miss while
+  // the bot is talking. Listening + thinking stay foreground-only —
+  // they're transient and a bg flash for every wake-fire would be
+  // annoying. Error stays on errorBackground (most prominent).
+  item.backgroundColor =
+    state === "speaking"
+      ? new vscode.ThemeColor("statusBarItem.warningBackground")
+      : state === "error"
+      ? new vscode.ThemeColor("statusBarItem.errorBackground")
+      : undefined;
   item.tooltip =
     state === "off"
       ? 'Wake word is off. Click to turn on — then say "Protege".'
@@ -96,4 +158,15 @@ export function flashVoiceError(): void {
   setTimeout(() => {
     if (currentState === "error") setVoiceState("idle");
   }, 4000);
+}
+
+/** Read the user's preferred TTS voice gender from settings. Defaults to
+ *  "female" (af_bella, the warmer voice). All `voice/playExplain`
+ *  broadcast sites should pass this so the user's choice applies to
+ *  voice mode replies, Ghost Lens explain, teaching narrations, etc. */
+export function getVoiceGender(): "female" | "male" {
+  const v = vscode.workspace
+    .getConfiguration("protege")
+    .get<string>("voice.gender", "female");
+  return v === "male" ? "male" : "female";
 }

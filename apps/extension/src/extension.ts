@@ -73,6 +73,7 @@ import { initNotesStore } from "./notes/notesStore.js";
 import { runWakeCalibration, hasCompletedWakeCalibration, getWakeEnabled as getWakeEnabledFor } from "./voice/wakeWordCalibration.js";
 import { stopWakeWordListener, isWakeWordListening } from "./voice/voiceCapture.js";
 import { registerVoiceStatusBar, setVoiceState } from "./voice/voiceStatusBar.js";
+import { registerHostAudioCleanup } from "./voice/hostAudio.js";
 import { initEcho, openEchoPanel, getEventStreamChannel } from "./echo/index.js";
 // File Walk retired 2026-04-28 — sticky sidebar view + status-bar
 // shortcut + webview provider all removed. Module kept on disk;
@@ -221,6 +222,7 @@ export async function activate(context: vscode.ExtensionContext) {
   // thinking / speaking. State is driven by webviewHost when wake events
   // or TTS playback events fire.
   const voiceStatusDisposables = registerVoiceStatusBar(context);
+  registerHostAudioCleanup(context);
   // Initial state: off until we confirm wake is enabled.
   setVoiceState(getWakeEnabledFor(context) ? "idle" : "off");
 
@@ -349,6 +351,24 @@ export async function activate(context: vscode.ExtensionContext) {
   updateLauncherAuth(getAuthSnapshot());
   context.subscriptions.push(
     new vscode.Disposable(onAuthChange((snap) => updateLauncherAuth(snap)))
+  );
+
+  // Re-hydrate notes + chat history from Supabase on sign-in. The
+  // initial activation hydrate fires whether or not the user is signed
+  // in; if they sign in MID-SESSION (clicking the gate), we want their
+  // cloud-stored notes/chat to load right then, not at next reload.
+  context.subscriptions.push(
+    new vscode.Disposable(
+      onAuthChange((snap) => {
+        if (snap.state !== "signed-in" || !snap.user) return;
+        void (async () => {
+          const notes = await import("./notes/notesStore.js");
+          notes.rehydrateNotes();
+          const chat = await import("./chat/chatHistory.js");
+          chat.rehydrateChatHistory();
+        })();
+      })
+    )
   );
 
   // Highlights now persist until the user EXPLICITLY dismisses them via:
@@ -728,17 +748,17 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand("protege.toggleMaxPlanBackend", async () => {
       // Max Plan quick switch — flips the AI backend between Qwen 7B
-      // (on-device) and Haiku cloud. For A/B testing the two engines
-      // in the Max tier without leaving the editor.
+      // (on-device) and the configured cloud provider. For A/B testing
+      // the two engines in the Max tier without leaving the editor.
       const { getAiBackend, setAiBackend } = await import("./ai/aiBackend.js");
       const current = getAiBackend();
-      const next = current === "on-device" ? "haiku" : "on-device";
+      const next = current === "on-device" ? "cloud" : "on-device";
       setAiBackend(next);
       broadcast({ type: "ai/backend", backend: next });
       vscode.window.showInformationMessage(
         next === "on-device"
           ? "Protege: switched to Qwen 7B (on-device)"
-          : "Protege: switched to Cloud (GPT-4o-mini · Haiku 4.5)"
+          : "Protege: switched to Cloud (provider configured server-side)"
       );
     }),
     vscode.commands.registerCommand("protege.toggleVoiceExplain", async () => {

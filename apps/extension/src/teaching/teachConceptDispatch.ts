@@ -3,6 +3,7 @@ import { runSingleQuery } from "../chat/chatRunner.js";
 import { resolveExplainMode, trimForVoice } from "./explainMode.js";
 import { openProtegePanel } from "../panel.js";
 import { log } from "../log.js";
+import { getVoiceGender } from "../voice/voiceStatusBar.js";
 
 /**
  * `protege.teachConcept` dispatcher — routes a "teach me about X" request
@@ -156,14 +157,15 @@ Rules:
   if (!trimmed) return;
 
   const { broadcast, mountedWebviewCount } = await import("../chat/webviewHost.js");
-  // Open the panel silently if nothing is mounted so the audio pipeline
-  // has somewhere to play. In "voice" mode this is the only path that
-  // touches the sidebar, and only on the first click per session.
+  // Host-side audio (2026-04-30) — no longer needs the panel mounted
+  // to play TTS. Open it anyway so the user has a visual channel for
+  // the lesson, but audio is OS-native and plays regardless.
   if (mountedWebviewCount() === 0) {
     openProtegePanel(context);
     await new Promise((r) => setTimeout(r, 350));
   }
-  broadcast({ type: "voice/playExplain", text: trimmed });
+  const { playHostAudio } = await import("../voice/hostAudio.js");
+  void playHostAudio({ text: trimmed, voice: getVoiceGender() });
   log(
     "teachConcept",
     `voice play · concept="${concept}" · ${trimmed.length}ch`

@@ -1,4 +1,44 @@
 /* ==========================================================
+   Chat shell
+   Wraps the three chat-mode children (toolbar, messages,
+   composer) at a comfortable reading column so the chat doesn't
+   stretch edge-to-edge on wide panels. Without this, the
+   assistant message bubble pinned to the panel's left edge with
+   60-70% of the width left as empty grid — visually broken.
+   The cap (760px) is chosen to match a comfortable line length
+   for monospaced code blocks at 12px/1.6, while still feeling
+   "centered" on narrow side-panel widths. The shell itself is a
+   flex column so the messages middle-section flexes between the
+   fixed-height toolbar and composer.
+
+   Centering note: `align-self: center` is the reliable centering
+   path for a flex item inside a flex column container — `margin:
+   0 auto` *should* work too but Chromium's webview build has
+   occasionally ignored it for flex children whose parent has the
+   default `align-items: stretch`. Explicit `align-self: center`
+   removes the ambiguity.
+   ========================================================== */
+.chat-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  /* No `max-width` here — the children (.chat-search-wrap, .messages,
+     .composer) each apply their own column cap via the responsive
+     rules in styles/responsive.css. Capping the shell too creates a
+     conflict at wide panels (shell wants 760, children want 840) and
+     the smaller value wins, locking the column at 760 regardless of
+     panel size. The shell exists purely as a flex column container so
+     the toolbar/messages/composer trio scrolls together with the
+     middle section growing into available height.
+
+     The shell is the scroll-anchor; `.messages` inside still does
+     the actual overflow:auto so the toolbar + composer stay pinned
+     while only the message list scrolls. */
+}
+
+/* ==========================================================
    Messages
    ========================================================== */
 
@@ -391,6 +431,78 @@
   padding: 11px 14px;
   font-size: 12px;
   line-height: 1.5;
+}
+
+/* Daily-quota limit-reached banner. Distinct from `.error` (which is
+   a thin red strip for any failure) — quota limits aren't a failure of
+   the system, they're an expected state with a clear next step (wait,
+   or look at usage). Amber palette + icon + countdown + Profile link
+   so the user knows exactly what happened and how to act. */
+.quota-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  background:
+    linear-gradient(
+      rgba(245, 180, 100, 0.08),
+      rgba(245, 180, 100, 0.04)
+    ),
+    rgba(var(--ink-rgb), 0.85);
+  border: 1px solid rgba(245, 180, 100, 0.32);
+  border-radius: var(--radius);
+  color: var(--text);
+  animation: msg-in 260ms var(--ease-spring);
+}
+.quota-error-icon {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(245, 180, 100, 0.16);
+  color: rgb(245, 180, 100);
+}
+.quota-error-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.quota-error-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: rgb(255, 200, 130);
+  letter-spacing: 0.01em;
+}
+.quota-error-detail {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.quota-error-action {
+  margin-top: 6px;
+  align-self: flex-start;
+  padding: 5px 11px;
+  background: transparent;
+  border: 1px solid rgba(245, 180, 100, 0.36);
+  border-radius: var(--radius-pill);
+  color: rgb(245, 200, 140);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--dur-fast) ease, border-color var(--dur-fast) ease,
+    color var(--dur-fast) ease, transform var(--dur-fast) ease;
+}
+.quota-error-action:hover {
+  background: rgba(245, 180, 100, 0.12);
+  border-color: rgba(245, 180, 100, 0.6);
+  color: rgb(255, 220, 170);
+  transform: translateY(-1px);
 }
 
 /* ==========================================================

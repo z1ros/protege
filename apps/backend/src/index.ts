@@ -16,6 +16,8 @@ import { classifyRoute } from "./routes/classify.js";
 import { verifyRoute } from "./routes/verify.js";
 import { conceptTipsRoute } from "./routes/conceptTips.js";
 import { walkRoute } from "./routes/walk.js";
+import { notesRoute } from "./routes/notes.js";
+import { chatHistoryRoute } from "./routes/chatHistory.js";
 
 const app = new Hono();
 
@@ -51,6 +53,8 @@ app.route("/classify", classifyRoute);
 app.route("/verify", verifyRoute);
 app.route("/concept-tips", conceptTipsRoute);
 app.route("/walk", walkRoute);
+app.route("/notes", notesRoute);
+app.route("/chat-history", chatHistoryRoute);
 
 // Echo nightly jobs — rollup, archetypeClassifier.
 // Scaffolding only; widget agents fill in the real aggregation logic.
@@ -59,3 +63,13 @@ registerEchoJobs();
 const port = Number(process.env.PORT ?? 8787);
 serve({ fetch: app.fetch, port });
 console.log(`[protege] backend listening on :${port}`);
+
+// Quota subsystem startup probe. Logs explicitly whether Supabase is
+// reachable, whether the `user_quotas` table exists, and whether
+// enforcement is on. Without this, a misconfigured beta deployment
+// fails silently — every panel shows 0/100 forever and the operator
+// has to grep for clues. Now it's one log line on startup.
+void (async () => {
+  const { probeQuotaTable } = await import("./quotas.js");
+  await probeQuotaTable();
+})();

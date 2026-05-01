@@ -107,6 +107,79 @@ export interface WalkQuotaError {
   resetAt: number;
 }
 
+/** Cap kinds that can surface in a 429. The first three are the
+ *  user-facing categories shown in the panel; the last four are
+ *  internal route caps the panel doesn't display but a 429 from any
+ *  of them still routes through the same toast surface. */
+export type QuotaKind =
+  | "chat_messages"
+  | "tool_calls"
+  | "voice_minutes"
+  | "scan"
+  | "teach"
+  | "tts"
+  | "stt"
+  | "verify"
+  | "classify";
+
+/** Body returned by `GET /me/quota` — today's per-user usage shape the
+ *  extension renders as mini progress bars + a $ pill in the Live tab.
+ *  Three user-facing categories that map onto what users can directly
+ *  feel ("I sent a message", "the bot used a tool", "I spoke / heard
+ *  audio"). Internal granular counters live server-side and aren't
+ *  exposed here. */
+export interface QuotaSnapshot {
+  userId: string;
+  /** yyyy-mm-dd (UTC). */
+  day: string;
+  /** Epoch ms — next 00:00 UTC, when counters reset to 0. */
+  resetAt: number;
+  usage: {
+    /** /chat premium-tier turns. Default beta limit: 100/day. */
+    chat_messages: { used: number; limit: number };
+    /** Tool invocations the model made inside chat (read_file, edit,
+     *  grep, etc.). Default beta limit: 25/day. */
+    tool_calls: { used: number; limit: number };
+    /** Combined TTS + STT minutes today. Default beta limit: 20/day. */
+    voice_minutes: { used: number; limit: number };
+    /** Cumulative chat engagement in minutes today — sum of capped
+     *  gaps between consecutive user messages. Display-only (no cap).
+     *  Optional so older backends without the column don't break the
+     *  webview's snapshot decoder. */
+    chat_minutes?: { used: number };
+    /** Running $ estimate vs the daily $ ceiling. */
+    cost: { used: number; limitUsd: number };
+  };
+  /** Subsystem health — let the panel paint a "● connected /
+   *  ○ not configured" indicator and a tooltip with the precise reason
+   *  if something's off. Backed by the startup probe of `user_quotas`. */
+  meta?: {
+    enforced: boolean;
+    probe:
+      | "unknown"
+      | "no-supabase"
+      | "table-missing"
+      | "connected"
+      | "error";
+    probeDetail?: string;
+  };
+}
+
+/** Body returned with HTTP 429 from any quota-gated route. The
+ *  extension surfaces this as a plain-language toast + offers
+ *  "details" that opens the Live tab's usage panel. */
+export interface QuotaExceededError {
+  error: "daily quota exceeded";
+  /** Which counter tripped. */
+  kind: QuotaKind;
+  /** Whether the route count or the $ ceiling is what blocked. */
+  reason: "route-cap" | "dollar-cap";
+  used: number;
+  limit: number;
+  /** Epoch ms — when the counter resets. */
+  resetAt: number;
+}
+
 export type ConceptLevel = "familiar" | "functional" | "competent" | "expert";
 
 export interface ConceptRow {
@@ -544,6 +617,7 @@ export type WebviewToHost =
       contextMessages?: ChatMessage[];
     }
   | { type: "chat/clear" }
+  | { type: "chat/abort" }
   | { type: "ready" }
   | { type: "watcher/engage"; nudgeId: string; triggerId: UnpromptedTriggerId; context: UnpromptedNudge["context"] }
   | { type: "watcher/dismiss"; nudgeId: string }
@@ -568,6 +642,14 @@ export type WebviewToHost =
       requestId?: string;
     }
   | { type: "wake/toggle" }
+  | {
+      /** Webview → host: the user picked a voice gender in VoiceMode's
+       *  picker. Host persists to `protege.voice.gender` so all host-side
+       *  broadcast sites (Ghost Lens explain, teach narrations, file-open
+       *  greeter) use the same voice as the in-webview picker. */
+      type: "voice/setGender";
+      gender: "female" | "male";
+    }
   | { type: "scan/request" }
   | { type: "auth/login" }
   | {
@@ -580,7 +662,16 @@ export type WebviewToHost =
       type: "auth/logout";
     }
   | { type: "liveReview/toggle"; active: boolean }
-  | { type: "ai/setBackend"; backend: "on-device" | "haiku" | "sonnet" | "auto" }
+  | { type: "ai/setBackend"; backend: "on-device" | "cloud" | "auto" | "haiku" | "sonnet" }
+  /** Webview re-asks for the current backend on mount. The Live tab uses
+   *  this when it mounts late (user landed on a different tab first), so
+   *  it doesn't keep showing the React-state default ("auto") forever
+   *  while the persisted value is something else. */
+  | { type: "ai/getBackend" }
+  /** Webview asks the host to refresh the quota snapshot from the
+   *  backend (`GET /me/quota`). Live tab fires this on mount and on a
+   *  refresh-now button. */
+  | { type: "quota/get" }
   | { type: "ai/downloadModel" }
   | { type: "feature/toggle"; feature: "inlineErrors" | "didYouKnow"; enabled: boolean }
   | { type: "explainMode/set"; mode: "text" | "voice" | "both" }
@@ -643,7 +734,21 @@ export type HostToWebview =
   | { type: "chat/searchResults"; results: { message: ChatMessage; snippet: string }[] }
   | { type: "notes/state"; notes: Note[] }
   | { type: "chat/loading"; loading: boolean }
-  | { type: "chat/error"; error: string }
+  | {
+      type: "chat/error";
+      error: string;
+      /** Set when the error is a daily-quota 429 from the backend. The
+       *  webview renders these specially (banner with reset countdown +
+       *  link to the Profile usage panel) instead of the generic red
+       *  error line — so the user sees clearly *why* their message was
+       *  rejected and when they can try again. */
+      quota?: {
+        kind: "chat_messages" | "tool_calls" | "voice_minutes" | "scan" | "teach" | "tts" | "stt" | "verify" | "classify";
+        used: number;
+        limit: number;
+        resetAt: number;
+      };
+    }
   | {
       type: "chat/tool";
       name: string;
@@ -745,10 +850,14 @@ export type HostToWebview =
       error: string | null;
       downloadProgress: number;
     }
+  /** Host pushes today's per-user quota usage so the Live tab can
+   *  render the "Today's usage" panel + cost pill. Sent on init,
+   *  on `quota/get` requests, and after every 429 toast. */
+  | { type: "quota/snapshot"; snapshot: QuotaSnapshot }
   /** Host pushes the currently selected backend so the webview hydrates
    *  from persisted state (globalState) instead of defaulting to "auto" on
    *  every reload. */
-  | { type: "ai/backend"; backend: "on-device" | "haiku" | "sonnet" | "auto" }
+  | { type: "ai/backend"; backend: "on-device" | "cloud" | "auto" | "haiku" | "sonnet" }
   /** Host reports the current `protege.explainMode` so the Live tab's
    *  3-option toggle (Text / Voice / Both) can reflect state at a glance.
    *  Sent on activate + whenever the setting changes (via user clicking
@@ -759,14 +868,14 @@ export type HostToWebview =
    *  on-device is running vs. silently falling through to Claude. */
   | {
       type: "ai/lastCall";
-      backend: "on-device" | "haiku" | "sonnet";
+      backend: "on-device" | "cloud" | "haiku" | "sonnet";
       atMs: number;
       durationMs: number;
       ok: boolean;
       /** Set when the chosen backend couldn't run and we fell back (or
        *  refused to). The chip must render this loudly. */
       fallback?: {
-        requested: "on-device" | "haiku" | "sonnet" | "auto";
+        requested: "on-device" | "cloud" | "auto" | "haiku" | "sonnet";
         reason: string;
       };
     }
@@ -779,6 +888,12 @@ export type HostToWebview =
         avatarUrl: string | null;
       } | null;
     }
+  /** Runtime config sent on webview ready. Currently just the backend
+   *  URL — the webview hits it directly for /tts and /log, and used to
+   *  hardcode `localhost:8787`. Host-side `BACKEND_URL` is the source
+   *  of truth so the webview always matches whichever server the host
+   *  is calling. */
+  | { type: "config/backend"; url: string }
   | { type: "map/data"; data: ProjectMapData }
   | { type: "map/fileSummaryResult"; path: string; summary: string | null }
   | { type: "tour/state"; state: TourState | null }

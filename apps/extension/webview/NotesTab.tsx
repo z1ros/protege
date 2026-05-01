@@ -824,6 +824,7 @@ export function NotesTab(): React.ReactElement {
           searchQuery={searchQuery}
           debouncedQuery={debouncedQuery}
           tokens={tokens}
+          pendingDeleteId={pendingDeleteId}
           onSearch={setSearchQuery}
           onPick={(id) => {
             setActiveId(id);
@@ -833,6 +834,7 @@ export function NotesTab(): React.ReactElement {
             handleNew();
             setRailOpen(false);
           }}
+          onDelete={handleDelete}
           onClose={() => setRailOpen(false)}
         />
       </div>
@@ -987,9 +989,17 @@ interface NotesHistoryPanelProps {
   searchQuery: string;
   debouncedQuery: string;
   tokens: string[];
+  /** Id of the note whose trash button is currently armed (first
+   *  click registered, waiting on second click to commit). Lifted up
+   *  to NotesTab so the same `pendingDeleteId` covers both the editor
+   *  head's trash and the history-panel per-card trash. */
+  pendingDeleteId: string | null;
   onSearch: (q: string) => void;
   onPick: (id: string) => void;
   onNew: () => void;
+  /** Two-click delete. First call arms; second call within 3s commits.
+   *  Wired in NotesTab to share state with the editor-head trash. */
+  onDelete: (id: string) => void;
   onClose: () => void;
 }
 
@@ -999,9 +1009,11 @@ function NotesHistoryPanel({
   searchQuery,
   debouncedQuery,
   tokens,
+  pendingDeleteId,
   onSearch,
   onPick,
   onNew,
+  onDelete,
   onClose,
 }: NotesHistoryPanelProps): React.ReactElement {
   // Esc closes the panel — same convention as the chat history panel.
@@ -1127,12 +1139,26 @@ function NotesHistoryPanel({
           <ul className="chp-turns">
             {notes.map((n) => {
               const isActive = n.id === activeId;
+              const isArmed = pendingDeleteId === n.id;
               return (
                 <li key={n.id}>
-                  <button
-                    type="button"
-                    className={`chp-turn ${isActive ? "chp-turn--active" : ""}`}
+                  {/* Card is a div + role=button (instead of <button>) so
+                      we can nest the trash button without invalid HTML.
+                      Keyboard parity with a real button: Enter/Space
+                      triggers onPick. */}
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    className={`chp-turn ${isActive ? "chp-turn--active" : ""} ${
+                      isArmed ? "chp-turn--armed" : ""
+                    }`}
                     onClick={() => onPick(n.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        onPick(n.id);
+                      }
+                    }}
                   >
                     <div className="chp-turn-head">
                       <span className="chp-turn-title">
@@ -1145,7 +1171,45 @@ function NotesHistoryPanel({
                     <p className="chp-turn-reply">
                       {highlight(snippetForQuery(n.body, tokens, 160), tokens)}
                     </p>
-                  </button>
+                    <button
+                      type="button"
+                      className={`chp-turn-trash ${
+                        isArmed ? "chp-turn-trash--armed" : ""
+                      }`}
+                      onClick={(e) => {
+                        // Don't bubble up to the card's onClick (which
+                        // would open the note we're trying to delete).
+                        e.stopPropagation();
+                        onDelete(n.id);
+                      }}
+                      title={
+                        isArmed
+                          ? "Click again to confirm delete"
+                          : "Delete note"
+                      }
+                      aria-label={
+                        isArmed
+                          ? "Confirm delete (click again)"
+                          : "Delete note"
+                      }
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        width="13"
+                        height="13"
+                        aria-hidden="true"
+                      >
+                        <path d="M3 6h18" />
+                        <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                      </svg>
+                    </button>
+                  </div>
                 </li>
               );
             })}

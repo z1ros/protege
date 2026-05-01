@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import type { AnalyzeResponse, Finding, MeResponse } from "@protege/types";
 import { authHeaders, getCachedGitHubUser, getGitHubUser, clearCachedUser } from "./auth.js";
 
-const BACKEND_URL =
+export const BACKEND_URL =
   process.env.PROTEGE_BACKEND_URL ?? "http://localhost:8787";
 
 const LEGACY_USER_ID_KEY = "protege.userId";
@@ -104,6 +104,16 @@ export async function authedFetch(
   };
 
   const first = await send();
+  if (first.status === 429) {
+    // Quota-gated route returned 429. Surface a clear toast + refresh
+    // the local quota snapshot so the Live tab's "Today's usage" panel
+    // reflects what tripped. Then return the response so the caller
+    // can decide what to render in-place (most callers throw on
+    // non-OK; the toast is the user-visible signal).
+    const { maybeHandleQuotaError } = await import("./quotaClient.js");
+    await maybeHandleQuotaError(first);
+    return first;
+  }
   if (first.status !== 401) return first;
 
   const refreshed = await getGitHubUser(false);
@@ -244,4 +254,4 @@ export async function patchPreferences(
   }
 }
 
-export { BACKEND_URL };
+// BACKEND_URL is now exported at its declaration above.

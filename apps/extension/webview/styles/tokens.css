@@ -110,13 +110,18 @@
   box-sizing: border-box;
 }
 
-/* Kill the default user-agent focus ring globally. We handle focus
+/* Kill ALL focus rings on the focused element itself — outline AND
+   box-shadow — globally and with !important so vendor stylesheets
+   (Mantine / BlockNote ship their own blue ring; Chromium adds its
+   own when ours is suppressed) cannot put it back. We handle focus
    affordances explicitly via :focus-within on parent containers
-   (.composer, .tab, .settings-section, etc.) — so the default
-   browser outline is always visual noise. */
+   (.composer, .tab, .settings-section, .chp-search-box, etc.) —
+   those are unaffected because they match the parent, not the
+   focused element. */
 *:focus,
 *:focus-visible {
-  outline: none;
+  outline: none !important;
+  box-shadow: none !important;
 }
 button,
 textarea,

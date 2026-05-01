@@ -31,6 +31,14 @@ export function resolveExplainMode(override?: ExplainMode): ExplainMode {
  * sentence boundary when possible, otherwise hard-cap. Too-long TTS was a
  * real risk of voice mode feeling like a lecture — anti-feature #3 in the
  * plan says "≤ 30s per clip, else fall back to text."
+ *
+ * Brevity is VOICE-ONLY by design. Text/chat mode does not call this —
+ * see [routes/chat.ts] maxTokensForMode (text = 4096, no client trim).
+ *
+ * NEVER produces a mid-sentence cut. If the cap falls inside a sentence,
+ * we look for the nearest boundary in either direction and pick the one
+ * closer to maxWords; if the only boundary is too far past the cap, we
+ * accept the slight overshoot rather than chop a half-thought.
  */
 export function trimForVoice(text: string, maxWords = 90): string {
   const stripped = text
@@ -46,15 +54,34 @@ export function trimForVoice(text: string, maxWords = 90): string {
   const words = stripped.split(" ");
   if (words.length <= maxWords) return stripped;
 
-  // Try to end on a sentence boundary near the cap.
+  // Look for a sentence boundary at-or-before the cap.
   const rough = words.slice(0, maxWords).join(" ");
-  const lastPeriod = Math.max(
+  const lastPeriodBefore = Math.max(
     rough.lastIndexOf(". "),
     rough.lastIndexOf("! "),
     rough.lastIndexOf("? ")
   );
-  if (lastPeriod > maxWords * 3) {
-    return rough.slice(0, lastPeriod + 1).trim();
+  // Also look for the FIRST boundary after the cap — if there's no
+  // boundary earlier (or the earlier one is suspiciously close to the
+  // start), better to overshoot than chop.
+  const beyond = words.slice(maxWords).join(" ");
+  const overshootMatch = beyond.match(/[.!?](?=\s|$)/);
+  const firstPeriodAfter = overshootMatch
+    ? rough.length + 1 + overshootMatch.index!
+    : -1;
+
+  // Prefer earlier boundary if it lands past 1/3 of the cap (i.e. we
+  // got at least one substantive sentence in). Otherwise, accept the
+  // overshoot to avoid a mid-thought trail-off.
+  const minEarlyChars = Math.floor(rough.length / 3);
+  if (lastPeriodBefore >= minEarlyChars) {
+    return rough.slice(0, lastPeriodBefore + 1).trim();
   }
-  return rough.trim() + "…";
+  if (firstPeriodAfter >= 0) {
+    return stripped.slice(0, firstPeriodAfter + 1).trim();
+  }
+  // No sentence boundary anywhere — model produced one giant run-on.
+  // Return the full stripped text; trailing "…" is worse than letting
+  // the user hear the whole thing once.
+  return stripped;
 }

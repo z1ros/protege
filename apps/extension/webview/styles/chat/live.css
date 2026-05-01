@@ -464,3 +464,100 @@
   transition: width 300ms ease;
 }
 
+
+/* ==========================================================
+   Today's usage — quota panel.
+   Six per-route bars plus a $ pill. Bar fill grows electric →
+   amber as the user approaches their daily cap, red when full.
+   ========================================================== */
+.quota-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.quota-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.quota-row-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 11.5px;
+  color: var(--text);
+}
+.quota-row-label {
+  letter-spacing: 0.005em;
+}
+.quota-row-counts {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-dim);
+}
+.quota-row-counts-sep {
+  color: var(--text-faint);
+}
+.quota-row-bar-track {
+  height: 4px;
+  background: rgba(var(--text-rgb), 0.08);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+.quota-row-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--electric-deep), var(--electric));
+  border-radius: var(--radius-pill);
+  transition: width 240ms ease;
+}
+.quota-row-warn .quota-row-bar-fill {
+  background: linear-gradient(90deg, #b87a1e, #f0b94d);
+}
+.quota-row-full .quota-row-bar-fill {
+  background: linear-gradient(90deg, #8a3030, #d65454);
+}
+.quota-row-full .quota-row-counts {
+  color: #f0a8a8;
+}
+
+.quota-cost-row {
+  margin-top: 12px;
+  padding: 8px 10px;
+  border: var(--border-glass);
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 10px;
+  align-items: center;
+}
+.quota-cost-label {
+  color: var(--text-faint);
+  font-size: 10px;
+}
+.quota-cost-pill {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--glow);
+}
+.quota-cost-pill-sep {
+  color: var(--text-faint);
+}
+.quota-cost-bar-track {
+  grid-column: 1 / -1;
+  height: 3px;
+  background: rgba(var(--text-rgb), 0.08);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+.quota-cost-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--electric-deep), var(--electric));
+  border-radius: var(--radius-pill);
+  transition: width 240ms ease;
+}
+.quota-cost-row-full {
+  border-color: rgba(214, 84, 84, 0.45);
+}
+.quota-cost-row-full .quota-cost-bar-fill {
+  background: linear-gradient(90deg, #8a3030, #d65454);
+}

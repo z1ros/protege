@@ -269,10 +269,55 @@ export function endSession(userId: string): void {
 // teach me X". Without this tolerance, extractConcept returns null →
 // no lesson session → big prompt leaks → wall-of-text response.
 const TRAILING_FRAGMENT_RE = /\s+(?:i\s+(?:never|don'?t|haven'?t)\s.+|please|pls|thanks?|thx|i\s+(?:want|wanna)\s.+)$/i;
+// Pleasantry prefixes — stripped from the front so the verb regex has
+// a clean string to anchor on. Note: "can you / could you / would you"
+// are NOT in this list — they're part of teach-shaped phrases ("can you
+// explain X", "could you teach me X") and removing them would lose the
+// signal. The verb regex handles those forms directly.
 const PLEASANTRY_PREFIX_RE =
-  /^(?:hey+|hi+|hello+|yo+|ok(?:ay)?|btw|so|alright|can\s+you|could\s+you|would\s+you|pl(?:s|ease)|please)[\s,!]*?(?:can\s+you|could\s+you|would\s+you|please|pls)?[\s,!]*/i;
-const TEACH_VERB_RE =
-  /^(?:t[a-z]{1,3}(?:ch|hc)\s+me|expl[a-z]+n|show\s+me|how\s+does|what\s+is|walk\s+me\s+through|i\s+(?:want|wanna)\s+to?\s+learn|help\s+me\s+understand|deep\s+dive|i\s+(?:want|wanna)\s+to?\s+understand)\s+(.{3,120}?)\s*[?.!]?\s*$/i;
+  /^(?:hey+|hi+|hello+|yo+|ok(?:ay)?|btw|so|alright|pl(?:s|ease)|please)[\s,!]*/i;
+// Lesson-only verbs: explicit intent to be TAUGHT (multi-turn lesson).
+// Quick "what is X" / "how does X" questions should NOT create a lesson
+// session — they get answered conversationally. Aligned with the
+// frontend LESSON_INTENT regex so chat + voice + extractConcept all
+// agree on what counts as a lesson trigger.
+//
+// The list below covers casual phrasings — the regex is a fast-path; the
+// LLM classifier (classifyFirstMessageLLM) catches whatever still slips
+// through. Each new pattern saves one ~200ms LLM call when it hits.
+const TEACH_VERB_RE = new RegExp(
+  `^(?:` +
+    [
+      // Direct imperatives
+      `t[a-z]{1,3}(?:ch|hc)\\s+me`,
+      `expl[a-z]+n\\s+(?:to\\s+me\\s+)?how\\s+to`,
+      `show\\s+me\\s+how\\s+to`,
+      `walk\\s+me\\s+through`,
+      `guide\\s+me\\s+through`,
+      `tutor\\s+me\\s+(?:on|about|in)`,
+      `go\\s+over`,
+      `break\\s+down`,
+      // "I want / need / should" forms
+      `i\\s+(?:want|wanna|need|should|gotta|ought\\s+to)\\s+(?:to\\s+)?(?:learn|understand|figure\\s+out|get\\s+(?:good\\s+at|the\\s+hang\\s+of)|practice|master)`,
+      `i\\s+(?:would|'?d)\\s+love\\s+to\\s+(?:learn|understand)`,
+      `i'?m\\s+trying\\s+to\\s+(?:learn|understand|figure\\s+out|get)`,
+      `i\\s+wish\\s+i\\s+(?:knew|could|would\\s+know|understood)`,
+      // "Can/could/would you" + teach verb
+      `(?:can|could|would)\\s+you\\s+(?:expl[a-z]+n|teach\\s+me|show\\s+me|walk\\s+me\\s+through|go\\s+over|break\\s+down|help\\s+me\\s+(?:learn|understand|with))`,
+      // "Help me" + learning verb
+      `help\\s+me\\s+(?:understand|learn|practice|master|build|with)`,
+      // Concept-first action verbs
+      `deep\\s+dive`,
+      `give\\s+me\\s+(?:a\\s+)?(?:rundown|overview|primer|crash\\s+course)\\s+(?:on|of|about)?`,
+      `let'?s?\\s+(?:me\\s+)?(?:go\\s+through|understand)`,
+      // "How do I + action verb"
+      `how\\s+(?:do|can)\\s+i\\s+(?:use|build|set\\s*up|wire|implement|make|create|write)`,
+      // "I want to understand X"
+      `i\\s+(?:want|wanna)\\s+to?\\s+understand`,
+    ].join("|") +
+    `)\\s+(.{3,120}?)\\s*[?.!]?\\s*$`,
+  "i"
+);
 
 /**
  * Filler/stopword phrases that are NOT real concept names. When the
@@ -341,7 +386,7 @@ export function extractConcept(message: string): string | null {
   while (prev !== name) {
     prev = name;
     name = name.replace(
-      /\s+(?:here|now|this|this\s+code|in\s+this\s+(?:file|code)|in\s+my\s+(?:file|code)|pls|please|man|bro|dude|too|also)$/i,
+      /\s+(?:here|now|this|this\s+code|in\s+this\s+(?:file|code)|in\s+my\s+(?:file|code)|pls|please|man|bro|dude|too|also|for\s+me|with\s+me)$/i,
       ""
     );
     name = name.trim();
@@ -349,6 +394,72 @@ export function extractConcept(message: string): string | null {
   if (!name) return null;
   if (CONCEPT_STOPWORDS.has(name.toLowerCase())) return null;
   return name.slice(0, 60);
+}
+
+/* ─── Smart-fallback first-message classifier ─────────────────────── */
+//
+// When extractConcept (regex) returns null but the message is long
+// enough to plausibly carry teach intent, we ask a cheap LLM whether
+// the user wants a lesson. Catches casual phrasings the regex misses:
+//   - "i wish i would know how to use loops"
+//   - "loops are confusing me"
+//   - "i should probably learn map"
+//   - "could really use a hand with useEffect"
+//
+// Hits ~10-20% of fresh messages — only the ambiguous ones. Quick acks
+// ("yes", "ok") and one-word replies are filtered by the caller's
+// length check before reaching this function.
+
+const FIRST_MSG_CLASSIFIER_PROMPT = `Classify a fresh user chat message into ONE of four intents:
+
+- teach: User wants a multi-turn LESSON on a programming concept. Keywords are NOT required — natural phrasings count. Examples: "teach me X" / "i wish i knew how X works" / "loops are confusing me" / "could use a hand with X" / "i want to get better at X" / "X is hard for me" / "should probably learn X".
+- answer: User wants a SHORT factual answer, not a lesson. Examples: "what is X" / "how does X work" / "is X better than Y" / "what's the difference".
+- build: User wants something built / implemented / changed. Examples: "add a button" / "fix this" / "wire up X".
+- other: Greeting, acknowledgement, off-topic, unclear.
+
+If "teach", also extract the concept (1-4 words: programming concept name like "loops" / "useEffect" / "async/await").
+
+Output ONLY a JSON object: {"intent": "teach|answer|build|other", "concept": "..."}
+("concept" is "" unless intent is "teach".)`;
+
+export async function classifyFirstMessageLLM(
+  text: string
+): Promise<{ intent: "teach" | "answer" | "build" | "other"; concept: string }> {
+  try {
+    const result = await callOneShot({
+      systemText: FIRST_MSG_CLASSIFIER_PROMPT,
+      userText: text.slice(0, 500),
+      maxTokens: 60,
+      cheap: true,
+    });
+    const raw = result.text.trim();
+    const start = raw.indexOf("{");
+    const end = raw.lastIndexOf("}");
+    if (start < 0 || end <= start) {
+      return { intent: "other", concept: "" };
+    }
+    // Tolerate JS-literal syntax (no quotes around keys) — same trick
+    // we use in parseBeatMeta.
+    let json = raw.slice(start, end + 1);
+    json = json.replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":');
+    const obj = JSON.parse(json) as Record<string, unknown>;
+    const intent = String(obj.intent ?? "other").toLowerCase();
+    const concept = typeof obj.concept === "string" ? obj.concept.slice(0, 60).trim() : "";
+    if (
+      intent !== "teach" &&
+      intent !== "answer" &&
+      intent !== "build" &&
+      intent !== "other"
+    ) {
+      return { intent: "other", concept: "" };
+    }
+    return { intent: intent as "teach" | "answer" | "build" | "other", concept };
+  } catch (err) {
+    console.warn(
+      `[protege] classifyFirstMessageLLM failed: ${err instanceof Error ? err.message : String(err)} — defaulting to other`
+    );
+    return { intent: "other", concept: "" };
+  }
 }
 
 /* ─── User-reply classification ───────────────────────────────────── */
@@ -838,21 +949,27 @@ export function generateStepPrompt(
      *  match pace — fast replies = tight beats, long pauses = they
      *  might be working through code. */
     secondsSinceLastTurn?: number;
+    /** Compressed user-memory hint — comma-separated concept names the
+     *  user has mastered + their general profile if known. Used by the
+     *  PROBE prompt so the bot can SKIP the "are you beginner" question
+     *  when memory already shows they have React/JS experience. */
+    learnerHint?: string;
   } = {}
 ): string {
   const voice = opts.voice === true;
   if (session.phase === "PROBE") {
+    const learnerHint = opts.learnerHint?.trim();
+    const memoryAware = learnerHint && learnerHint.length > 0
+      ? `\n# WHAT YOU ALREADY KNOW ABOUT THIS USER\n${learnerHint}\n\nIMPORTANT: Use this knowledge to SKIP redundant questions. If memory shows they already use React/JS comfortably, DON'T ask "are you beginner or comfortable" — that's insulting. Instead, ask a TIGHTER question that just disambiguates the SCOPE/FLAVOR (e.g. for/while/forEach? client-side or with hooks?). If the concept is unambiguous AND memory already implies their level, skip the question entirely and output a one-line nod ("Got it — let's tie this to your \`todos\` array.") that ends with a tiny check-in like "ready?".`
+      : `\n# NO MEMORY YET ABOUT THIS USER\nGauge BOTH (a) their level (zero/comfortable/expert) and (b) flavor disambiguation in ONE question. Ambiguous concepts ("loops", "conditionals", "functions") need 2-3 flavor options listed.`;
+
     return [
       `# ACTIVE LESSON: ${session.concept}`,
       `# CURRENT PHASE: PROBE`,
+      memoryAware,
       ``,
-      `Output ONE question that surfaces what the user knows about "${session.concept}". You're trying to read TWO things in a single question: (a) their level (zero / comfortable / expert), and (b) which specific flavor of the concept they want, IF the concept name is ambiguous.`,
-      ``,
-      `An "ambiguous" concept is one where the name could mean different things to a beginner. Examples: "loops" could be for/while/forEach/map; "conditionals" could be if/ternary/&&; "functions" could be declarations/expressions/arrow/methods. When you see an ambiguous concept, the question MUST list 2-3 specific flavors so the user can pick — don't assume.`,
-      `If the concept is unambiguous (e.g. "useEffect", "Promise.all"), just gauge level.`,
-      ``,
-      `STRICT: ≤25 words, end with "?", in your own conversational voice. NO teaching content yet. Don't lead them toward a specific answer.`,
-      `Output ONLY the question.`,
+      `STRICT: ≤25 words, end with "?", conversational. Don't lead toward an answer. NO teaching content yet.`,
+      `Output ONLY the question (or the one-line nod if you're skipping the level question per the memory rule above).`,
     ].join("\n");
   }
 
@@ -974,13 +1091,14 @@ export function generateStepPrompt(
     ? `\n\n## Recent user replies (oldest → newest) — read these to gauge state\n${recentTurns.map((r) => `  · ${JSON.stringify(r.slice(0, 120))}`).join("\n")}`
     : "";
 
-  // Voice channel changes the entire delivery contract: replies are
-  // spoken aloud (TTS), the user is LISTENING + watching their editor,
-  // not reading chat. So code blocks in chat are useless (they can't
-  // see them), and replies must be much shorter (nobody wants to hear
-  // 40 words of tutor monologue per turn).
+  // Voice channel: ZERO chat UI. The user keeps the sidebar closed,
+  // listens, and watches their editor. Anything code-shaped MUST go
+  // through edit_file (lands in file) or highlight_code (silent
+  // pointer). Chat code blocks are dead weight — they can't be heard
+  // and won't be read. The validator backs this up by stripping any
+  // fenced blocks the model emits anyway.
   const voiceContract = voice
-    ? `\n\n## VOICE CHANNEL ACTIVE — DELIVERY MODE CHANGES\nYour reply will be SPOKEN ALOUD. The user is listening, not reading. This means:\n- ZERO fenced code blocks in chat. They cannot see code in chat — they hear words. Any code MUST go through the edit_file tool so it lands in their editor where they're looking.\n- ≤20 words of prose per turn (down from 40). Shorter is better. People listening tune out fast.\n- Sound like spoken language, not written. Contractions, fragments, conversational rhythm.\n- The user can SEE their editor. So you can say "look at line 14" or "see the highlighted bit" — they're watching.\n- highlight_code is your friend in voice mode: silent but visible, points at exactly what you mean while you talk.\n- NO inline code references that are unintelligible spoken: backtick \`for(let i=0;i<3;i++)\` reads terribly. Either rephrase ("a for loop counting up to 3") or use a tool call.`
+    ? `\n\n## VOICE CHANNEL — ZERO-UI MODE (CRITICAL)\nThe user is LISTENING + watching their editor. Their chat sidebar may be CLOSED. Your reply gets spoken aloud; the chat-panel display ALSO strips code (fenced blocks, inline code, anything with braces/semicolons/assignments). The whole point of voice mode is the user doesn't need the chat panel at all — they hear you and watch their file.\n\n## NON-NEGOTIABLE RULES\n- NEVER emit a fenced code block (\\\`\\\`\\\`) — stripped before render.\n- NEVER write code inline as prose (\`let i = 0 while (i < 3) { ... }\`) — also stripped, leaving a broken-looking sentence.\n- ANY code that needs to exist in the user's file → CALL edit_file. The diff appears in their editor; THAT is your code surface, not chat.\n- Want the user to ADD code? You MUST call edit_file with the new code. Don't ask them to "type this" or "add this above" without actually writing it via edit_file. Pointing with highlight_code at code that doesn't exist yet is broken UX — the highlight lands on irrelevant code (the line under it) and the user has nothing to type because the code never made it to chat or file.\n- ANY existing code reference → call highlight_code on the line that ALREADY EXISTS. Highlights are for code that's REAL and visible right now in the file.\n- ≤18 words of prose per turn. Short. Listeners tune out fast.\n- Contractions, fragments, conversational rhythm. Not written prose.\n- NO inline backtick code — \`for(let i=0;i<3;i++)\` is unintelligible spoken AND stripped from chat. Rephrase as words ("a for-loop counting up to three").\n- ONE BEAT PER TURN. Don't write "do X" then "now do Y" — that's two beats. Wait for them to do X first.\n\n## DECISION RULE — edit_file vs highlight_code\nBefore you mention code in your reply, decide:\n  • Does this code EXIST in the file right now? → highlight_code on the existing line, speak about it.\n  • Does this code need to be ADDED? → edit_file to write it, THEN optionally highlight the new line.\nNever reference code that exists only in your imagination. If you can't reach for highlight or edit_file to make it visible, don't mention it.\n\n## SYNCHRONIZE HIGHLIGHT + SPEECH\nTool calls fire BEFORE the spoken text plays. So when you call highlight_code, the highlight appears on screen exactly as TTS starts. Use this:\n- Call highlight_code on the SPECIFIC line you're about to talk about.\n- Phrase your speech to REFERENCE the highlight: "see this line — i++ is what eventually stops the loop", NOT "i++ is the increment" (abstract; they don't know what you're pointing at).\n- One highlight per beat. Multiple highlights compete for attention.\n- Pure conceptual beat (no specific line)? Skip highlight_code, just speak.\n\nGood: edit_file inserts a while-loop on line 5 + highlight_code on the new \`while (i < 3)\` line + speak "I dropped a counter loop above your return — see the gate I highlighted. When i hits 3, it stops. Refresh and tell me what printed."\nBad: highlight_code on \`return (\` + speak "Add this above the return: ... what printed?" — broken, no code was added, the highlight points at irrelevant code, and the user has nothing to refresh.`
     : "";
 
   return [
@@ -1264,7 +1382,8 @@ function enforceWordCap(text: string, maxWords: number): string {
  */
 export function validateStepReply(
   reply: string,
-  stepType: StepType
+  stepType: StepType,
+  opts: { voice?: boolean } = {}
 ): { text: string; truncated: boolean } {
   if (!reply || reply.trim().length === 0) {
     return { text: reply, truncated: false };
@@ -1274,15 +1393,29 @@ export function validateStepReply(
   //   1. Strip <beat> meta tag FIRST — if word-cap runs before this, it
   //      can chop off the </beat> close, leaving a malformed half-tag in
   //      the user-visible text (this was a real bug).
-  //   2. THEN keep ≤1 fenced code block.
+  //   2. THEN handle code blocks: strip ALL in voice mode (zero-UI), or
+  //      keep ≤1 in chat mode.
   //   3. THEN apply prose word cap.
   let validated = reply.replace(/<beat>[\s\S]*?<\/beat>/gi, "").trimEnd();
   // Defensive: strip any orphaned <beat> opener if the closer was already
   // missing (model truncation, etc.) — we don't want raw "<beat>" leaking.
   validated = validated.replace(/<beat>[\s\S]*$/gi, "").trimEnd();
-  validated = keepFirstCodeBlock(validated);
-  validated = trimCodeBlockLines(validated, 12);
-  validated = enforceWordCap(validated, 70);
+
+  if (opts.voice) {
+    // Voice mode: ZERO fenced blocks reach the user. The model is told
+    // not to emit them, but cheap-tier models slip. Strip every block
+    // and replace with a brief inline note pointing the user at their
+    // editor — TTS reads the note, code is wherever the bot put it
+    // (edit_file diff or just a missing answer they need to ask about).
+    validated = validated.replace(
+      /```[a-zA-Z0-9_+-]*\n[\s\S]*?\n```/g,
+      "(code — check your editor)"
+    );
+  } else {
+    validated = keepFirstCodeBlock(validated);
+    validated = trimCodeBlockLines(validated, 12);
+  }
+  validated = enforceWordCap(validated, opts.voice ? 30 : 70);
 
   // Empty-body guard: if the model output ONLY the meta tag (or some
   // other accident), the user sees a blank reply and the chat just

@@ -22,6 +22,45 @@ let onWakeRecordingStopped: (() => void) | null = null;
 // ~500ms after bot finishes. setSuspended(false) re-enables after buffer.
 let suspended = false;
 
+/* ============ Barge-in detection (DISABLED 2026-04-30) ============
+   We tried sustained-prob detection during wake-suspension to let
+   users interrupt the bot mid-sentence by speaking. It worked in
+   sim but turned out to be unreliable in real-world acoustic
+   environments — bot voice bleeding through speakers spikes the
+   wake-word ONNX prob to 0.10–0.40, often clearing any threshold
+   that's also low enough to catch a real "stop"/"wait". Tuning the
+   threshold higher (0.30 → 0.45) cut some false fires but the bot
+   still got randomly cut off mid-explanation. User explicitly asked
+   for reliability over interrupt capability.
+
+   The infrastructure (setBargeInCallback, prob parser, hostAudio
+   armBargeIn) is preserved so we can re-enable cleanly when we have
+   better detection (real VAD / echo cancellation / energy-only
+   instead of wake-word-ONNX prob). For now: registering a callback
+   is a no-op — bot always plays through. User can interrupt by
+   waiting for end-of-reply and saying "Protege" again. */
+type BargeInCallback = () => void;
+let bargeInCallback: BargeInCallback | null = null;
+let bargeInArmedAt = 0;
+let recentProbs: number[] = [];
+// Effectively disabled. Probs from the wake ONNX max out around 1.0;
+// 99 means we never fire. When re-enabling, calibrated values were
+// 0.30 threshold / 2 frames / 600ms warmup — but reach for a real
+// VAD before going back to that.
+const BARGE_PROB_THRESHOLD = 99;
+const BARGE_FRAME_COUNT = 2;
+const BARGE_WARMUP_MS = 600;
+
+/** Register a one-shot callback that fires when sustained voice is
+ *  detected during wake-suspension. Pass null to clear. The callback
+ *  is automatically cleared after firing — caller should re-register
+ *  before each TTS playback if it wants barge-in for that turn. */
+export function setBargeInCallback(cb: BargeInCallback | null): void {
+  bargeInCallback = cb;
+  bargeInArmedAt = cb ? Date.now() : 0;
+  recentProbs = [];
+}
+
 // Legacy strict-mode gate (still used for the rare moment between
 // suspend release and fresh wake events). Bot voice typically fades
 // within 100ms; the 500ms unsuspend buffer covers decay.
@@ -34,7 +73,19 @@ export function setStrictWakeMode(v: boolean): void {
 }
 
 export function setWakeSuspended(v: boolean): void {
+  // Clear any prob-history we accumulated under the previous state so
+  // a stale spike doesn't leak across the suspend↔resume boundary and
+  // false-trigger barge-in the moment we re-enter suspension.
+  if (suspended !== v) recentProbs = [];
   suspended = v;
+}
+
+/** Read-only getter so consumers (e.g. the status bar updater in
+ *  webviewHost) can skip "listening" flips when wake is suspended —
+ *  those wakes are usually echoes from the bot's own voice and
+ *  shouldn't repaint the bottom chip. */
+export function isWakeSuspended(): boolean {
+  return suspended;
 }
 
 function pipeLog(tag: string, msg: string): void {
@@ -207,6 +258,52 @@ export async function startWakeWordListener(
         lastWakeAvg = parseFloat(avgMatch[1]);
       }
 
+      // Barge-in: while the bot is speaking, watch the prob stream for
+      // a sustained run above the voice threshold. The wake binary
+      // emits "protege-mic: prob=X" continuously; background noise
+      // sits at ~0.02–0.05, real voice spikes past 0.10. A run of
+      // BARGE_FRAME_COUNT samples averaging above BARGE_PROB_THRESHOLD
+      // is the user trying to interrupt — fire the callback (which
+      // kills afplay + arms a fresh recording).
+      const probMatch = trimmed.match(/protege-mic: prob=([\d.]+)/);
+      if (probMatch && suspended && bargeInCallback) {
+        // Warmup gate — ignore prob spikes for the first 600ms after
+        // arming. Catches bot-syllable bleed and stale prob frames from
+        // a recording that just stopped. Real user interruptions almost
+        // always start past this window because the bot needs at least
+        // a syllable to land before the user reacts.
+        if (Date.now() - bargeInArmedAt < BARGE_WARMUP_MS) {
+          // Still record the prob into history so the avg has data
+          // ready when the warmup ends — but don't fire yet.
+          recentProbs.push(parseFloat(probMatch[1]));
+          if (recentProbs.length > BARGE_FRAME_COUNT) recentProbs.shift();
+        } else {
+          const p = parseFloat(probMatch[1]);
+          recentProbs.push(p);
+          if (recentProbs.length > BARGE_FRAME_COUNT) recentProbs.shift();
+          if (recentProbs.length >= BARGE_FRAME_COUNT) {
+            const avg =
+              recentProbs.reduce((s, x) => s + x, 0) / recentProbs.length;
+            if (avg > BARGE_PROB_THRESHOLD) {
+              const cb = bargeInCallback;
+              bargeInCallback = null; // one-shot
+              recentProbs = [];
+              pipeLog(
+                "protege-wake",
+                `barge-in detected (avg prob=${avg.toFixed(3)} over ${BARGE_FRAME_COUNT} frames during suspension) — interrupting bot`
+              );
+              try {
+                cb();
+              } catch (err) {
+                console.warn(
+                  `[protege] barge-in callback threw: ${err instanceof Error ? err.message : String(err)}`
+                );
+              }
+            }
+          }
+        }
+      }
+
       if (trimmed === "WAKE:ready") {
         callbacks.onReady?.();
         continue;
@@ -235,10 +332,12 @@ export async function startWakeWordListener(
         wakeAudioChunks = [];
         onWakeDetected?.();
       } else if (trimmed === "RECORDING:stopped") {
-        if (suspended) {
-          pipeLog("protege-wake", "recording stop suppressed (mic suspended)");
-          continue;
-        }
+        // Always fire onWakeRecordingStopped so the host can resync the
+        // status-bar chip (otherwise it stays stuck on "Listening" if a
+        // recording stops while wake is suspended). The host's handler
+        // checks isWakeSuspended() at entry and drops the audio buffer
+        // — so we don't accidentally feed bot-bleed to STT — but the
+        // chip update is allowed through.
         onWakeRecordingStopped?.();
       }
     }

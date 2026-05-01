@@ -296,3 +296,30 @@
   padding: 10px 0 14px;
 }
 
+
+/* Live character counter inside the composer. Renders only when the
+   user is past the soft warning threshold (~75% of MAX_CHAT_CHARS).
+   Sits in the top-right of the composer so it doesn't push down the
+   actions row. Amber while approaching, red when capped. */
+.composer { position: relative; }
+.composer-counter {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  padding: 2px 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  border-radius: var(--radius-pill);
+  pointer-events: none;
+  z-index: 2;
+  transition: background 160ms ease, color 160ms ease;
+}
+.composer-counter--warn {
+  color: #f0b94d;
+  background: rgba(240, 185, 77, 0.12);
+}
+.composer-counter--full {
+  color: #f0a8a8;
+  background: rgba(214, 84, 84, 0.18);
+}

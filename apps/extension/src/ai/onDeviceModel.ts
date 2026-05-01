@@ -101,7 +101,15 @@ function notifyStatus(): void {
 export async function initOnDeviceModel(
   storagePath: string
 ): Promise<void> {
-  if (ready || loading) return;
+  if (ready) {
+    log("onDevice", `[ON-DEVICE] init skipped — already ready`);
+    return;
+  }
+  if (loading) {
+    log("onDevice", `[ON-DEVICE] init skipped — already loading`);
+    return;
+  }
+  log("onDevice", `[ON-DEVICE] init START · storagePath=${storagePath}`);
   loading = true;
   error = null;
   downloadProgress = 0;
@@ -144,8 +152,9 @@ export async function initOnDeviceModel(
           for (const d of ours) {
             const legacyPath = path.join(root, d, ".model-cache", MODEL_FILE);
             if (fs.existsSync(legacyPath)) {
-              console.log(
-                `[protege] Migrating on-device model from legacy cache: ${legacyPath}`
+              log(
+                "onDevice",
+                `[ON-DEVICE] migrating model from legacy cache: ${legacyPath}`
               );
               fs.renameSync(legacyPath, modelPath);
               break;
@@ -160,7 +169,10 @@ export async function initOnDeviceModel(
 
     // Check if already downloaded
     if (!fs.existsSync(modelPath)) {
-      console.log(`[protege] Downloading on-device model (~${MODEL_SIZE_MB}MB)...`);
+      log(
+        "onDevice",
+        `[ON-DEVICE] DOWNLOADING ~${MODEL_SIZE_MB}MB · this is a one-time fetch · progress visible in Live tab`
+      );
 
       // Download from HuggingFace
       const url = `https://huggingface.co/${MODEL_REPO}/resolve/main/${MODEL_FILE}`;
@@ -189,14 +201,15 @@ export async function initOnDeviceModel(
         fileStream.on("error", reject);
       });
 
-      console.log(`[protege] Model downloaded to ${modelPath}`);
+      log("onDevice", `[ON-DEVICE] download complete · saved to ${modelPath}`);
     } else {
+      log("onDevice", `[ON-DEVICE] model file already present at ${modelPath} · skipping download`);
       downloadProgress = 100;
       notifyStatus();
     }
 
     // Load the model
-    console.log("[protege] Loading on-device model...");
+    log("onDevice", `[ON-DEVICE] loading model into llama.cpp...`);
     const startMs = Date.now();
 
     model = await llama.loadModel({ modelPath });
@@ -215,7 +228,7 @@ export async function initOnDeviceModel(
     session = new LlamaChatSession({ contextSequence: seq });
 
     const elapsed = Date.now() - startMs;
-    console.log(`[protege] On-device model ready in ${elapsed}ms`);
+    log("onDevice", `[ON-DEVICE] READY · loaded in ${elapsed}ms · isOnDeviceReady() will return true now`);
 
     ready = true;
     loading = false;
@@ -223,6 +236,7 @@ export async function initOnDeviceModel(
     notifyStatus();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    log("onDevice", `[ON-DEVICE] FAIL · ${msg}`);
     console.error(`[protege] On-device model failed: ${msg}`);
     error = msg;
     loading = false;

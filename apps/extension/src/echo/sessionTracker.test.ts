@@ -8,6 +8,7 @@ const {
   onDidChangeTextDocument,
   onDidChangeActiveTextEditor,
   onDidChangeTextEditorSelection,
+  onDidChangeWindowState,
 } = vi.hoisted(() => {
   function fakeDisp() {
     return { dispose: vi.fn() };
@@ -16,6 +17,7 @@ const {
     onDidChangeTextDocument: vi.fn(() => fakeDisp()),
     onDidChangeActiveTextEditor: vi.fn(() => fakeDisp()),
     onDidChangeTextEditorSelection: vi.fn(() => fakeDisp()),
+    onDidChangeWindowState: vi.fn(() => fakeDisp()),
   };
 });
 
@@ -26,8 +28,10 @@ vi.mock("vscode", () => ({
   workspace: { onDidChangeTextDocument },
   window: {
     activeTextEditor: null,
+    state: { focused: true },
     onDidChangeActiveTextEditor,
     onDidChangeTextEditorSelection,
+    onDidChangeWindowState,
   },
   Disposable: class {
     dispose: () => void;

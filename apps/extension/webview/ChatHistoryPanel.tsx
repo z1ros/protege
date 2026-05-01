@@ -409,7 +409,7 @@ export function ChatHistoryPanel({
                       ? "chp-turn--pending"
                       : "chp-turn--complete";
                   return (
-                    <li key={t.id}>
+                    <li key={t.id} id={`history-msg-${t.id}`}>
                       <button
                         className={`chp-turn ${variant}`}
                         onClick={() => onJumpTo(t.id)}

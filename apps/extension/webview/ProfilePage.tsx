@@ -1,12 +1,13 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import type {
   GainEvent,
   MilestoneSummary,
+  QuotaSnapshot,
   StreakInfo,
 } from "@protege/types";
 import { CinematicPlate } from "./CinematicPlate.js";
 import { IconStar, IconCheck, IconPlus } from "./icons.js";
-import { vscode } from "./vscode.js";
+import { vscode, onHostMessage } from "./vscode.js";
 
 /**
  * Profile page — merged with Settings.
@@ -98,31 +99,85 @@ export function ProfilePage({
           shipping. Re-add only if/when those rewards have a real meaning
           again. */}
 
-      {recentGains.length > 0 && (
-        <section className="profile-section">
-          <div className="section-label microcaps">Recent wins</div>
-          <div className="recent-wins">
-            {recentGains.slice(0, 5).map((g, i) => (
-              <div key={`${g.ts}-${i}`} className={`win-row win-${g.kind ?? "concept"}`}>
-                <span className="win-delta">
-                  <span className="win-icon">
-                    {g.kind === "milestone" ? (
-                      <IconStar size={10} strokeWidth={2.2} />
-                    ) : g.kind === "fix" ? (
-                      <IconCheck size={10} strokeWidth={2.6} />
-                    ) : (
-                      <IconPlus size={10} strokeWidth={2.6} />
+      {recentGains.length > 0 && (() => {
+        // Collapse identical consecutive wins. The backend emits a fresh
+        // GainEvent per save, so a user who saves four times after each
+        // edit gets four "Fixed 1 issue · pa.tsx" rows that look like
+        // duplicates because (concept, file) match. We dedup at render
+        // time keyed on `(kind, concept, file)`, summing deltaIq across
+        // the merged events and showing a multiplier badge when count > 1.
+        // No backend change — the underlying gain log is preserved.
+        type WinRow = {
+          kind: GainEvent["kind"] | "concept";
+          concept: string;
+          file: string;
+          deltaIq: number;
+          count: number;
+          ts: string;
+        };
+        const collapsed: WinRow[] = [];
+        for (const g of recentGains) {
+          const kind = g.kind ?? "concept";
+          const last = collapsed[collapsed.length - 1];
+          if (
+            last &&
+            last.kind === kind &&
+            last.concept === g.concept &&
+            last.file === g.file
+          ) {
+            last.deltaIq += g.deltaIq;
+            last.count += 1;
+            continue;
+          }
+          collapsed.push({
+            kind,
+            concept: g.concept,
+            file: g.file,
+            deltaIq: g.deltaIq,
+            count: 1,
+            ts: g.ts,
+          });
+        }
+        const rows = collapsed.slice(0, 5);
+        return (
+          <section className="profile-section">
+            <div className="section-label microcaps">Recent wins</div>
+            <div className="recent-wins">
+              {rows.map((g, i) => (
+                <div
+                  key={`${g.ts}-${i}`}
+                  className={`win-row win-${g.kind ?? "concept"}`}
+                >
+                  <span className="win-delta">
+                    <span className="win-icon">
+                      {g.kind === "milestone" ? (
+                        <IconStar size={10} strokeWidth={2.2} />
+                      ) : g.kind === "fix" ? (
+                        <IconCheck size={10} strokeWidth={2.6} />
+                      ) : (
+                        <IconPlus size={10} strokeWidth={2.6} />
+                      )}
+                    </span>
+                    {g.deltaIq}
+                  </span>
+                  <span className="win-concept">
+                    {g.concept}
+                    {g.count > 1 && (
+                      <span
+                        className="win-count"
+                        title={`${g.count} saves merged`}
+                      >
+                        ×{g.count}
+                      </span>
                     )}
                   </span>
-                  {g.deltaIq}
-                </span>
-                <span className="win-concept">{g.concept}</span>
-                <span className="win-file">{g.file}</span>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
+                  <span className="win-file">{g.file}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        );
+      })()}
 
       {/* Preferences section retired 2026-04-29 — Reduce motion was
           the only remaining toggle and the user prefers a single
@@ -155,26 +210,67 @@ export function ProfilePage({
    when billing lands and the numbers below stop being stub data.
    ========================================================== */
 
-const STUB_USAGE = {
-  // TODO(billing): replace with real values from MeResponse /
-  // backend usage counters keyed on (userId, utcDate). For now
-  // these are placeholders so the layout shows something while
-  // we tune the daily caps in code.
-  chatMessagesUsed: 32,
-  chatMessagesLimit: 50,
-  toolCallsUsed: 3,
-  toolCallsLimit: 5,
-  voiceMinutesUsed: 6,
-  voiceMinutesLimit: 10,
+/** Default limits — used as a placeholder ONLY while the real
+ *  `quota/snapshot` from the host is in flight. The instant we hear
+ *  back from `GET /me/quota` these get overwritten with live values.
+ *  Kept in sync with `USER_FACING_LIMITS` in apps/backend/src/quotas.ts. */
+const DEFAULT_USAGE = {
+  chatMessagesUsed: 0,
+  chatMessagesLimit: 100,
+  toolCallsUsed: 0,
+  toolCallsLimit: 25,
+  voiceMinutesUsed: 0,
+  voiceMinutesLimit: 25,
 };
 
 /**
  * Daily-limits section — three bars, one per metered surface.
- * No price, no plan name, no upgrade CTA. The bars exist so the
- * user (and we) can see how the caps land in practice.
+ *
+ * Subscribes to `quota/snapshot` messages from the host (broadcast on
+ * any quota mutation) and re-requests `quota/get` on mount. So the
+ * panel stays live across the day without polling: scans, chats, tool
+ * uses, and voice all push fresh snapshots as they happen.
  */
 function PlanSection() {
-  const u = STUB_USAGE;
+  const [quota, setQuota] = useState<QuotaSnapshot | null>(null);
+
+  useEffect(() => {
+    const off = onHostMessage((msg) => {
+      if (msg.type === "quota/snapshot") {
+        setQuota(msg.snapshot);
+      }
+    });
+    // Re-request on mount in case this section mounted after the
+    // initial host push fired (user landed on a different overlay
+    // first, then opened Profile).
+    vscode.postMessage({ type: "quota/get" });
+    return off;
+  }, []);
+
+  // Live values when available; placeholder zeros + correct limits when
+  // the snapshot hasn't arrived yet. Never falls back to fake "32 / 50"
+  // — that was the old stub.
+  const u = quota
+    ? {
+        chatMessagesUsed: quota.usage.chat_messages.used,
+        chatMessagesLimit: quota.usage.chat_messages.limit,
+        toolCallsUsed: quota.usage.tool_calls.used,
+        toolCallsLimit: quota.usage.tool_calls.limit,
+        voiceMinutesUsed: quota.usage.voice_minutes.used,
+        voiceMinutesLimit: quota.usage.voice_minutes.limit,
+        chatMinutesUsed: quota.usage.chat_minutes?.used ?? 0,
+      }
+    : { ...DEFAULT_USAGE, chatMinutesUsed: 0 };
+
+  // Voice vs chat engagement split for the "how do I spend time with
+  // Protege" line at the bottom of the panel. Skip the line entirely
+  // when there's no engagement yet (avoids "0% / 0%").
+  const totalEngagementMin = u.voiceMinutesUsed + u.chatMinutesUsed;
+  const voicePct =
+    totalEngagementMin > 0
+      ? Math.round((u.voiceMinutesUsed / totalEngagementMin) * 100)
+      : 0;
+  const chatPct = totalEngagementMin > 0 ? 100 - voicePct : 0;
 
   return (
     <section className="profile-section">
@@ -185,6 +281,7 @@ function PlanSection() {
         <div className="plan-card-head">
           <div className="plan-card-title">
             <span className="plan-card-name">Usage today</span>
+            <QuotaStatusDot meta={quota?.meta} />
           </div>
           <p className="plan-card-tagline">
             Counts reset at 00:00 UTC. These caps keep the assistant
@@ -207,8 +304,43 @@ function PlanSection() {
             label="Voice minutes"
             used={u.voiceMinutesUsed}
             limit={u.voiceMinutesLimit}
+            unit="min"
+            decimals={1}
           />
         </div>
+
+        {/* Engagement split — voice vs chat. Display-only (no cap),
+            sourced from the same per-user table. Helps the user see at
+            a glance whether they're a "talk to Protege" or "type to
+            Protege" person; useful for product analytics too. */}
+        {totalEngagementMin > 0 && (
+          <div className="profile-plan-engagement">
+            <div className="profile-plan-engagement-stats">
+              <span className="profile-plan-engagement-stat">
+                <span className="profile-plan-engagement-icon profile-plan-engagement-icon-voice" />
+                Voice {u.voiceMinutesUsed.toFixed(1)} min
+              </span>
+              <span className="profile-plan-engagement-stat">
+                <span className="profile-plan-engagement-icon profile-plan-engagement-icon-chat" />
+                Chat {u.chatMinutesUsed.toFixed(1)} min
+              </span>
+            </div>
+            <div
+              className="profile-plan-engagement-bar"
+              title={`Voice ${voicePct}% · Chat ${chatPct}%`}
+              aria-label={`Voice ${voicePct} percent, chat ${chatPct} percent`}
+            >
+              <div
+                className="profile-plan-engagement-voice"
+                style={{ width: `${voicePct}%` }}
+              />
+              <div
+                className="profile-plan-engagement-chat"
+                style={{ width: `${chatPct}%` }}
+              />
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );
@@ -218,18 +350,30 @@ function PlanUsage({
   label,
   used,
   limit,
+  unit,
+  decimals,
 }: {
   label: string;
   used: number;
   limit: number;
+  /** Optional unit suffix shown after the count (e.g. "min" for voice). */
+  unit?: string;
+  /** When set, the `used` value renders with this many decimals.
+   *  Default: integer rendering. Use 1 for fractional minutes. */
+  decimals?: number;
 }) {
-  const pct = Math.max(0, Math.min(100, (used / limit) * 100));
+  const pct = limit > 0 ? Math.max(0, Math.min(100, (used / limit) * 100)) : 0;
+  const usedDisplay =
+    typeof decimals === "number"
+      ? used.toFixed(decimals)
+      : Math.floor(used).toString();
   return (
     <div className="profile-plan-usage">
       <div className="profile-plan-usage-head">
         <span className="profile-plan-usage-label">{label}</span>
         <span className="profile-plan-usage-count">
-          {used} / {limit}
+          {usedDisplay} / {limit}
+          {unit ? ` ${unit}` : ""}
         </span>
       </div>
       <div className="profile-plan-usage-bar">
@@ -240,4 +384,50 @@ function PlanUsage({
       </div>
     </div>
   );
+}
+
+/**
+ * Tiny health indicator next to the "Usage today" title. Tells the user
+ * whether the counters they're staring at are real or whether the
+ * backend isn't actually persisting (no Supabase, no table, etc.).
+ *
+ * Tooltip carries the precise probe state so a misconfigured beta
+ * deployment is one hover away from "ah, table missing — run the SQL."
+ */
+function QuotaStatusDot({
+  meta,
+}: {
+  meta: NonNullable<QuotaSnapshot["meta"]> | undefined;
+}) {
+  if (!meta) {
+    return (
+      <span
+        className="quota-status-dot quota-status-dot-unknown"
+        title="Quota subsystem health — waiting for first response from /me/quota"
+        aria-label="Quota status: unknown"
+      />
+    );
+  }
+  const isConnected = meta.probe === "connected";
+  const cls = isConnected
+    ? "quota-status-dot quota-status-dot-ok"
+    : "quota-status-dot quota-status-dot-warn";
+  const tip = (() => {
+    switch (meta.probe) {
+      case "connected":
+        return meta.enforced
+          ? "Connected · enforcement ON · counters are real"
+          : "Connected · enforcement OFF (PROTEGE_QUOTAS=on to enable gating). Counters still persist for telemetry.";
+      case "no-supabase":
+        return "Supabase not configured server-side — counters won't persist. Ask backend op to set SUPABASE_URL + SUPABASE_SERVICE_KEY.";
+      case "table-missing":
+        return "Supabase reachable but `user_quotas` table is missing. Run the SQL migration in beta-quotas.md.";
+      case "error":
+        return `Probe error: ${meta.probeDetail ?? "unknown"}`;
+      case "unknown":
+      default:
+        return "Probe hasn't run yet (very early activation).";
+    }
+  })();
+  return <span className={cls} title={tip} aria-label={`Quota status: ${meta.probe}`} />;
 }

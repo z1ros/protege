@@ -103,15 +103,18 @@ class HighlightCodeLensProvider implements vscode.CodeLensProvider {
       // the row never wraps. Icon reflects the kind so users can tell
       // bug/focus/tip/pattern apart at a glance without reading the text.
       // Click opens the full hover card (same target as the old hover).
-      const summary = shortSummary(h.issue, h.label, h.explanation);
-      if (summary) {
-        lenses.push(
-          new vscode.CodeLens(lensRange, {
-            title: `${kindLensIcon(h.kind)} ${summary}`,
-            command: "editor.action.showHover",
-          })
-        );
-      }
+      // Fallback for bare "look here" highlights (voice teaching often
+      // calls highlight_code with only path/lines/anchor) — show the
+      // kind label so the lens row never reads as empty/broken with
+      // just a "✘ Dismiss" button hovering over the line.
+      const summary =
+        shortSummary(h.issue, h.label, h.explanation) || kindFallbackLabel(h.kind);
+      lenses.push(
+        new vscode.CodeLens(lensRange, {
+          title: `${kindLensIcon(h.kind)} ${summary}`,
+          command: "editor.action.showHover",
+        })
+      );
       if (h.fix && !isTeachingHighlight) {
         // Use the post-anchor-correction range — applyFix should overwrite
         // the line the highlight is actually painted on, not the line the
@@ -172,7 +175,7 @@ export function setLessonActive(active: boolean): void {
   // are currently rendering highlights.
   highlightLensProvider?.refresh();
 }
-function isLessonActive(): boolean {
+export function isLessonActive(): boolean {
   return lessonActive;
 }
 
@@ -205,6 +208,24 @@ function kindLensIcon(kind: HighlightKind): string {
     case "focus":
     default:
       return "$(target)";
+  }
+}
+
+/** Generic label used when the model called highlight_code without
+ *  issue/label/explanation — common in voice teaching where the bot
+ *  highlights a line and explains it aloud rather than in text. Without
+ *  a fallback the lens row is empty and reads as broken. */
+function kindFallbackLabel(kind: HighlightKind): string {
+  switch (kind) {
+    case "bug":
+      return "Possible issue";
+    case "pattern":
+      return "Pattern";
+    case "tip":
+      return "Tip";
+    case "focus":
+    default:
+      return "Look here";
   }
 }
 let highlightAutoTimer: ReturnType<typeof setTimeout> | null = null;
@@ -580,12 +601,31 @@ async function highlightCode(regions: HighlightRegion[]): Promise<string> {
       endLine: correctedEndLine,
     });
 
-    // Hover stays (discoverability on mouseover); the right-side italic
-    // `← <tag>` after-decoration is gone — replaced by a proper CodeLens
-    // row above the line (see HighlightCodeLensProvider) with directly
-    // clickable Apply / Teach / Dismiss actions. The hover is now the
-    // deep-detail layer; the CodeLens is the primary action surface.
-    const opt: vscode.DecorationOptions = { range, hoverMessage: hover };
+    // Inline ghost-text label restored 2026-04-30 — "← <tag>" floats at
+    // end-of-line in dim italic so the user can read the annotation
+    // without hovering. Critical for zero-UI mode (sidebar closed during
+    // voice explanation): the spoken word + the inline label together
+    // give the user a hands-free understanding aid. Falls back to the
+    // first 5 words of `issue` when no `label` was provided. CodeLens
+    // above the line still carries the action buttons; this is just a
+    // passive readable annotation.
+    const inlineTag = deriveInlineTag(label, r.issue);
+    const opt: vscode.DecorationOptions = {
+      range,
+      hoverMessage: hover,
+      ...(inlineTag
+        ? {
+            renderOptions: {
+              after: {
+                contentText: `  ← ${inlineTag}`,
+                color: "rgba(148, 163, 184, 0.85)",
+                fontStyle: "italic",
+                margin: "0 0 0 1ch",
+              },
+            },
+          }
+        : {}),
+    };
 
     groups.get(key)!.options.push(opt);
 
@@ -636,20 +676,13 @@ async function highlightCode(regions: HighlightRegion[]): Promise<string> {
       firstShown.range,
       vscode.TextEditorRevealType.InCenter
     );
-    // Move the cursor to the start of the highlighted range so VS Code's
-    // native hover popup has an anchor point, then trigger it. This makes
-    // the rich tooltip appear immediately — no need for the user to hover.
-    try {
-      const start = firstShown.range.start;
-      firstShown.editor.selection = new vscode.Selection(start, start);
-      // Slight delay so setDecorations has flushed before showHover runs
-      setTimeout(() => {
-        vscode.commands.executeCommand("editor.action.showHover").then(
-          () => {},
-          () => {}
-        );
-      }, 120);
-    } catch {}
+    // Auto-popup REMOVED. It used to fire showHover after every
+    // highlight, but that's intrusive: covers the editor while the
+    // bot is thinking, steals focus, breaks "zero-UI" voice mode.
+    // The codelens row above the highlighted line already shows the
+    // summary + actions — that's the right surface. The user can
+    // still hover manually with the cursor when they want the rich
+    // detail card.
   }
 
   const placed = regions.length - skipped.length;
@@ -670,6 +703,10 @@ async function highlightCode(regions: HighlightRegion[]): Promise<string> {
       `highlight_code placed 0 regions — every anchor failed verification:\n${detail}\nRe-issue with a unique substring copied verbatim from the target line.`
     );
   }
+  // Arm the auto-clear timer so this highlight set vanishes after 90s
+  // of inactivity. Subsequent highlightCode() calls reset it; explicit
+  // clear_highlights() cancels it.
+  if (placed > 0) rearmAutoClear();
   let summary = `Highlighted ${placed} region${
     placed === 1 ? "" : "s"
   } across ${groups.size} file${groups.size === 1 ? "" : "s"}`;
@@ -703,6 +740,40 @@ async function highlightCode(regions: HighlightRegion[]): Promise<string> {
 //   2. first ≤5 words of `issue`, stripped of filler verbs like "Using",
 //      "Don't", "This", "The" etc. that usually open a sentence
 //   3. first sentence of `issue`, capped at 40 chars
+function deriveInlineTag(
+  label: string | undefined,
+  issue: string | undefined
+): string | null {
+  const cap = (s: string) => (s.length > 40 ? s.slice(0, 39) + "…" : s);
+  if (label && label.trim()) return cap(label.trim());
+  if (issue && issue.trim()) {
+    const stripped = issue
+      .trim()
+      .replace(/^(using|use|don'?t|the|this|that|a|an|it|its)\s+/i, "");
+    const words = stripped.split(/\s+/).slice(0, 5).join(" ");
+    return cap(words || stripped);
+  }
+  return null;
+}
+
+// ---- Auto-clear timer ----
+//
+// Highlights from a single voice/teaching beat shouldn't linger
+// indefinitely. After AUTO_CLEAR_MS without a new highlight call, the
+// active set is cleared so stale visual annotations don't follow the
+// user around. Each new call to highlightCode() resets the timer; the
+// model can also call clear_highlights explicitly. Ninety seconds is
+// long enough to read 2-3 voice beats but short enough to feel
+// self-cleaning.
+const AUTO_CLEAR_MS = 90_000;
+let autoClearTimer: ReturnType<typeof setTimeout> | null = null;
+function rearmAutoClear(): void {
+  if (autoClearTimer) clearTimeout(autoClearTimer);
+  autoClearTimer = setTimeout(() => {
+    autoClearTimer = null;
+    void clearHighlights();
+  }, AUTO_CLEAR_MS);
+}
 
 /**
  * Build a rich MarkdownString hover — this is what VS Code pops up when
@@ -792,6 +863,10 @@ function kindTitle(kind: HighlightKind): string {
 }
 
 async function clearHighlights(): Promise<string> {
+  if (autoClearTimer) {
+    clearTimeout(autoClearTimer);
+    autoClearTimer = null;
+  }
   for (const editor of vscode.window.visibleTextEditors) {
     for (const kind of Object.keys(HIGHLIGHT_DECORATIONS) as HighlightKind[]) {
       try {
@@ -904,6 +979,18 @@ async function confirmEditWithUser(
   newString: string
 ): Promise<"accept" | "reject"> {
   if (isAutoAcceptOn()) return "accept";
+  // Auto-accept while a lesson is running. The user is in voice/teaching
+  // mode — they consented to letting the bot drive when they said "teach
+  // me X". Showing a modal on every micro-edit breaks the hands-free
+  // "close sidebar, listen, watch the editor change" flow that voice
+  // teaching is built around. The lesson banner stays visible the whole
+  // time so the user always has the "End lesson" exit.
+  if (isLessonActive()) {
+    console.log(
+      `[protege] edit_file auto-accepted (lesson active): ${pathLike}`
+    );
+    return "accept";
+  }
 
   const ACCEPT = "Accept";
   const REJECT = "Reject";
@@ -932,6 +1019,31 @@ async function confirmEditWithUser(
   return "reject";
 }
 
+/* ============================================================
+   Edit-failure cap — when the model produces edit_file calls with
+   wrong `oldString` values back-to-back, it can spin 5+ rounds
+   trying different fragments before giving up. The user sees three
+   red-X "Editing page.tsx" rows and no progress. Cap consecutive
+   failures per path: after EDIT_FAIL_LIMIT misses in EDIT_FAIL_WINDOW_MS,
+   we throw a STOP error that tells the model to ask the user instead
+   of retrying. A successful edit clears the counter. Stale entries
+   are evicted on the next attempt to keep the map bounded.
+   ============================================================ */
+const EDIT_FAIL_LIMIT = 2;
+const EDIT_FAIL_WINDOW_MS = 60_000;
+const editFailures = new Map<string, { count: number; lastAt: number }>();
+function noteEditFailure(pathLike: string): number {
+  const now = Date.now();
+  const prev = editFailures.get(pathLike);
+  const fresh = prev && now - prev.lastAt < EDIT_FAIL_WINDOW_MS ? prev : null;
+  const next = { count: (fresh?.count ?? 0) + 1, lastAt: now };
+  editFailures.set(pathLike, next);
+  return next.count;
+}
+function clearEditFailures(pathLike: string): void {
+  editFailures.delete(pathLike);
+}
+
 async function editFile(
   pathLike: string,
   oldString: string,
@@ -949,6 +1061,12 @@ async function editFile(
   if (replaceAll) {
     const parts = text.split(oldString);
     if (parts.length === 1) {
+      const fails = noteEditFailure(pathLike);
+      if (fails >= EDIT_FAIL_LIMIT) {
+        throw new Error(
+          `STOP: ${fails} consecutive failed edits to ${pathLike}. Do NOT retry with another oldString variant — your matches are misaligned with the file. Tell the user what you were trying to change and ask them to confirm the target lines or paste the exact text they want replaced.`
+        );
+      }
       throw new Error(`oldString not found in ${pathLike}`);
     }
 
@@ -969,6 +1087,7 @@ async function editFile(
     const applied = await vscode.workspace.applyEdit(edit);
     if (!applied) throw new Error(`applyEdit failed for ${pathLike}`);
     await doc.save();
+    clearEditFailures(pathLike);
     const count = parts.length - 1;
     // Can't flash specific ranges easily in replaceAll mode — flash whole doc briefly
     const editor = vscode.window.visibleTextEditors.find(
@@ -982,9 +1101,23 @@ async function editFile(
   }
 
   const idx = text.indexOf(oldString);
-  if (idx === -1) throw new Error(`oldString not found in ${pathLike}`);
+  if (idx === -1) {
+    const fails = noteEditFailure(pathLike);
+    if (fails >= EDIT_FAIL_LIMIT) {
+      throw new Error(
+        `STOP: ${fails} consecutive failed edits to ${pathLike}. Do NOT retry with another oldString variant — your matches are misaligned with the file. Tell the user what you were trying to change and ask them to confirm the target lines or paste the exact text they want replaced.`
+      );
+    }
+    throw new Error(`oldString not found in ${pathLike}`);
+  }
   const second = text.indexOf(oldString, idx + 1);
   if (second !== -1) {
+    const fails = noteEditFailure(pathLike);
+    if (fails >= EDIT_FAIL_LIMIT) {
+      throw new Error(
+        `STOP: ${fails} consecutive ambiguous-match failures on ${pathLike}. Do NOT retry — read the file again and either pick a unique surrounding block or ask the user which occurrence to change.`
+      );
+    }
     throw new Error(
       `oldString appears more than once in ${pathLike}; include more context or set replaceAll=true`
     );
@@ -1005,6 +1138,7 @@ async function editFile(
   const applied = await vscode.workspace.applyEdit(edit);
   if (!applied) throw new Error(`applyEdit failed for ${pathLike}`);
   await doc.save();
+  clearEditFailures(pathLike);
 
   // Compute new range for flash (use the new string's length)
   const newLines = newString.split("\n");

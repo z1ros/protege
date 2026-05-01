@@ -1,6 +1,8 @@
 import * as vscode from "vscode";
 import { broadcast, mountedWebviewCount } from "../chat/webviewHost.js";
 import { setWakeSuspended } from "../voice/voiceCapture.js";
+import { getVoiceGender, setVoiceState } from "../voice/voiceStatusBar.js";
+import { isWakeWordListening } from "../voice/voiceCapture.js";
 import type { HighlightRegion } from "../ai/tools.js";
 
 interface Pending {
@@ -113,16 +115,34 @@ export async function runTeachStep(args: TeachStepArgs): Promise<string> {
       return "teach_step error: no Protege panel open — open the sidebar first";
     }
 
-    const requestId = `teach-${Date.now()}-${nextId++}`;
-    const awaiter = awaitPlayback(requestId, 20_000);
+    // Flip the bottom status bar to "Speaking" optimistically. The
+    // host-side player does this in onStart, but if afplay takes ~50ms
+    // to spawn the chip would briefly look idle.
+    const wasWakeOn = isWakeWordListening();
+    if (wasWakeOn) setVoiceState("speaking");
 
-    broadcast({
-      type: "voice/playExplain",
+    const tBroadcast = Date.now();
+    console.log(
+      `[protege] teach_step PLAY narrationChars=${narration.trim().length} preview=${JSON.stringify(narration.trim().slice(0, 80))} wakeOn=${wasWakeOn}`
+    );
+
+    // Host-side audio (2026-04-30) — see voice/hostAudio.ts. Replaces
+    // the broadcast → webview → audio.play() chain that was blocked by
+    // Chromium autoplay policy. Plays via OS native player (afplay,
+    // powershell, aplay), no autoplay constraint.
+    // Streaming TTS — splits narration into sentences and starts
+    // playing the first one as soon as its TTS lands. For multi-
+    // sentence narrations this halves perceived latency.
+    const { playHostAudioStreaming } = await import("../voice/hostAudio.js");
+    const result = await playHostAudioStreaming({
       text: narration.trim(),
-      requestId,
+      voice: getVoiceGender(),
     });
-
-    const result = await awaiter;
+    const elapsed = Date.now() - tBroadcast;
+    console.log(
+      `[protege] teach_step RESOLVED reason=${result} elapsedMs=${elapsed}`
+    );
+    if (wasWakeOn) setVoiceState(isWakeWordListening() ? "idle" : "off");
 
     if (typeof pauseMsAfter === "number" && pauseMsAfter > 0) {
       await new Promise((r) => setTimeout(r, Math.min(pauseMsAfter, 1500)));

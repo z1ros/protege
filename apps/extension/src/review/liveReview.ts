@@ -132,12 +132,55 @@ function paintLineHighlights(editor: vscode.TextEditor): void {
 // ---- State ----
 
 let active = false;
-let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let changeListener: vscode.Disposable | null = null;
 let editorListener: vscode.Disposable | null = null;
 let windowStateListener: vscode.Disposable | null = null;
-let healthTimer: ReturnType<typeof setInterval> | null = null;
 let gateSubscription: vscode.Disposable | null = null;
+let idleScanTimer: ReturnType<typeof setTimeout> | null = null;
+// Pending cloud-refinement timer for the hybrid Live Review pipeline.
+// Set after phase-1 (on-device) finds something; clears when it fires
+// or when a fresh phase-1 supersedes it. Single-flight per active
+// editor — multiple files in rapid tab-switch reset, not stack.
+let cloudRefineTimer: ReturnType<typeof setTimeout> | null = null;
+// Signature of the most recent phase-2 cloud-refine input, keyed per
+// URI. If a fresh phase-1 returns the SAME set of findings (same rule
+// IDs at the same lines), skipping phase-2 saves a cloud call —
+// re-refining identical signal would just produce identical output.
+const lastRefinedSignatureByUri = new Map<string, string>();
+// Polished findings from the most recent successful phase-2 cloud
+// refine, keyed per URI. When sig dedup decides to skip phase-2,
+// phase-1's rough Qwen findings have already been written to the
+// store — but the polished version we already produced last time is
+// strictly better. Restore it here so the user keeps seeing polished
+// findings even after phase-1 re-runs on the same signal. Cleared on
+// Live Review stop and any time text actually changes.
+const lastRefinedFindingsByUri = new Map<string, Suggestion[]>();
+
+// ---- Tier-learning blocklist ----
+// Per-URI set of ruleIds that the cloud refinement step has rejected as
+// false positives at least once this session. Phase-1 (Qwen) findings
+// matching any blocklisted ruleId are filtered out BEFORE phase-2 fires
+// — so we never pay to validate the same false positive twice.
+//
+// The on-device model is more permissive by design (cheap, fast, good
+// at "is there anything weird here?"); the cloud is the strict editor.
+// This map is the feedback channel: cloud's rejections train the
+// orchestrator to ignore that ruleId on this file for the rest of the
+// session. Resets on Live Review stop / window reload.
+//
+// Scope choice: ruleId+URI, not ruleId+line. If cloud says "prefer-const
+// is a false positive on this file" (e.g. the binding really IS reassigned
+// elsewhere), we don't want Qwen flagging the same rule on a different
+// line of the same file 30 seconds later. Per-line scoping wouldn't catch
+// that. Per-URI is the right granularity.
+const rejectedRuleIdsByUri = new Map<string, Set<string>>();
+
+function findingsSignature(findings: Suggestion[]): string {
+  return findings
+    .map((s) => `${s.ruleId}@${s.range.start.line}`)
+    .sort()
+    .join("|");
+}
 let currentSuggestions: Suggestion[] = [];
 let scanSeq = 0;
 let pendingChangeSize = 0;
@@ -172,20 +215,23 @@ const pendingFixByUri = new Map<
 >();
 const PENDING_FIX_TTL_MS = 60_000;
 
-// Tuned 2026-04-29 from 7s → 12s + threshold raised 4 → 30 chars.
-// At 7s/4chars the user could type a single word, pause to think, and
-// trigger a fresh scan that flagged the half-written thought. 12s gives
-// real settling time; 30 chars (≈ a meaningful expression, not a
-// keystroke) ensures we don't burn an LLM call on micro-edits the user
-// is about to revise. The 60s health timer still catches genuinely-idle
-// long-tail cases.
-const DEBOUNCE_MS = 12_000;
+// Idle-typing window. Phase-1 (on-device) scan fires after IDLE_SCAN_MS
+// of no keystrokes — long enough that you've genuinely paused (reading
+// what you wrote, stuck, moved attention), short enough to feel
+// real-time on a typist who pauses regularly. Phase-1 is always free
+// ($0 — runs locally on Qwen 7B).
+const IDLE_SCAN_MS = 20_000;
+// Phase-2 (cloud refinement) fires CLOUD_REFINE_DELAY_MS after a phase-1
+// pass that returned >= 1 finding. The delay lets the user keep typing
+// without immediately burning a cloud call on a transient state. Each
+// new phase-1 pass that finds something resets this timer, so a steady
+// stream of dirty edits collapses to one cloud call per ~minute, not
+// one per pause.
+const CLOUD_REFINE_DELAY_MS = 60_000;
+// Per-keystroke micro-edits don't count — the runReview dedup at entry
+// also skips if the doc text hasn't changed materially since the last
+// scan. 30 chars ≈ a meaningful token, not a typo correction.
 const MIN_CHANGE_CHARS = 30;
-// Tuned 2026-04-28 from 12s → 60s. The health re-check exists to surface
-// findings the gate had been suppressing during recent edits — it never
-// needed to fire fast. 60s halves background scan rate without hurting
-// first-flag latency on actual edits (the debounce path handles those).
-const HEALTH_CHECK_MS = 60_000;
 
 // ---- Inlay hints provider (the isolated hover surface) ----
 
@@ -557,22 +603,50 @@ function startLiveReview(): void {
   lastScannedText = null;
   pendingChangeSize = 0;
 
+  // Idle-typing review (2026-04-29 v2). We tried "every 12s of typing
+  // pause" (too noisy, shoulder-leaning) and "save only" (too quiet for
+  // users who don't ⌘S). Final shape: scan after IDLE_SCAN_MS of typing
+  // inactivity. With backend = "auto" or "on-device" this fires Qwen 7B
+  // locally at $0/scan, so the cadence can be aggressive without cost
+  // implications. With backend = "cloud" this hits the configured cloud
+  // provider and is gated by the autoBudgetPerHour cap (default 30/h =
+  // ~$0.96/mo ceiling on cheap-tier).
+  //
+  // No save trigger — saves are an implementation detail of typists who
+  // happen to ⌘S; not a UX signal.
   changeListener = vscode.workspace.onDidChangeTextDocument((e) => {
     const editor = vscode.window.activeTextEditor;
     if (!editor || e.document !== editor.document) return;
-
     for (const c of e.contentChanges) {
       pendingChangeSize += Math.max(c.text.length, c.rangeLength);
     }
-
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      void runReview(editor);
-    }, DEBOUNCE_MS);
+    // Reset the idle timer on every keystroke. The scan only fires
+    // after IDLE_SCAN_MS of no further edits — i.e. you stopped typing
+    // for long enough that you're reading, thinking, or moved on. The
+    // 60s health-recheck retired with continuous scans, so the runReview
+    // dedup at entry handles "same content, skip" by itself.
+    if (idleScanTimer) clearTimeout(idleScanTimer);
+    idleScanTimer = setTimeout(() => {
+      idleScanTimer = null;
+      if (!active) return;
+      const ed = vscode.window.activeTextEditor;
+      if (!ed || ed.document !== e.document) return;
+      log(
+        "liveReview",
+        `LIVE idle ${IDLE_SCAN_MS / 1000}s · ${e.document.fileName.split(/[\\/]/).pop()}`
+      );
+      void runHybridScan(ed);
+    }, IDLE_SCAN_MS);
   });
 
   editorListener = vscode.window.onDidChangeActiveTextEditor((editor) => {
     if (!editor) return;
+    // Skip virtual documents (output channels, settings UI, etc.) —
+    // they're not user code, scanning them is pointless and burns
+    // tokens on guaranteed-bad findings. Only file:// schemes count.
+    // runReview also defends against this, but bailing here saves the
+    // tab-switch log line + cache check for noise that doesn't matter.
+    if (editor.document.uri.scheme !== "file") return;
     // Per-URI dedup: if we've scanned this exact text before, the cache
     // already has the right suggestions. Skip the LLM call and just
     // refresh surfaces. Without this, every tab switch re-scans even
@@ -598,6 +672,10 @@ function startLiveReview(): void {
     }
     lastScannedText = null;
     pendingChangeSize = Infinity;
+    log(
+      "liveReview",
+      `LIVE tab-switch · ${editor.document.fileName.split(/[\\/]/).pop()}`
+    );
     void runReview(editor);
   });
 
@@ -613,6 +691,10 @@ function startLiveReview(): void {
       refreshAllSurfaces();
     } else {
       pendingChangeSize = Infinity;
+      log(
+        "liveReview",
+        `LIVE startup · ${editor.document.fileName.split(/[\\/]/).pop()}`
+      );
       void runReview(editor);
     }
   }
@@ -635,24 +717,11 @@ function startLiveReview(): void {
     void runReview(editor);
   });
 
-  // The legacy "force a full LLM rescan every 12s" timer was deleted —
-  // it bypassed runReview's same-content dedup with pendingChangeSize =
-  // Infinity, burning ~$4/day per idle user re-scanning unchanged code.
-  //
-  // The timer's only legitimate job is to re-render surfaces after
-  // findingGate's LINE_EDIT_WINDOW_MS expires. The gate is a render-time
-  // filter — once its window clears, the existing suggestion cache is
-  // already correct. We just need a paint pass. Zero LLM tokens.
-  //
-  // We subscribe to onGateChanged so most re-renders happen immediately
-  // on cursor moves and on the time-based gate-clear emission from
-  // findingGate.ts (scheduled per touched line, fires LINE_EDIT_WINDOW_MS
-  // + 500ms after the edit). The interval below is a belt-and-suspenders
-  // safety net for any recovery case the event channel misses.
-  healthTimer = setInterval(() => {
-    const editor = vscode.window.activeTextEditor;
-    if (editor && active) refreshAllSurfaces();
-  }, HEALTH_CHECK_MS);
+  // Gate-change re-renders cover the only repaint path that matters:
+  // when a touched line's recency window expires, findingGate fires
+  // and the cached suggestions repaint with their now-cleared gate
+  // state. No interval timer — without continuous typing scans there's
+  // nothing to safety-net.
   gateSubscription = onGateChanged(() => {
     if (active) refreshAllSurfaces();
   });
@@ -666,19 +735,25 @@ function stopLiveReview(): void {
   if (!active) return;
   active = false;
 
-  if (debounceTimer) {
-    clearTimeout(debounceTimer);
-    debounceTimer = null;
-  }
   changeListener?.dispose();
   changeListener = null;
   editorListener?.dispose();
   editorListener = null;
   windowStateListener?.dispose();
   windowStateListener = null;
-  if (healthTimer) { clearInterval(healthTimer); healthTimer = null; }
   gateSubscription?.dispose();
   gateSubscription = null;
+  if (idleScanTimer) {
+    clearTimeout(idleScanTimer);
+    idleScanTimer = null;
+  }
+  if (cloudRefineTimer) {
+    clearTimeout(cloudRefineTimer);
+    cloudRefineTimer = null;
+  }
+  lastRefinedSignatureByUri.clear();
+  lastRefinedFindingsByUri.clear();
+  rejectedRuleIdsByUri.clear();
 
   scanSeq++;
   isScanning = false;
@@ -751,8 +826,217 @@ function isFileMidEdit(editor: vscode.TextEditor): boolean {
   return false;
 }
 
-async function runReview(editor: vscode.TextEditor): Promise<void> {
-  if (!active) return;
+/**
+ * Hybrid Live Review — the "free first, expensive only on signal" path.
+ *
+ * Phase 1 (always): scan via on-device Qwen 7B. Free. Sees if there's
+ *   anything teachable on this file at all.
+ * Phase 2 (only if phase 1 returned ≥ 1 finding): schedule a cloud
+ *   refinement CLOUD_REFINE_DELAY_MS later. Cloud (gpt-4o-mini) takes
+ *   the same code, runs the rich prompt, and produces polished
+ *   teaching-quality findings that overwrite the rough Qwen ones.
+ *
+ * Cost shape: a "clean code" 20s-pause scan stays at $0 forever (Qwen
+ * returns [], no cloud call). Only signal-bearing pauses incur cloud
+ * cost — and at most one cloud call per 60s window because the timer
+ * collapses rapid phase-1 hits.
+ *
+ * Falls back gracefully:
+ *   - on-device not ready → phase 1 silently no-ops (the existing
+ *     aiQuery routing handles this), nothing is rendered, no cloud call.
+ *     Wait for the model to load, or pick "cloud" for cloud-only.
+ *   - cloud unreachable → phase 2 fails silently, the rough Qwen
+ *     findings from phase 1 stay visible.
+ */
+async function runHybridScan(editor: vscode.TextEditor): Promise<void> {
+  const fileName = editor.document.fileName.split(/[\\/]/).pop() ?? "file";
+  const uriKey = editor.document.uri.toString();
+
+  log("liveReview", `[HYBRID] ▸ phase-1 starting · ${fileName} · backend=QWEN (free)`);
+  const phase1 = await runReview(editor, { forceBackend: "on-device" });
+
+  // Phase 1 didn't actually run an LLM call — distinguish the cases for
+  // honest logging. "QWEN clean" should mean "Qwen ran and saw nothing
+  // teachable", not "we never even tried."
+  if (phase1.skipReason) {
+    log(
+      "liveReview",
+      `[HYBRID] ▸ phase-1 not run · reason=${phase1.skipReason} · CLOUD also skipped`
+    );
+    return;
+  }
+
+  if (phase1.findingsStored === 0) {
+    log("liveReview", `[QWEN]   ✓ clean · ${fileName} · no findings · CLOUD skipped (saved ~$0.0008)`);
+    if (cloudRefineTimer) {
+      clearTimeout(cloudRefineTimer);
+      cloudRefineTimer = null;
+    }
+    return;
+  }
+
+  // Apply the session blocklist — drop phase-1 findings whose ruleId
+  // cloud has already rejected on this URI. This is the cost-saving
+  // half of the tier-learning loop: false positives Qwen detected get
+  // filtered before they trigger a redundant cloud refinement.
+  const blocklist = rejectedRuleIdsByUri.get(uriKey) ?? new Set<string>();
+  const surviving = phase1.findings.filter((f) => !blocklist.has(f.ruleId));
+  const blocked = phase1.findings.length - surviving.length;
+  if (blocked > 0) {
+    const blockedRules = phase1.findings
+      .filter((f) => blocklist.has(f.ruleId))
+      .map((f) => f.ruleId);
+    log(
+      "liveReview",
+      `[QWEN]   ✗ filtered ${blocked} finding(s) · ruleIds=[${[...new Set(blockedRules)].join(", ")}] · previously rejected by CLOUD`
+    );
+  }
+
+  log(
+    "liveReview",
+    `[QWEN]   ✓ found ${surviving.length} · ${fileName} · ${surviving
+      .map((f) => `${f.ruleId}@L${f.range.start.line + 1}`)
+      .join(", ")}`
+  );
+
+  if (surviving.length === 0) {
+    log("liveReview", `[HYBRID] ▸ all phase-1 findings blocklisted — CLOUD skipped`);
+    return;
+  }
+
+  // Dedup: if the surviving findings exactly match what we last
+  // refined, re-refining would just produce identical output.
+  const sig = findingsSignature(surviving);
+  const lastSig = lastRefinedSignatureByUri.get(uriKey);
+  if (sig === lastSig) {
+    log(
+      "liveReview",
+      `[HYBRID] ▸ phase-1 same as last cloud refine — CLOUD skipped (saved ~$0.0008)`
+    );
+    if (cloudRefineTimer) {
+      clearTimeout(cloudRefineTimer);
+      cloudRefineTimer = null;
+    }
+    // Phase 1 just overwrote the store with rough Qwen findings. The
+    // polished version we already produced last time is strictly
+    // better — restore it so the user doesn't see findings degrade
+    // after the second phase-1 pass on identical signal.
+    const polished = lastRefinedFindingsByUri.get(uriKey);
+    if (polished && polished.length > 0) {
+      suggestionsByUri.set(uriKey, polished);
+      currentSuggestions = polished;
+      log(
+        "liveReview",
+        `[HYBRID] ▸ restored ${polished.length} polished finding${polished.length === 1 ? "" : "s"} from last refine`
+      );
+      refreshAllSurfaces();
+      updateStatusBar();
+      broadcastState();
+    }
+    return;
+  }
+
+  log(
+    "liveReview",
+    `[HYBRID] ▸ scheduling phase-2 CLOUD refine in ${CLOUD_REFINE_DELAY_MS / 1000}s`
+  );
+  if (cloudRefineTimer) clearTimeout(cloudRefineTimer);
+  cloudRefineTimer = setTimeout(async () => {
+    cloudRefineTimer = null;
+    if (!active) return;
+    const ed = vscode.window.activeTextEditor;
+    if (!ed) return;
+    if (ed.document.uri.toString() !== uriKey) {
+      log("liveReview", `[HYBRID] ▸ user switched files · CLOUD skipped`);
+      return;
+    }
+    log(
+      "liveReview",
+      `[CLOUD]  ▸ phase-2 firing · ${fileName} · refining ${surviving.length} candidate${surviving.length === 1 ? "" : "s"} (narrow context, ~75% smaller prompt)`
+    );
+    lastRefinedSignatureByUri.set(uriKey, sig);
+    const phase2 = await runReview(ed, {
+      forceBackend: "cloud",
+      candidates: surviving,
+    });
+
+    // Tier-learning: any candidate whose ruleId did not survive cloud
+    // refinement is a confirmed false positive. Add to the per-URI
+    // blocklist so the next phase-1 pass on this file filters it out
+    // before scheduling another cloud call.
+    //
+    // Safeguard: only update the blocklist when phase-2 returned ≥ 1
+    // finding. A 0-finding response is ambiguous — it could mean "cloud
+    // rejected everything" (legit, would warrant blocklisting) OR the
+    // model returned malformed JSON / the network call failed (parse
+    // returned null → reviewDocument returned []). We can't distinguish
+    // those cases at this layer, so we conservatively skip blocklist
+    // updates when the result is empty. The "all legitimately rejected"
+    // case still self-heals via the phase-1 signature dedup above —
+    // the next identical phase-1 output will short-circuit at "same as
+    // last refine" without firing another cloud call.
+    if (phase2.findings.length === 0) {
+      log(
+        "liveReview",
+        `[CLOUD]  ▸ phase-2 returned 0 findings · blocklist NOT updated (ambiguous: all-rejected vs parse-fail)`
+      );
+      return;
+    }
+    // Save the polished findings so the dedup-skip path in a future
+    // phase-1 pass can restore them (instead of leaving the store with
+    // rough Qwen output after phase-1 overwrites it).
+    lastRefinedFindingsByUri.set(uriKey, phase2.findings);
+
+    const survivedRuleIds = new Set(phase2.findings.map((f) => f.ruleId));
+    const rejectedRuleIds = surviving
+      .map((f) => f.ruleId)
+      .filter((id) => !survivedRuleIds.has(id));
+    if (rejectedRuleIds.length > 0) {
+      const set = rejectedRuleIdsByUri.get(uriKey) ?? new Set<string>();
+      for (const id of rejectedRuleIds) set.add(id);
+      rejectedRuleIdsByUri.set(uriKey, set);
+      log(
+        "liveReview",
+        `[CLOUD]  ▸ rejected ${rejectedRuleIds.length} false positive${rejectedRuleIds.length === 1 ? "" : "s"} · blocklisted for ${fileName}: [${[...new Set(rejectedRuleIds)].join(", ")}]`
+      );
+    } else {
+      log("liveReview", `[CLOUD]  ▸ all ${surviving.length} candidates validated — none blocklisted`);
+    }
+  }, CLOUD_REFINE_DELAY_MS);
+}
+
+/** Why a scan attempt was short-circuited before reaching the LLM. The
+ *  orchestrator uses this to log accurately — "Qwen actually scanned and
+ *  found nothing" vs "we never ran Qwen at all because cache hit / focus
+ *  was off / etc." are different things and the user wants to see which. */
+type ScanSkipReason =
+  | "inactive"
+  | "unfocused"
+  | "non-file"
+  | "cache-identical"
+  | "cache-threshold"
+  | "is-scanning"
+  | "mid-edit";
+
+async function runReview(
+  editor: vscode.TextEditor,
+  opts: {
+    forceBackend?: import("../ai/aiBackend.js").AiBackend;
+    /** When provided, use the refinement prompt path: model validates +
+     *  polishes these specific findings instead of scanning from scratch.
+     *  Phase-2 of the hybrid pipeline passes phase-1's findings here so
+     *  the cloud sees only the relevant lines, not the whole file. */
+    candidates?: Suggestion[];
+  } = {}
+): Promise<{
+  findingsStored: number;
+  findings: Suggestion[];
+  /** Set when the LLM call was never made (cache, focus, mid-edit, etc.).
+   *  Absent means an LLM call actually ran. */
+  skipReason?: ScanSkipReason;
+}> {
+  const NONE = { findingsStored: 0, findings: [] as Suggestion[] };
+  if (!active) return { ...NONE, skipReason: "inactive" as const };
 
   // Window-focus gate: skip scans when the user isn't looking at the
   // IDE. Critical for on-device mode (Qwen 7B inference burns ~5-15W
@@ -765,28 +1049,82 @@ async function runReview(editor: vscode.TextEditor): Promise<void> {
   if (!vscode.window.state.focused) {
     const name = editor.document.fileName.split(/[\\/]/).pop() ?? "file";
     log("liveReview", `LIVE skip · window unfocused · ${name}`);
-    return;
+    return { ...NONE, skipReason: "unfocused" };
+  }
+
+  // Non-file URIs are virtual documents — VS Code's own output channels
+  // (scheme="output"), extension output (scheme="extension-output"),
+  // settings UI, debug consoles, vscode-userdata, etc. They're not user
+  // code; scanning them costs LLM tokens for guaranteed-bad findings
+  // (model invents issues, anchor reconciler then drops them). Bail
+  // before any LLM call. Only `file://` documents are user code.
+  if (editor.document.uri.scheme !== "file") {
+    log(
+      "liveReview",
+      `LIVE skip · non-file scheme="${editor.document.uri.scheme}" · ${editor.document.fileName.split(/[\\/]/).pop() ?? "file"}`
+    );
+    return { ...NONE, skipReason: "non-file" };
   }
 
   const text = editor.document.getText();
   const uriKey = editor.document.uri.toString();
-  // Delta cache: if THIS file's content matches what we last scanned for
-  // it, skip the LLM call regardless of how big the pending edit was —
-  // formatter ran + reverted, undo-redo cycle, file restored from disk,
-  // etc. all show up here as "different intermediate edits, same final
-  // text". The per-URI cache survives tab switches; the global
-  // `lastScannedText` does not, so we check both.
+  const fileName = editor.document.fileName.split(/[\\/]/).pop() ?? "file";
+  const isRefinement = !!(opts.candidates && opts.candidates.length > 0);
+  const backendLabel = isRefinement
+    ? "CLOUD-REFINE"
+    : opts.forceBackend === "on-device"
+      ? "QWEN"
+      : opts.forceBackend === "cloud"
+        ? "CLOUD"
+        : "SCAN";
+
+  // Refinement mode skips both cache layers below. Phase 1 (Qwen) just
+  // stamped lastScannedTextByUri[uri] = text before its own LLM call,
+  // so the cache hit check would otherwise immediately short-circuit
+  // phase 2 — it would NEVER fire unless the user kept typing during
+  // the 60s wait. Refinement is always intentional ("validate these
+  // candidates"); it's never a duplicate scan worth deduplicating.
   const lastTextForUri = lastScannedTextByUri.get(uriKey);
-  if (text === lastTextForUri) {
-    const name = editor.document.fileName.split(/[\\/]/).pop() ?? "file";
-    log("liveReview", `LIVE skip · content unchanged for ${name}`);
-    pendingChangeSize = 0;
-    return;
+  if (!isRefinement) {
+    // ---- Cache layer 1: per-URI text identity ----
+    // If THIS file's content matches what we last scanned for it, skip
+    // the LLM call entirely. Catches: undo-redo cycles back to a clean
+    // state, formatter ran + reverted, file restored from disk,
+    // identical re-scans triggered by multiple paths (idle + tab-switch
+    // racing).
+    if (text === lastTextForUri) {
+      log(
+        "liveReview",
+        `[CACHE] hit · ${fileName} · content unchanged · skipping ${backendLabel} call`
+      );
+      pendingChangeSize = 0;
+      return { ...NONE, skipReason: "cache-identical" };
+    }
+
+    // ---- Cache layer 2: min-change threshold ----
+    // If we've already scanned this URI at least once and the
+    // accumulated edits since then are below MIN_CHANGE_CHARS, skip —
+    // typo corrections and micro-edits don't warrant a fresh LLM call.
+    // The pendingChangeSize counter resets on every successful scan;
+    // tab-switch and startup paths explicitly set it to Infinity to
+    // bypass this gate (they always scan).
+    //
+    // Bug fix (2026-04-29): the prior version was gated by
+    // `pendingChangeSize < N && text === lastScannedText`. That AND
+    // clause is almost never true after a real edit, so the threshold
+    // rarely actually skipped — which meant a 3-char typo correction
+    // triggered a full LLM scan. Removing the AND restores the
+    // intended behavior.
+    if (lastTextForUri !== undefined && pendingChangeSize < MIN_CHANGE_CHARS) {
+      log(
+        "liveReview",
+        `[CACHE] skip · ${fileName} · only ${pendingChangeSize}ch changed (< ${MIN_CHANGE_CHARS}ch threshold)`
+      );
+      return { ...NONE, skipReason: "cache-threshold" };
+    }
   }
-  if (pendingChangeSize < MIN_CHANGE_CHARS && text === lastScannedText) {
-    return;
-  }
-  if (isScanning) return;
+
+  if (isScanning) return { ...NONE, skipReason: "is-scanning" };
 
   // Mid-edit guard: if TS is currently reporting unresolved syntax (user
   // is halfway through typing a JSX tag, function body, etc.), skip this
@@ -796,7 +1134,7 @@ async function runReview(editor: vscode.TextEditor): Promise<void> {
   if (isFileMidEdit(editor)) {
     const name = editor.document.fileName.split(/[\\/]/).pop() ?? "file";
     log("liveReview", `LIVE skip ${name} — cursor near unresolved TS syntax (mid-edit)`);
-    return;
+    return { ...NONE, skipReason: "mid-edit" };
   }
 
   pendingChangeSize = 0;
@@ -822,7 +1160,13 @@ async function runReview(editor: vscode.TextEditor): Promise<void> {
     // Sonnet) ignore this and review the whole file — they have the scale
     // for it and catch cross-function issues a focus window would miss.
     const activeLine = editor.selection.active.line;
-    raw = await reviewDocument(editor.document, cancelSignal, activeLine);
+    raw = await reviewDocument(
+      editor.document,
+      cancelSignal,
+      activeLine,
+      opts.forceBackend,
+      opts.candidates
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log("liveReview", `reviewDocument THREW for ${scanFile} — ${msg}`);
@@ -834,7 +1178,7 @@ async function runReview(editor: vscode.TextEditor): Promise<void> {
     isScanning = false;
     updateStatusBar();
     broadcastState();
-    return;
+    return NONE;
   }
 
   // Line-level dedup: drop Protege findings that land on lines TS has
@@ -937,6 +1281,7 @@ async function runReview(editor: vscode.TextEditor): Promise<void> {
 
   updateStatusBar();
   broadcastState();
+  return { findingsStored: liveAdded.length, findings: liveAdded };
 }
 
 // ---- Registration ----

@@ -25,6 +25,7 @@ import {
   startWakeWordListener,
   stopWakeWordListener,
   isWakeWordListening,
+  isWakeSuspended,
   collectWakeAudio,
   setStrictWakeMode,
   setWakeSuspended,
@@ -35,7 +36,8 @@ import {
   getWakeEnabled,
   setWakeEnabled,
 } from "../voice/wakeWordCalibration.js";
-import { setVoiceState, flashVoiceError } from "../voice/voiceStatusBar.js";
+import { setVoiceState, flashVoiceError, getVoiceGender } from "../voice/voiceStatusBar.js";
+import { trimForVoice } from "../teaching/explainMode.js";
 import { shapeTask, buildShapeContext, verifyUnderstanding } from "../intent/index.js";
 import { devPortMapping, isDevMode, renderDevHtml } from "../devMode.js";
 import {
@@ -51,12 +53,53 @@ import type { EchoHostToWebview } from "@protege/types";
  */
 const mountedWebviews = new Set<vscode.Webview>();
 let speakingDeadman: ReturnType<typeof setTimeout> | null = null;
+// Pending audio-playback watchdogs. When the host broadcasts a voice
+// reply we add an id; when the webview confirms `voice/speaking:true`
+// we delete it so the watchdog no-ops. If still present at +4s the
+// webview never started — surface a popup so the user can react.
+const playbackAckPending = new Set<string>();
+
+/** Audio-blocked hint retired 2026-04-30 — the in-panel banner inside
+ *  the webview (App.tsx → `voice-unlock-banner`) replaces this VS Code
+ *  toast. The banner is closer to the action: clicking it IS the
+ *  activation gesture the browser needs, so one click both dismisses
+ *  the prompt AND unlocks audio. The toast was redundant + the user
+ *  was getting two simultaneous popups. Stub kept so existing
+ *  callsites compile during cleanup; remove when callsites are gone. */
+export function surfaceAudioBlockedHintOnce(): void {
+  // intentional no-op — see comment above.
+}
 // Tracks whether the turn that just spoke was a voice-channel turn — drives
 // the conversational follow-up (auto-open mic after bot stops). Set in
 // handleChat when shouldSpeak fires, consumed when voice/speaking:false
 // arrives. Reset afterwards so text-mode turns that happen between voice
 // sessions don't spuriously trigger follow-ups.
 let pendingFollowUpMode: "voice" | "voice-dialogue" | null = null;
+
+/** Sticky voice-dialogue session flag. When true, every reply re-arms
+ *  the conversational follow-up — the mic auto-opens after each bot
+ *  turn so the user can keep talking like a phone call. Turns ON when
+ *  the user enters voice-dialogue mode (typed text with wake on, or
+ *  voice mode toggled in the panel). Turns OFF when:
+ *    - The user says a closure keyword ("thanks", "got it", "done", …).
+ *    - Wake is toggled off.
+ *    - The user explicitly switches input channels.
+ *  Without this flag, voice-dialogue conversations died after one
+ *  follow-up because binary-triggered turns came in as plain "voice"
+ *  mode and didn't re-arm the loop. */
+let voiceDialogueSessionActive = false;
+
+/** Closure keywords that end the sticky session. Compared
+ *  case-insensitively against the FULL user transcript (after trim).
+ *  Single-word responses dominate so we keep the regex tight — we
+ *  don't want "thanks for explaining, but…" to terminate. The bare
+ *  closing line is the signal. */
+const VOICE_CLOSURE_RE =
+  /^(thanks?|thx|ty|got it|i got it|makes sense|i see|perfect|nice|cool|done|that'?s all|i'?m good|stop|bye|gotcha|ok cool|ok thanks?|all good|good)[\s.!?]*$/i;
+
+export function endVoiceDialogueSession(): void {
+  voiceDialogueSessionActive = false;
+}
 // Transient flag: strip any <learningFork> tag from the next reply and
 // skip fallback injection. Set when we fire a synthetic "Just do it"
 // follow-up so the confirmation reply ("Done — changed X to Y") doesn't
@@ -80,15 +123,39 @@ interface PendingClarifier {
 }
 let pendingClarifier: PendingClarifier | null = null;
 const CLARIFIER_TTL_MS = 3 * 60 * 1000;
-/** Should the mic auto-open after the bot's reply finishes? True only if
- *  the turn was explicitly a voice channel AND wake is still enabled. */
+/** Should the mic auto-open after the bot's reply finishes? True only
+ *  for explicit "voice-dialogue" turns (user typed text while wake was
+ *  on, OR voice mode is engaged for back-and-forth chat). Single-shot
+ *  wake-triggered "voice" turns do NOT auto-open the mic — the user
+ *  said "Protege …" once expecting a one-and-done answer; auto-opening
+ *  feels intrusive ("the chip flipped to Listening even though I didn't
+ *  say Protege"). They can say "Protege" again to start another turn. */
 function shouldTriggerFollowUp(): boolean {
-  if (!pendingFollowUpMode) return false;
-  pendingFollowUpMode = null; // consume
+  const mode = pendingFollowUpMode;
+  pendingFollowUpMode = null; // always consume
+  if (mode !== "voice-dialogue") return false;
   return isWakeWordListening();
 }
 
+// Live broadcast of quota changes — every fetchQuota result fans out
+// to all mounted webviews so the Live tab's "Today's usage" panel
+// updates without the user having to click refresh. Registered once
+// per process; the import is lazy so the extension's activation order
+// doesn't depend on quotaClient being loaded.
+let quotaBroadcasterInstalled = false;
+function ensureQuotaBroadcaster(): void {
+  if (quotaBroadcasterInstalled) return;
+  quotaBroadcasterInstalled = true;
+  void (async () => {
+    const { onQuotaChange } = await import("../user/quotaClient.js");
+    onQuotaChange((snapshot) => {
+      broadcast({ type: "quota/snapshot", snapshot });
+    });
+  })();
+}
+
 export function broadcast(msg: HostToWebview) {
+  ensureQuotaBroadcaster();
   for (const w of mountedWebviews) {
     try {
       w.postMessage(msg);
@@ -156,6 +223,81 @@ function isExplicitTeachAsk(message: string): boolean {
   const trimmed = message.trim();
   if (trimmed.length < 10) return false; // "teach me X" needs a topic
   return EXPLICIT_TEACH_RE.test(trimmed);
+}
+
+/** Voice-mode chat sanitizer. The whole point of voice mode is that the
+ *  user can CLOSE the sidebar — they're listening to prose and watching
+ *  their editor. Code goes through edit_file (lands as a diff in the
+ *  file), explanations are spoken aloud. So any code that leaks into the
+ *  chat reply is dead weight: the user can't read it (sidebar closed)
+ *  and the bot can't speak it intelligibly. Strip it.
+ *
+ *  - Fenced blocks (```...```) → removed
+ *  - Inline backticks (`foo`) → removed (just the ticks AND content)
+ *  - Lines that look like code (braces, `let`/`while`/`function`/`=>`/
+ *    `console.log`/etc.) → removed
+ *  - Collapse the resulting whitespace so the bubble doesn't look gappy. */
+function stripCodeForVoice(text: string): string {
+  // STRUCT signals = unambiguous code patterns that DON'T appear in
+  // ordinary English prose:
+  //   - braces and semicolons (`{`, `}`, `;`)
+  //   - arrow functions (`=>`)
+  //   - increment/decrement operators (`++`, `--`)
+  //   - assignment (`x = y` where both sides look like tokens, NOT `==`)
+  //   - function calls with arguments (`foo(arg`, not bare `foo()`)
+  // Bare keywords like "while" / "return" / "for" are excluded — they
+  // appear in legitimate prose ("the loop will return when…").
+  const STRUCT = new RegExp(
+    [
+      "[{};]",                   // braces / semicolon
+      "=>",                      // arrow function
+      "\\+\\+|--",              // ++ or --
+      "\\b\\w+\\s*=(?!=)\\s*\\S", // assignment: x = something
+      "\\b\\w+\\.\\w+\\(",       // method call: foo.bar(
+      "\\b\\w+\\(\\s*[^)\\s]",  // function call with arg: foo(x
+    ].join("|")
+  );
+  // STRONG keyword signal — appears alongside structural cues most of
+  // the time, so by itself isn't enough, but combined with a colon-
+  // terminated line ("Add this:") it's a tell that the next chunk is code.
+  const STRONG_KW = /\b(const|let|var|function|import|export)\b/;
+  const out: string[] = [];
+  // Remove fenced blocks first so the inline pass doesn't have to
+  // worry about contents.
+  const fenceless = text.replace(/```[\s\S]*?```/g, "");
+  let inCodeRegion = false;
+  for (const raw of fenceless.split("\n")) {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) {
+      // Blank line ends a "code region" run — next non-empty line is
+      // re-evaluated from scratch.
+      inCodeRegion = false;
+      out.push(raw);
+      continue;
+    }
+    const hasStruct = STRUCT.test(trimmed);
+    const hasStrongKw = STRONG_KW.test(trimmed);
+    // Three drop conditions:
+    //  (a) Line has unambiguous structural code (braces, ;, =>, x=y, foo(arg).
+    //  (b) Line has a strong keyword AND no sentence-ending punctuation
+    //      (real prose sentences end in . / ? / ! — code declarations don't).
+    //  (c) We're already in a multi-line code region (entered via prior
+    //      drop) and this line still looks more like code than prose.
+    const endsSentence = /[.!?][")\]]?$/.test(trimmed);
+    const isCode =
+      hasStruct ||
+      (hasStrongKw && !endsSentence) ||
+      (inCodeRegion && !endsSentence && /^[a-z\s\W]/.test(trimmed));
+    if (isCode) {
+      inCodeRegion = true;
+      continue;
+    }
+    inCodeRegion = false;
+    // Strip inline backtick spans entirely — voice users don't see them
+    // and the spoken pass already ate them.
+    out.push(raw.replace(/`[^`\n]+`/g, "").replace(/[ \t]+$/g, ""));
+  }
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 function findLastAssistantReply(): string | null {
@@ -262,7 +404,26 @@ export function mountProtegeWebview(
   };
   const unregisterEcho = registerEchoBroadcastTarget(echoPost);
 
+  // Active abort controller for the in-flight chat turn. The "stop"
+  // button in the composer fires chat/abort → we abort this controller
+  // → fetch + tool-loop bail out → loading clears and the user can type
+  // again. Replaced (and aborted) at the start of every new chat turn
+  // so stale aborts can't poison a fresh request.
+  let activeAbort: AbortController | null = null;
+
   const sub = webview.onDidReceiveMessage(async (msg: WebviewToHost) => {
+    if (msg.type === "chat/abort") {
+      // Abort the in-flight turn so the user can interrupt a long
+      // generation. Doesn't clear the user's message — only kills the
+      // pending response.
+      if (activeAbort) {
+        activeAbort.abort();
+        activeAbort = null;
+        broadcast({ type: "chat/loading", loading: false });
+        console.log("[protege] chat aborted by user");
+      }
+      return;
+    }
     if (msg.type === "chat/send") {
       // Intercept teaching flow follow-up chips
       const text = msg.message.trim().toLowerCase();
@@ -302,6 +463,13 @@ export function mountProtegeWebview(
       );
     } else if (msg.type === "ready") {
       sendInitialState(webview, resolveUserId());
+
+      // Hand the host's backend URL to the webview so its /tts and /log
+      // fetches match whichever server we're hitting (prod, staging,
+      // local). Without this, the webview falls back to its hardcoded
+      // localhost:8787 default and silently fails when host is on prod.
+      const { BACKEND_URL } = await import("../user/protegeClient.js");
+      post(webview, { type: "config/backend", url: BACKEND_URL });
 
       // Hydrate the AI backend choice + last-call info so the Live tab
       // reflects persisted state instead of defaulting to "auto".
@@ -501,12 +669,33 @@ export function mountProtegeWebview(
         const { setDidYouKnowEnabled } = await import("../hints/didYouKnow.js");
         setDidYouKnowEnabled(msg.enabled);
       }
+    } else if (msg.type === "ai/getBackend") {
+      // Live tab mounted late and missed the initial ai/backend push.
+      // Re-send the current persisted backend so its UI hydrates.
+      const { getAiBackend } = await import("../ai/aiBackend.js");
+      post(webview, { type: "ai/backend", backend: getAiBackend() });
+    } else if (msg.type === "quota/get") {
+      // Live tab requesting today's usage. Refetch from backend, then
+      // post the snapshot. On auth/network failure post the last-known
+      // cached value if we have one — better than the panel staying
+      // blank.
+      const { fetchQuota, getCachedQuota } = await import(
+        "../user/quotaClient.js"
+      );
+      const snap = (await fetchQuota()) ?? getCachedQuota();
+      if (snap) post(webview, { type: "quota/snapshot", snapshot: snap });
     } else if (msg.type === "ai/setBackend") {
       const { setAiBackend } = await import("../ai/aiBackend.js");
-      setAiBackend(msg.backend);
+      // Migrate legacy values from older webview builds: "haiku" /
+      // "sonnet" both collapse to the new canonical "cloud".
+      const migrated: "on-device" | "cloud" | "auto" =
+        msg.backend === "haiku" || msg.backend === "sonnet"
+          ? "cloud"
+          : msg.backend;
+      setAiBackend(migrated);
       // Echo the persisted value back so the webview reflects the
       // authoritative host state (and so new panels in parallel hydrate).
-      post(webview, { type: "ai/backend", backend: msg.backend });
+      post(webview, { type: "ai/backend", backend: migrated });
     } else if (msg.type === "explainMode/set") {
       // Persist to the `protege.explainMode` VS Code setting. The
       // onDidChangeConfiguration listener in extension.ts will broadcast
@@ -588,6 +777,23 @@ export function mountProtegeWebview(
       } catch (err) {
         console.warn("[protege] openExternal failed:", err);
       }
+    } else if (msg.type === "voice/setGender") {
+      // VoiceMode's voice picker is the canonical UI now. Persist to the
+      // workspace config so host-side TTS broadcasts (Ghost Lens explain,
+      // teach narrations, file-open greeter) read the same value via
+      // getVoiceGender(). Global target so the choice follows the user
+      // across workspaces.
+      try {
+        await vscode.workspace
+          .getConfiguration("protege")
+          .update(
+            "voice.gender",
+            msg.gender,
+            vscode.ConfigurationTarget.Global
+          );
+      } catch (err) {
+        console.warn("[protege] voice/setGender persist failed:", err);
+      }
     } else if (msg.type === "voice/openInBrowser") {
       const id = requireUserIdOrToast();
       if (!id) return;
@@ -599,12 +805,22 @@ export function mountProtegeWebview(
       }
     } else if (msg.type === "voice/start") {
       try {
+        // Suspend the wake listener while the orb-tap mic is open. Both
+        // paths spawn the same native mic binary; if both run in parallel
+        // they fight for the microphone and the resulting recordings are
+        // corrupted (Whisper then hallucinates garbage like "EMEMHAM").
+        // Suspending the wake stdin layer drops its WAKE/RECORDING events
+        // for the duration without killing the process — cheaper than a
+        // full restart.
+        if (isWakeWordListening()) setWakeSuspended(true);
         // Auto-stop callback: when the binary detects silence and exits
         // on its own, run the same transcribe→chat flow as manual stop.
         const autoStop = async () => {
           try {
             const wav = collectAutoStopAudio();
             post(webview, { type: "voice/recording", active: false });
+            // Resume the wake listener now that we're done capturing.
+            if (isWakeWordListening()) setWakeSuspended(false);
             if (wav.length < 1000) {
               post(webview, { type: "voice/error", error: "Recording too short" });
               return;
@@ -620,6 +836,7 @@ export function mountProtegeWebview(
             await handleChat(webview, id, text, "voice");
           } catch (err) {
             post(webview, { type: "voice/recording", active: false });
+            if (isWakeWordListening()) setWakeSuspended(false);
             const stopErr = err instanceof Error ? err.message : String(err);
             post(webview, { type: "voice/error", error: stopErr });
           }
@@ -627,6 +844,7 @@ export function mountProtegeWebview(
         await startRecording(context.extensionUri.fsPath, autoStop);
         post(webview, { type: "voice/recording", active: true });
       } catch (err) {
+        if (isWakeWordListening()) setWakeSuspended(false);
         const startErr = err instanceof Error ? err.message : String(err);
         post(webview, { type: "voice/error", error: startErr });
       }
@@ -634,6 +852,8 @@ export function mountProtegeWebview(
       try {
         const wav = await stopRecording();
         post(webview, { type: "voice/recording", active: false });
+        // Resume the wake listener — orb-tap recording is done.
+        if (isWakeWordListening()) setWakeSuspended(false);
         if (wav.length < 1000) {
           post(webview, { type: "voice/error", error: "Recording too short" });
           return;
@@ -649,10 +869,14 @@ export function mountProtegeWebview(
         await handleChat(webview, id, text, "voice");
       } catch (err) {
         post(webview, { type: "voice/recording", active: false });
+        if (isWakeWordListening()) setWakeSuspended(false);
         const stopErr = err instanceof Error ? err.message : String(err);
         post(webview, { type: "voice/error", error: stopErr });
       }
     } else if (msg.type === "voice/playbackDone") {
+      console.log(
+        `[protege] voice/playbackDone reason=${msg.reason}${msg.requestId ? ` requestId=${msg.requestId}` : " (no requestId — ghost lens / direct)"}`
+      );
       // If this was a teach_step clip (has requestId), resolve the tool's
       // awaiter so Claude can issue the next step. Otherwise it was a
       // Ghost Lens voice explanation — pass it to the ghostMentor chip swap.
@@ -664,6 +888,14 @@ export function mountProtegeWebview(
         void onVoicePlaybackDone(msg.reason);
       }
     } else if (msg.type === "voice/speaking") {
+      console.log(
+        `[protege] voice/speaking active=${msg.active} (from webview audio.${msg.active ? "onplaying" : "onended"})`
+      );
+      // Audio actually started — clear ALL pending watchdogs. The set
+      // could hold stale ids from prior turns whose acks raced; clearing
+      // wholesale is safe because each broadcast adds its own id and
+      // only the most recent matters for "did this reply play?"
+      if (msg.active) playbackAckPending.clear();
       // Bot starts speaking → fully suspend the wake listener. No wake
       // events, no recordings. Bot voice bleeding back through the mic
       // cannot self-trigger the loop ("Oh yeah you brought the book…").
@@ -803,7 +1035,12 @@ async function sendInitialState(webview: vscode.Webview, userId: string | null) 
   }
 }
 
-function post(webview: vscode.Webview, msg: HostToWebview) {
+function post(webview: vscode.Webview | null, msg: HostToWebview) {
+  // Null webview = zero-UI mode (sidebar closed, voice still running).
+  // No-op silently — UI updates have nowhere to land. The audio path,
+  // history persistence, and status-bar chip all run independently and
+  // don't go through this function.
+  if (!webview) return;
   webview.postMessage(msg);
 }
 
@@ -837,6 +1074,9 @@ export async function toggleGlobalWake(
     broadcast({ type: "wake/state", active: false });
     await setWakeEnabled(context, false);
     setVoiceState("off");
+    // End any active voice-dialogue session — wake off means the user
+    // is opting out of conversation entirely, not pausing mid-thread.
+    endVoiceDialogueSession();
   } else {
     await setWakeEnabled(context, true);
     await startGlobalWakeListener(context, userId);
@@ -849,6 +1089,11 @@ export async function toggleGlobalWake(
  *  AFTER the listener started. If the user closed the sidebar and wake
  *  fires, we reveal the launcher so there's a panel to play audio.
  *  Idempotent — safe to call multiple times. */
+/** Pending "flip chip to Listening" timer. See onWake/onRecordingDone
+ *  for why it exists — defers the state change so background-noise
+ *  false positives don't visibly bounce the status bar. */
+let wakeListeningTimer: ReturnType<typeof setTimeout> | null = null;
+
 export async function startGlobalWakeListener(
   context: vscode.ExtensionContext,
   userId: string
@@ -868,27 +1113,70 @@ export async function startGlobalWakeListener(
           setVoiceState("idle");
         },
         onWake: () => {
-          // Sidebar closed? Reveal it so the reply has somewhere to play.
-          if (mountedWebviews.size === 0) {
-            vscode.commands
-              .executeCommand("protege.launcher.focus")
-              .then(undefined, () => {});
-          }
+          // While the bot is speaking, the mic still picks up "Protege"
+          // echoes from the speakers. The wake-suspension layer drops
+          // those before they become real recordings — but the status
+          // bar update was firing BEFORE that check, so the chip kept
+          // flickering "Listening" mid-bot-speech. Skip the chip update
+          // when suspended so it stays on whatever real state it had
+          // (typically "Speaking" while the bot is talking).
+          if (isWakeSuspended()) return;
+          // Zero-UI mode (2026-04-30): sidebar stays closed if the user
+          // closed it. Audio plays via host-side afplay (hostAudio.ts),
+          // status-bar chip carries the visual state, and chat history
+          // persists so anything spoken is visible if/when the user
+          // opens the panel later. Removed the auto-open that used to
+          // force-reveal the sidebar — that was needed when audio went
+          // through the webview's <audio> element (autoplay-blocked),
+          // not anymore.
           broadcast({ type: "voice/recording", active: true });
           broadcast({ type: "wake/state", active: true, status: "recording" });
-          setVoiceState("listening");
+          // Delay the status-bar flip by 600ms. Background noise often
+          // scores above the wake-word threshold, fires WAKE:detected,
+          // and produces a sub-second recording that gets discarded as
+          // <1000 bytes. Without the delay the chip flashed "Listening"
+          // for every false positive, and to the user it looked
+          // permanently stuck on "Listening". A real "Protege, …" stays
+          // recording past the window so the flip lands normally.
+          if (wakeListeningTimer) clearTimeout(wakeListeningTimer);
+          wakeListeningTimer = setTimeout(() => {
+            wakeListeningTimer = null;
+            setVoiceState("listening");
+          }, 600);
         },
         onRecordingDone: async () => {
           try {
             const wav = collectWakeAudio();
             broadcast({ type: "voice/recording", active: false });
             broadcast({ type: "wake/state", active: true, status: "listening" });
+            // Cancel any pending listening flip — if recording ended
+            // before the 600ms timer, this was a false positive and we
+            // should never have surfaced "Listening" at all.
+            if (wakeListeningTimer) {
+              clearTimeout(wakeListeningTimer);
+              wakeListeningTimer = null;
+            }
+            // Suspended at recording-end means the bot started speaking
+            // mid-recording — the audio is bot-bleed, not a real user
+            // turn. Resync the chip (so it doesn't stay stuck on
+            // "Listening") and drop the buffer instead of sending it
+            // to STT. The chip's "no downgrade from speaking/thinking"
+            // guard inside setVoiceState handles the case where bot
+            // playback is still active.
+            if (isWakeSuspended()) {
+              setVoiceState("idle");
+              return;
+            }
             if (wav.length < 1000) {
               setVoiceState("idle");
               return;
             }
             setVoiceState("thinking");
-            broadcast({ type: "voice/fillerPlay" });
+            // "Mm-hmm" filler retired 2026-04-30 — Kokoro renders it as
+            // a slurred "ememham" sound that confused the user before
+            // every reply. Real reply latency is short enough that the
+            // acknowledgment isn't necessary.
+            // broadcast({ type: "voice/fillerPlay" });
             const text = await transcribe(wav);
             if (!text.trim()) {
               setVoiceState("idle");
@@ -907,15 +1195,15 @@ export async function startGlobalWakeListener(
               return;
             }
             broadcast({ type: "voice/transcript", text });
-            const target = await ensureWebviewMounted();
-            if (!target) {
-              broadcast({
-                type: "voice/error",
-                error: "Open the Protege panel so the reply can play.",
-              });
-              flashVoiceError();
-              return;
-            }
+            // Zero-UI mode (2026-04-30): skip the "Open the Protege panel"
+            // hard-fail. Audio plays host-side, transcripts persist to
+            // global state, and any post(webview, …) inside handleChat
+            // either no-ops (no webview) or hits whichever panel is
+            // mounted. Look up a webview if one IS open (so direct
+            // posts still land), otherwise pass null and let the
+            // broadcast paths handle UI.
+            const target =
+              mountedWebviews.size > 0 ? [...mountedWebviews][0]! : null;
             // Resolve userId at fire time — the wake listener may have been
             // started under a stale id that has since signed out.
             const liveId = currentUserIdOrNull();
@@ -981,7 +1269,11 @@ const TEACH_INTENT_RE =
   /\b(teach me|walk me through|show me how|explain this|explain that|explain it|break this down|break it down|help me understand|tutor me|how does this work|step by step)\b/i;
 
 async function handleChat(
-  webview: vscode.Webview,
+  // Nullable post-2026-04-30 zero-UI work: voice flow can run with no
+  // sidebar open. UI-only `post(webview, …)` calls inside this function
+  // must guard against null (no panel = nothing to update visually,
+  // but everything else still runs and audio still plays).
+  webview: vscode.Webview | null,
   userId: string,
   message: string,
   mode: "text" | "voice" | "voice-dialogue" | "teaching" | "teaching-text",
@@ -1033,6 +1325,13 @@ async function handleChat(
     };
     broadcast({ type: "chat/append", message: ack });
     appendMessage(ack);
+    // The webview flips loading=true optimistically when the user clicks
+    // send (App.tsx:926). The Learning panel takes over the sidebar — no
+    // chat reply is coming — so we must explicitly clear chat/loading or
+    // the typing-dots ("thinking…") indicator hangs forever. Without this,
+    // user reported "it has been thinking for 2 minutes" while the
+    // Learning panel was actually running fine.
+    broadcast({ type: "chat/loading", loading: false });
     // Fire the command. It does its own active-editor / enabled /
     // concurrency-guard checks; if any fail it shows its own error.
     await vscode.commands.executeCommand("protege.learning.start", {
@@ -1112,6 +1411,37 @@ async function handleChat(
   // read aloud for 40 seconds.
   if (effectiveMode === "text" && isWakeWordListening()) {
     effectiveMode = "voice-dialogue";
+  }
+
+  // Sticky voice-dialogue session. Once entered (typed text with wake
+  // on, or any explicit voice-dialogue turn), the flag stays ON across
+  // subsequent binary-triggered "voice" turns so the conversational
+  // follow-up keeps re-arming. Turns OFF when the user says a closure
+  // keyword ("thanks"/"got it"/"done"/…) on this turn — we'll let the
+  // bot's wrap-up line play, but the post-reply auto-mic-open is
+  // skipped so the loop ends cleanly.
+  if (effectiveMode === "voice-dialogue") {
+    voiceDialogueSessionActive = true;
+  }
+  // Pure-voice (wake-binary) turns inside an active session are ALSO
+  // treated as voice-dialogue for follow-up purposes — without this,
+  // the loop dies after one back-and-forth because the binary path
+  // emits mode="voice".
+  if (voiceDialogueSessionActive && effectiveMode === "voice") {
+    effectiveMode = "voice-dialogue";
+  }
+  // Closure detection — if the bare user transcript is a single
+  // closure word, end the session NOW. The reply will still play
+  // (the bot already responds with a wrap-up line via the prompt
+  // guidance), but no follow-up mic-open after it.
+  if (
+    voiceDialogueSessionActive &&
+    VOICE_CLOSURE_RE.test(message.trim())
+  ) {
+    voiceDialogueSessionActive = false;
+    console.log(
+      `[protege] voice-dialogue session ended by closure keyword: "${message.trim().slice(0, 30)}"`
+    );
   }
 
   // Wipe any lingering highlight decorations from a previous turn. The
@@ -1206,7 +1536,49 @@ async function handleChat(
         // we fixed earlier for regular voice replies.
         pendingFollowUpMode = "voice-dialogue";
       }
-      broadcast({ type: "voice/playExplain", text: understanding.clarifier });
+      console.log(
+        `[protege] clarifier voice broadcast — ${understanding.clarifier.length}ch · webviews=${mountedWebviews.size} · clarifierVoice=${clarifierVoice}`
+      );
+      // Host-side audio path — see hostAudio.ts for why we bypass the
+      // webview's <audio> element. Awaiter-free, fire and forget — the
+      // chip transitions back to idle when afplay exits. Streaming
+      // variant splits the clarifier into sentences so the first one
+      // starts playing after a single TTS round-trip.
+      const { playHostAudioStreaming: playHostAudio } = await import(
+        "../voice/hostAudio.js"
+      );
+      void playHostAudio(
+        { text: understanding.clarifier, voice: getVoiceGender() },
+        {
+          onEnd: () => {
+            setStrictWakeMode(false);
+            setVoiceState(isWakeWordListening() ? "idle" : "off");
+            // 500ms decay + conversational follow-up trigger — same
+            // sequence the chat-reply path uses. The clarifier set
+            // pendingFollowUpMode = "voice-dialogue" above; consume
+            // it now so the mic auto-opens for the user's answer.
+            setTimeout(() => {
+              setWakeSuspended(false);
+              if (shouldTriggerFollowUp()) {
+                const ok = triggerFollowUp();
+                console.log(
+                  `[protege] voice follow-up triggered (clarifier path) ok=${ok}`
+                );
+              }
+            }, 500);
+          },
+          // Barge-in fires when the user starts speaking over the
+          // clarifier. armBargeIn already killed afplay, flipped the
+          // chip, unsuspended wake, and triggered FOLLOW_UP. We just
+          // need to clear our local state — strict-mode flag and the
+          // pending follow-up consume marker — so the next legit onEnd
+          // (or the next user turn) doesn't double-fire anything.
+          onBargeIn: () => {
+            setStrictWakeMode(false);
+            pendingFollowUpMode = null;
+          },
+        }
+      );
     }
     broadcast({ type: "chat/loading", loading: false });
     if (!clarifierVoice && isWakeWordListening()) {
@@ -1221,6 +1593,17 @@ async function handleChat(
   // mounted Protege view, not just `webview`. Same rationale as the
   // chat/append broadcast above.
   broadcast({ type: "chat/loading", loading: true });
+
+  // Mirror the loading state on the VS Code status bar so the bottom-of-
+  // screen chip reads "thinking" instead of staying on a stale "listening"
+  // (left over from wake-word capture). Voice turns already handle this in
+  // onRecordingDone, but text turns never touched the status bar — so a
+  // user who typed while wake was on saw "Listening" the whole reply.
+  // Only flip when wake is enabled — with wake off the chip is "off" and
+  // we don't want to repurpose it as a chat-loading indicator.
+  if (isWakeWordListening()) {
+    setVoiceState("thinking");
+  }
 
   // Context window for the AI. Prefer `contextMessages` from the
   // webview when provided — that's the current session's visible
@@ -1274,7 +1657,13 @@ async function handleChat(
     const shouldSpeak =
       effectiveMode === "voice" ||
       effectiveMode === "voice-dialogue" ||
-      (effectiveMode === "teaching" && voiceChannel && replyHasText);
+      (effectiveMode === "teaching" && voiceChannel && replyHasText) ||
+      // teaching-text turns also speak when the voice channel is
+      // open (wake word listening or current turn was voice). The
+      // user typed via keyboard but has voice on — they still expect
+      // the bot to speak the response. Without this, voice users in
+      // a lesson hear silence after every typed message.
+      (effectiveMode === "teaching-text" && voiceChannel && replyHasText);
     // Learning-fork reconciliation: keep the LLM honest.
     //   - If the user's message had build/teach intent AND the reply has
     //     NO <learningFork> tag AND gate conditions pass, inject one
@@ -1376,10 +1765,22 @@ async function handleChat(
     } else if (forkAllowed && !userHasBuildIntent && replyHasFork) {
       finalReply = finalReply.replace(FORK_TAG_RE, "").trimEnd();
     }
+    // Display rule (revised 2026-04-30): show finalReply verbatim, no
+    // line-drop pass. The previous implementation called
+    // `stripCodeForVoice(finalReply)` for voice turns to scrub inline
+    // code out of the chat bubble. Problem: it operated line-by-line
+    // and dropped any line containing `;`, `++`, `=>`, or `x = y`.
+    // When the model packed multiple sentences into one paragraph
+    // ("While repeats while its condition is true; i++ is the progress.
+    // Refresh—see three lines…"), the `;` matched the structural-code
+    // pattern and the entire reply got wiped — bubble showed empty.
+    // The TTS path still uses `trimForVoice` below to keep audio clean,
+    // so removing the display-side strip only affects what we render.
+    const displayReply = finalReply;
     const assistant: ChatMessage = {
       id: crypto.randomUUID(),
       role: "assistant",
-      content: finalReply,
+      content: displayReply,
       createdAt: new Date().toISOString(),
       source: shouldSpeak ? "voice" : "text",
     };
@@ -1392,8 +1793,30 @@ async function handleChat(
     // saw the user's own message locally (optimistic append) so a
     // duplicate assistant render across panels is harmless.
     broadcast({ type: "chat/append", message: assistant });
+    // Refresh the quota snapshot now that the backend has incremented
+    // teach_calls + tool_calls + cost for this turn. `fetchQuota` emits
+    // through `onQuotaChange`, which the broadcaster above is wired to —
+    // so the Profile panel's usage bars update without polling. Fire and
+    // forget: a failed refresh just means the bars reflect the previous
+    // value until the next call (or the 30s TTL refetch in the Live tab).
+    void (async () => {
+      const { fetchQuota } = await import("../user/quotaClient.js");
+      void fetchQuota();
+    })();
     if (shouldSpeak) {
-      const spoken = finalReply.trim();
+      // Strip code fences, inline code, bold/italic markdown, and bullets
+      // before sending to TTS. Without this, Kokoro reads "let i equals
+      // zero curly brace console dot log…" out loud OR chokes on the
+      // syntax and produces silence — which is what the user hit when
+      // the model emitted a fenced snippet in a voice reply. The chat
+      // panel still renders the original `finalReply` (broadcast above
+      // via chat/append), so the visual code block is preserved; only
+      // the spoken text is sanitized. Word cap tightened 2026-04-30
+      // again 70 → 50: AI-vs-AI sim showed Haiku 4.5 still produces
+      // 80-word lectures despite the 30-word target. trimForVoice clips
+      // to the last sentence boundary at-or-before the cap, so the user
+      // hears clean stops (~2 sentences) instead of 25-second monologues.
+      const spoken = trimForVoice(finalReply, 50);
       // Pre-suspend wake BEFORE the broadcast. Otherwise the chain is
       // broadcast → webview → fetch /tts → onplaying → post :true → host
       // suspend — that's 100–300ms of latency during which the bot's
@@ -1416,7 +1839,56 @@ async function handleChat(
         `[protege] voice reply → broadcast voice/playExplain: ${spoken.length} chars, ${mountedWebviews.size} webviews, effectiveMode=${effectiveMode}, wakeOn=${isWakeWordListening()}`
       );
       if (spoken.length > 0) {
-        broadcast({ type: "voice/playExplain", text: spoken });
+        // Host-side audio playback (2026-04-30): bypass the webview's
+        // autoplay-locked <audio> element entirely by spawning the OS
+        // audio player. afplay on macOS, powershell on Windows, aplay
+        // on Linux. The OS has no autoplay policy, so audio plays
+        // whether or not the user has clicked inside the panel.
+        const { playHostAudioStreaming: playHostAudio } = await import("../voice/hostAudio.js");
+        void playHostAudio(
+          { text: spoken, voice: getVoiceGender() },
+          {
+            onEnd: (reason) => {
+              setStrictWakeMode(false);
+              // Chip restoration ("idle"|"off") is owned by hostAudio.ts
+              // now — see playHostAudioStreaming cleanup. Calling
+              // setVoiceState("idle") here used to clobber the correct
+              // "off" state when wake was disabled (text-mode TTS).
+              // 500ms decay before unsuspending wake — same delay the
+              // old voice/speaking:false handler used. Lets speaker
+              // reverb die down so the bot's last syllable doesn't
+              // re-trigger wake through the mic.
+              setTimeout(() => {
+                setWakeSuspended(false);
+                // Conversational follow-up: if this was a voice or
+                // voice-dialogue turn, auto-open the mic so the user
+                // can reply without saying "Protege" again. Without
+                // this, follow-up dialogues don't work — we used to
+                // trigger off the webview's voice/speaking:false post
+                // from audio.onended, but host-side audio doesn't
+                // post that.
+                if (shouldTriggerFollowUp()) {
+                  const ok = triggerFollowUp();
+                  console.log(
+                    `[protege] voice follow-up triggered (host audio path) ok=${ok}`
+                  );
+                }
+              }, 500);
+              if (reason === "error") {
+                console.warn(
+                  `[protege] host audio: chat reply playback errored (effectiveMode=${effectiveMode})`
+                );
+              }
+            },
+            // armBargeIn already killed audio, flipped the chip,
+            // unsuspended wake, and triggered FOLLOW_UP. Just clear
+            // local state so the next turn starts clean.
+            onBargeIn: () => {
+              setStrictWakeMode(false);
+              pendingFollowUpMode = null;
+            },
+          }
+        );
       }
     } else {
       console.log(
@@ -1453,10 +1925,32 @@ async function handleChat(
       // Router failures are non-fatal — chat still works fine
     }
   } catch (err) {
-    post(webview, {
-      type: "chat/error",
-      error: err instanceof Error ? err.message : "Unknown error",
-    });
+    // Daily-quota 429s carry structured fields (kind/used/limit/resetAt)
+    // — pass them through so the webview renders a friendly limit-reached
+    // banner with a countdown instead of the generic red error line.
+    const { QuotaExceededChatError } = await import("./chatRunner.js");
+    if (err instanceof QuotaExceededChatError) {
+      post(webview, {
+        type: "chat/error",
+        error: err.message,
+        quota: {
+          kind: err.kind as never,
+          used: err.used,
+          limit: err.limit,
+          resetAt: err.resetAt,
+        },
+      });
+      // Refresh the snapshot so the Profile/Live usage panels reflect
+      // the cap that just tripped (the call would otherwise stay
+      // 30s-stale until the next polling tick).
+      const { fetchQuota } = await import("../user/quotaClient.js");
+      void fetchQuota();
+    } else {
+      post(webview, {
+        type: "chat/error",
+        error: err instanceof Error ? err.message : "Unknown error",
+      });
+    }
     // Chat errored — state was at "thinking" from the earlier onWake
     // path. Without explicit reset, status bar hangs there indefinitely.
     if (isWakeWordListening()) {

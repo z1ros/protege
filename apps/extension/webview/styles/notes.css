@@ -81,8 +81,16 @@
 /* ---- Notes history panel ---------------------------------
    The panel itself uses the shared `.chp-*` classes from
    styles/chat/history.css for full visual parity with the chat
-   history view. Below: only the notes-specific extension —
-   `.chp-turn--active` highlights the currently-loaded note. */
+   history view. Below: notes-specific extensions —
+     - `.chp-turn--active` highlights the currently-loaded note.
+     - `.chp-turn-trash` is a per-card delete button that fades
+       in on hover and uses the same two-click armed pattern as
+       the editor-head trash (a `confirm()` dialog wouldn't fire
+       in a VS Code webview, so an inline armed state is the
+       reliable confirm affordance).
+     - `.chp-turn--armed` paints a rose wash on the card itself
+       so the user knows which card is primed for deletion even
+       if their cursor leaves the trash icon. */
 .chp-turn--active {
   background:
     linear-gradient(
@@ -94,6 +102,75 @@
 }
 .chp-turn--active::before {
   opacity: 1;
+}
+
+/* Per-card trash button. Sits absolute in the bottom-right; default
+   opacity 0 so the card reads clean, fades in when the user hovers
+   the card OR keyboard-focuses it. Click bubble is stopped in JS so
+   triggering the trash doesn't ALSO open the note. */
+.chp-turn {
+  position: relative;
+}
+.chp-turn-trash {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-faint);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(2px);
+  transition: opacity 140ms ease, transform 140ms ease,
+    color 140ms ease, background 140ms ease, border-color 140ms ease;
+}
+.chp-turn:hover .chp-turn-trash,
+.chp-turn:focus-within .chp-turn-trash,
+.chp-turn-trash:focus-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.chp-turn-trash:hover {
+  color: var(--rose);
+  background: rgba(var(--rose-rgb), 0.1);
+  border-color: rgba(var(--rose-rgb), 0.4);
+}
+
+/* Armed visual on the card (first click of two-click delete).
+   Rose-tinted background overrides the active highlight so the user
+   sees the danger state regardless of which note is currently open.
+   The trash button itself stays solid + pulses. */
+.chp-turn--armed,
+.chp-turn--armed:hover {
+  background:
+    linear-gradient(
+      rgba(var(--rose-rgb), 0.12),
+      rgba(var(--rose-rgb), 0.08)
+    ),
+    rgba(var(--ink-rgb), 0.78);
+  border-color: rgba(var(--rose-rgb), 0.5);
+  transform: none; /* override the chp-turn:hover lift so the armed
+                      card sits still and the pulsing trash is the
+                      focal point */
+}
+.chp-turn--armed::before {
+  background: rgba(var(--rose-rgb), 0.7);
+  opacity: 1;
+}
+.chp-turn-trash--armed,
+.chp-turn-trash--armed:hover {
+  opacity: 1;
+  transform: translateY(0);
+  color: var(--glow);
+  background: rgba(var(--rose-rgb), 0.65);
+  border-color: rgba(var(--rose-rgb), 0.9);
+  animation: notes-trash-arm 1.4s ease-in-out infinite;
 }
 
 /* ---- Editor pane --------------------------------------- */
@@ -134,6 +211,17 @@
   padding: 4px 0;
 }
 .notes-title-input::placeholder { color: var(--text-faint); }
+/* Kill the Chromium `:focus-visible` ring. The base `outline: none`
+   above only suppresses the legacy `:focus` outline; modern browsers
+   paint a separate accessibility ring on `:focus-visible` (and
+   programmatic `.focus()` calls — e.g. our auto-focus on a fresh note
+   — count as keyboard-like, so the ring fires there too). The caret
+   blinking inside the input is enough of a focus cue. */
+.notes-title-input:focus,
+.notes-title-input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
 
 /* Editor head action buttons. Layout: [history] [new] [title…] [trash].
    The flex gap on .notes-editor-head spaces the cluster items at 6px;
