@@ -11,7 +11,11 @@ import { authHeaders, getCachedGitHubUser, getGitHubUser, clearCachedUser } from
  * Read once at module load. Changing the setting requires reloading the
  * window — the extension caches BACKEND_URL across all callers.
  */
-const PROD_BACKEND_URL = "https://protege-backend-production.up.railway.app";
+/** Canonical production backend URL — Railway-hosted Hono server. */
+export const PROD_BACKEND_URL = "https://protege-backend-production.up.railway.app";
+
+/** Local-dev backend URL — what `pnpm dev` in apps/backend listens on. */
+export const LOCAL_BACKEND_URL = "http://localhost:8787";
 
 function resolveBackendUrl(): string {
   const envOverride = process.env.PROTEGE_BACKEND_URL;

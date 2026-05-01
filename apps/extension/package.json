@@ -75,6 +75,10 @@
         "title": "Protege: Show Logs"
       },
       {
+        "command": "protege.switchBackend",
+        "title": "Protege: Switch Backend (Production ↔ Local)"
+      },
+      {
         "command": "protege.toggleVoiceExplain",
         "title": "Protege: Cycle Explain Mode (text → voice → both)"
       },
