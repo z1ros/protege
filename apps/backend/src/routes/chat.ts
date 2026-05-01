@@ -10,7 +10,7 @@ import type {
 import { MENTOR_SYSTEM_PROMPT } from "../anthropic.js";
 import { callChat, getProvider } from "../llm.js";
 import { githubAuth, resolveUserId } from "../middleware/auth.js";
-import { enforceQuotaInline } from "../middleware/quota.js";
+import { enforceQuotaInline, enforceCostCapOnly } from "../middleware/quota.js";
 import {
   addCostUsd,
   addChatMinutes,
@@ -599,8 +599,23 @@ chatRoute.post("/", async (c) => {
   // auto-fired calls), "premium" → "teach" (chat / Compare / Fix it).
   // The 429 short-circuits the request before any model is called, so
   // a user past their daily limit never burns more tokens.
+  //
+  // Honest accounting: a single user turn can produce multiple `/chat`
+  // round-trips when the LLM uses tools (read_file, search, …). Only
+  // the FIRST round of each user turn (the one carrying
+  // `body.newUserMessage` with no `body.toolResults`) bumps the
+  // route counter — tool re-fires only re-check the $ cap. Without
+  // this split, 3 user-typed messages with multi-tool reasoning could
+  // land as "9 / 100" in the Profile panel, which is what users see
+  // and (correctly) call out as wrong.
   const quotaKind = tier === "cheap" ? "scan" : "teach";
-  const blocked = await enforceQuotaInline(c, quotaKind);
+  const isFirstRoundOfUserTurn =
+    typeof body.newUserMessage === "string" &&
+    body.newUserMessage.length > 0 &&
+    (!body.toolResults || body.toolResults.length === 0);
+  const blocked = isFirstRoundOfUserTurn
+    ? await enforceQuotaInline(c, quotaKind)
+    : await enforceCostCapOnly(c);
   if (blocked) return blocked;
 
   // Tool-call ceiling — separate from the chat-message ceiling.

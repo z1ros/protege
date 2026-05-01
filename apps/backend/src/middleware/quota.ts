@@ -1,6 +1,7 @@
 import type { MiddlewareHandler } from "hono";
 import {
   checkAndIncrement,
+  checkDollarCapOnly,
   quotasEnforced,
   type QuotaKind,
 } from "../quotas.js";
@@ -80,6 +81,42 @@ export async function enforceQuotaInline(
   const userId = getAuthenticatedUserId(c);
   if (!userId) return null;
   const result = await checkAndIncrement(userId, kind);
+  if (result.allowed) return null;
+  if (!quotasEnforced()) return null;
+  return c.json(
+    {
+      error: "daily quota exceeded",
+      kind: result.kind,
+      reason: result.reason,
+      used: result.used,
+      limit: result.limit,
+      resetAt: result.resetAt,
+    },
+    429
+  );
+}
+
+/**
+ * Cost-cap gate for the case where a route is being hit on a SECOND
+ * leg of a single user turn (e.g. tool-use re-fires from `/chat`).
+ *
+ * Different from `enforceQuotaInline` because:
+ *   - No increment of the route counter. The user-facing "Chat messages"
+ *     metric should reflect user-typed turns, not internal multi-round
+ *     tool execution. Bumping it on every tool re-fire is what made 3
+ *     typed messages show up as "9 / 100" in the panel.
+ *   - Still enforces the $ daily ceiling so a runaway tool loop can't
+ *     blow through the cost cap. That's what the dollar guard exists
+ *     for in the first place.
+ *
+ * Returns 429 Response when blocked, null when allowed.
+ */
+export async function enforceCostCapOnly(
+  c: Parameters<MiddlewareHandler>[0]
+): Promise<Response | null> {
+  const userId = getAuthenticatedUserId(c);
+  if (!userId) return null;
+  const result = await checkDollarCapOnly(userId);
   if (result.allowed) return null;
   if (!quotasEnforced()) return null;
   return c.json(

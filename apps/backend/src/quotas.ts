@@ -351,6 +351,53 @@ export async function checkAndIncrement(
 }
 
 /**
+ * Check the $ daily ceiling without incrementing any counter. Used by
+ * the `/chat` route on tool-use re-fires (a single user turn that
+ * needs multiple round-trips through the LLM): we still want to stop
+ * a runaway cost spiral, but we do NOT want to inflate the user-facing
+ * "Chat messages" counter — that should reflect user-typed turns only.
+ */
+export async function checkDollarCapOnly(
+  userId: string
+): Promise<
+  | { allowed: true }
+  | {
+      allowed: false;
+      reason: "dollar-cap";
+      kind: QuotaKind;
+      used: number;
+      limit: number;
+      resetAt: number;
+    }
+> {
+  if (!isQuotaSchemaReady()) return { allowed: true };
+  const sb = getSupabase();
+  if (!sb) return { allowed: true };
+  const day = utcDay();
+  const { data, error } = await sb
+    .from("user_quotas")
+    .select("total_usd_estimate")
+    .eq("user_id", userId)
+    .eq("day", day)
+    .maybeSingle();
+  if (error || !data) return { allowed: true };
+  const usd = (data as { total_usd_estimate: number }).total_usd_estimate;
+  if (usd >= DAILY_USD_HARD_CAP) {
+    return {
+      allowed: false,
+      reason: "dollar-cap",
+      // Reuse the chat-tier kind so the toast wording stays user-friendly
+      // ("You've hit today's $X ceiling for AI usage").
+      kind: "teach",
+      used: usd,
+      limit: DAILY_USD_HARD_CAP,
+      resetAt: nextResetMs(),
+    };
+  }
+  return { allowed: true };
+}
+
+/**
  * Add a $ delta to today's running estimate. Called from the route
  * handler AFTER it knows the actual token usage of the call.
  *
