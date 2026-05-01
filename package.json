@@ -12,5 +12,11 @@
   },
   "devDependencies": {
     "typescript": "^5.6.0"
+  },
+  "pnpm": {
+    "neverBuiltDependencies": [
+      "node-llama-cpp",
+      "onnxruntime-node"
+    ]
   }
 }

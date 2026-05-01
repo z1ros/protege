@@ -17,12 +17,11 @@
 
 [build]
 builder = "NIXPACKS"
-# --filter "...@protege/backend" installs only backend + its workspace deps,
-# skipping the extension's heavy native deps (node-llama-cpp, onnxruntime-node
-# CUDA libs) that crash on a server-class build environment.
+# pnpm.neverBuiltDependencies in root package.json blocks node-llama-cpp
+# and onnxruntime-node postinstalls (extension-only, not used by backend).
 buildCommand = """
 corepack enable && \
-pnpm install --filter "...@protege/backend" --frozen-lockfile && \
+pnpm install --frozen-lockfile && \
 pnpm --filter @protege/backend exec prisma generate && \
 pnpm --filter @protege/backend build
 """
