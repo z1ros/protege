@@ -125,6 +125,6 @@ A mentor that never disappears.
 
 ---
 
-**© 2026 Protege Labs, Inc.** · Building · Early access · [Privacy](https://github.com/z1ros/yurii.dev-portfolio) · [Terms](https://github.com/z1ros/yurii.dev-portfolio)
+**© 2026 Protege Labs, Inc.** · Building · Early access · [Privacy](https://www.protege.studio/privacy) · [Terms](https://www.protege.studio/terms)
 
 License: MIT
