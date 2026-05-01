@@ -1154,6 +1154,12 @@ export async function toggleGlobalWake(
  *  for why it exists — defers the state change so background-noise
  *  false positives don't visibly bounce the status bar. */
 let wakeListeningTimer: ReturnType<typeof setTimeout> | null = null;
+/** Mirrors the wake binary's recording state on the host side. True
+ *  between WAKE:detected and RECORDING:stopped. The 600ms listening-
+ *  flip timer checks this before painting "Listening" — so if the
+ *  binary stopped recording in the gap, we don't paint a fake
+ *  Listening chip for a recording that's already over. */
+let wakeRecordingActive = false;
 
 export async function startGlobalWakeListener(
   context: vscode.ExtensionContext,
@@ -1190,6 +1196,7 @@ export async function startGlobalWakeListener(
           // force-reveal the sidebar — that was needed when audio went
           // through the webview's <audio> element (autoplay-blocked),
           // not anymore.
+          wakeRecordingActive = true;
           broadcast({ type: "voice/recording", active: true });
           broadcast({ type: "wake/state", active: true, status: "recording" });
           // Delay the status-bar flip by 600ms. Background noise often
@@ -1202,10 +1209,22 @@ export async function startGlobalWakeListener(
           if (wakeListeningTimer) clearTimeout(wakeListeningTimer);
           wakeListeningTimer = setTimeout(() => {
             wakeListeningTimer = null;
-            setVoiceState("listening");
+            // Only paint "Listening" if a recording is STILL active.
+            // The binary's RECORDING:stopped event might have landed
+            // in the 600ms gap (very short audio, race with timer).
+            // Without this guard the chip would announce "Listening"
+            // for a recording that's already over — exactly the "fake
+            // listening" status the user reported.
+            if (wakeRecordingActive) {
+              setVoiceState("listening");
+            }
           }, 600);
         },
         onRecordingDone: async () => {
+          // Mirror the binary's state — recording is over. Pending 600ms
+          // listening-flip timers will check this flag and skip the
+          // chip flip if the recording's already done.
+          wakeRecordingActive = false;
           // Suppress further wake fires for this turn — the user said
           // "Protege" once, the wake binary's prob can stay elevated for
           // a moment after their voice fades and re-fire WAKE on its own
@@ -1480,12 +1499,14 @@ async function handleChat(
     effectiveMode = "teaching-text";
   }
   // If the user typed but wake is listening, the reply will be spoken.
-  // Promote to voice-dialogue so the prompt pulls a short, ear-friendly
-  // reply instead of a multi-paragraph TEXT_MODE answer the TTS has to
-  // read aloud for 40 seconds.
-  if (effectiveMode === "text" && isWakeWordListening()) {
-    effectiveMode = "voice-dialogue";
-  }
+  // NO promotion of typed text → voice-dialogue. Wake-word being
+  // active (status-bar mic icon on) does NOT mean the user wants every
+  // typed message read aloud — it means "I might say Protege at any
+  // time." If they typed it, they want to read it. If they spoke it,
+  // the wake binary flips mode to "voice" upstream and the rest of the
+  // pipeline (TTS, speaking chip, follow-up arming) fires from there.
+  // Removed the auto-promotion 2026-04-30 — user reported "I typed 'hi'
+  // and the bot replied with audio" while wake was on but unused.
 
   // Sticky voice-dialogue session. Once entered (typed text with wake
   // on, or any explicit voice-dialogue turn), the flag stays ON across

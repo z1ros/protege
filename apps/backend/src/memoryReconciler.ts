@@ -1,4 +1,4 @@
-import { anthropic } from "./anthropic.js";
+import { callOneShot } from "./llm.js";
 import { embed } from "./embeddings.js";
 import {
   addMemory,
@@ -9,7 +9,14 @@ import {
   type MemoryType,
 } from "./store.js";
 
-const RECONCILER_MODEL =
+// Reconciliation now routes through callOneShot, which respects the
+// AI_PROVIDER env (default `openai` → GPT-5-nano). The Anthropic
+// fallback path stays available if env flips. Was previously hardcoded
+// to claude-haiku-4-5 via a direct Anthropic SDK call — bypassed the
+// provider routing and contradicted the OpenAI-primary architecture.
+const RECONCILER_MODEL_OPENAI =
+  process.env.OPENAI_CHEAP_MODEL ?? "gpt-5-nano";
+const RECONCILER_MODEL_ANTHROPIC =
   process.env.ANTHROPIC_HAIKU_MODEL ?? "claude-haiku-4-5";
 
 export type ReconcileAction = "ADD" | "UPDATE" | "DELETE" | "NOOP";
@@ -115,17 +122,19 @@ export async function reconcileAndStore(
 
   let decision: ReconcileDecision | null = null;
   try {
-    const resp = await anthropic.messages.create({
-      model: RECONCILER_MODEL,
-      max_tokens: 200,
-      system: SYSTEM,
-      messages: [{ role: "user", content: userMsg }],
+    const resp = await callOneShot({
+      systemText: SYSTEM,
+      userText: userMsg,
+      maxTokens: 200,
+      anthropicModel: RECONCILER_MODEL_ANTHROPIC,
+      // Memory reconciliation is a cheap classify-shaped task — uses
+      // OPENAI_CHEAP_MODEL (GPT-5-nano default) on the OpenAI path.
+      cheap: true,
+      // System text is stable across calls; caching shaves input cost
+      // on repeated memory writes.
+      cacheSystem: true,
     });
-    const text = resp.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as { text: string }).text)
-      .join("\n");
-    decision = safeParse(text);
+    decision = safeParse(resp.text);
   } catch (err) {
     console.warn(
       "[memoryReconciler] LLM call failed, falling back to ADD:",

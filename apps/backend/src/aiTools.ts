@@ -1,23 +1,41 @@
-import Anthropic from "@anthropic-ai/sdk";
+/**
+ * AI tool definitions + the canonical mentor system prompt.
+ *
+ * Provider-NEUTRAL despite the Anthropic-shaped types — `llm.ts`
+ * converts the same definitions to OpenAI tool shape on demand via
+ * `anthropicToolsToOpenAI()`. The Anthropic types are just the
+ * "source-of-truth schema language" for the tool definitions.
+ *
+ * The actual production provider is OpenAI (GPT-5) — see `AI_PROVIDER`
+ * env var and `getProvider()` in llm.ts. The Anthropic SDK is kept as
+ * a fallback path; its initialization lives in `anthropicFallback.ts`.
+ *
+ * History: this file used to be `anthropic.ts`, which was misleading —
+ * the name implied Anthropic was the primary provider. Renamed and
+ * re-organized 2026-05-01 to reflect that OpenAI is the actual default.
+ */
 
-export const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY ?? "",
-});
-
-// Default to Haiku — Sonnet is disabled across the app for cost reasons
-// (see resolveModel in routes/chat.ts). Override via env if a single test
-// needs Sonnet.
-export const MODEL = process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5";
-
-// The real prompt now lives in prompts/persona.ts and is composed
-// per-request based on channel (text vs voice). MENTOR_SYSTEM_PROMPT is kept
-// as a fallback for toAnthropic() when translating a history without an
-// explicit system turn — defaults to text mode.
+import type Anthropic from "@anthropic-ai/sdk";
 import { buildSystemPrompt } from "./prompts/persona.js";
+
+// Re-exported so consumers don't need to know the prompt assembly
+// lives in prompts/persona.ts.
 export { buildSystemPrompt } from "./prompts/persona.js";
+
+/**
+ * Canonical mentor system prompt — a fallback for cases where a chat
+ * history doesn't carry an explicit system turn. Defaults to text
+ * channel because it's the broadest channel and the safest default
+ * (no TTS-specific instructions that would confuse a text caller).
+ */
 export const MENTOR_SYSTEM_PROMPT = buildSystemPrompt("text");
 
-
+/**
+ * Tool definitions advertised to the LLM. Anthropic-shaped because
+ * that's the schema language we wrote them in; converted to OpenAI
+ * shape by `anthropicToolsToOpenAI()` in llm.ts when the active
+ * provider is OpenAI (the default).
+ */
 export const TOOL_DEFINITIONS: Anthropic.Messages.Tool[] = [
   {
     name: "read_file",
@@ -128,42 +146,55 @@ export const TOOL_DEFINITIONS: Anthropic.Messages.Tool[] = [
       required: ["path", "oldString", "newString"],
     },
   },
-  // create_file REMOVED — Claude was dumping random lesson files into the
-  // workspace. Teaching happens through chat responses only.
+  // create_file REMOVED — the model was dumping random lesson files into
+  // the workspace. Teaching happens through chat responses only.
   // create_scratch_file REMOVED — same reason.
   // run_file REMOVED — too risky without user confirmation.
   {
     name: "teach_step",
     description:
-      "VOICE TEACHING ONLY (mode === 'teaching'). Highlights ONE piece of code and narrates ONE short spoken sentence via TTS. The extension waits for audio playback to finish before returning. NEVER use this tool in 'teaching-text' or text channels — the user has no audio output, the call will appear as a stuck loading chip in chat with nothing happening. In teaching-text mode, write your explanation as prose and use highlight_code (silent) for the visual.",
+      "VOICE MODES (teaching, voice, voice-dialogue). Highlights ONE piece of code and narrates ONE short spoken sentence via TTS. The extension waits for audio playback to finish before returning, then you can call teach_step AGAIN for the next beat — chaining multiple teach_step calls inside one turn produces a paced, synchronized walkthrough where each highlight is paired with its narration. PREFER teach_step over highlight_code+long-prose-reply for ANY line-by-line walkthrough or step-by-step explanation: it's the only way to get highlight-then-speak-then-highlight pacing. NEVER use in 'teaching-text' or 'text' channels — the user has no audio, the call appears as a stuck loading chip. In text channels, write prose + use highlight_code (silent).",
+    // Schema FLATTENED 2026-05-01 — the model was reliably mangling the
+    // previous nested `highlight` object: it would emit XML inside the
+    // JSON value AND flatten path/startLine/anchor/label as top-level
+    // siblings of `highlight`, then drop `narration` entirely. The
+    // walkthrough sim caught the model firing 38 broken calls in a row
+    // without recovering. Keeping every required field at the top level
+    // matches the shape models actually produce reliably.
     input_schema: {
       type: "object",
       properties: {
-        highlight: {
-          type: "object",
-          properties: {
-            path: { type: "string", description: "Workspace-relative or absolute path" },
-            startLine: { type: "number" },
-            endLine: { type: "number", description: "Same as startLine for a single line" },
-            anchor: {
-              type: "string",
-              description:
-                "REQUIRED. Unique substring (4-40 chars) copied verbatim from startLine. Verifies the line number is correct — wrong-line highlights are rejected. Pick something distinctive (tag name, identifier), not punctuation.",
-            },
-            label: { type: "string", description: "Optional short inline tag (e.g. 'state init')" },
-          },
-          required: ["path", "startLine", "endLine", "anchor"],
+        path: {
+          type: "string",
+          description: "Workspace-relative or absolute path to the file",
+        },
+        startLine: {
+          type: "number",
+          description: "First line of the highlight (1-indexed)",
+        },
+        endLine: {
+          type: "number",
+          description: "Last line of the highlight (same as startLine for one line)",
+        },
+        anchor: {
+          type: "string",
+          description:
+            "REQUIRED. Unique substring (4-40 chars) copied verbatim from startLine. Verifies the line number is correct — wrong-line highlights are rejected. Pick something distinctive (tag name, identifier), not punctuation.",
+        },
+        label: {
+          type: "string",
+          description: "Optional short inline tag (3-7 words, e.g. 'state init', 'loop counter')",
         },
         narration: {
           type: "string",
-          description: "ONE sentence, under 20 words, spoken aloud. Contractions ok. No markdown, no code, no line numbers read out.",
+          description: "REQUIRED. ONE sentence, under 20 words, spoken aloud. Contractions ok. No markdown, no code, no line numbers read out.",
         },
         pauseMsAfter: {
           type: "number",
           description: "Optional silence after speaking, 200-800ms for absorption. Default 0.",
         },
       },
-      required: ["highlight", "narration"],
+      required: ["path", "startLine", "endLine", "anchor", "narration"],
     },
   },
   {

@@ -493,6 +493,8 @@
     "dev": "cross-env NODE_ENV=development concurrently -n ext,ui -c blue,green \"tsup --watch\" \"vite --port 5173 --strictPort\"",
     "dev:ext": "tsup --watch",
     "dev:ui": "vite --port 5173 --strictPort",
+    "vendor:llama": "node scripts/vendor-llama.mjs",
+    "prebuild": "pnpm run vendor:llama",
     "build": "tsup && vite build",
     "build:ext": "tsup",
     "build:webview": "vite build",
@@ -501,6 +503,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "tar": "^7.5.0",
     "@blocknote/core": "^0.49.0",
     "@blocknote/mantine": "^0.49.0",
     "@blocknote/react": "^0.49.0",

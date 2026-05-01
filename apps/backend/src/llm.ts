@@ -3,10 +3,8 @@ import type {
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from "openai/resources/chat/completions";
-import {
-  anthropic,
-  TOOL_DEFINITIONS as ANTHROPIC_TOOL_DEFINITIONS,
-} from "./anthropic.js";
+import { anthropic } from "./anthropicFallback.js";
+import { TOOL_DEFINITIONS as ANTHROPIC_TOOL_DEFINITIONS } from "./aiTools.js";
 import { openai } from "./openai.js";
 
 export type ProviderId = "anthropic" | "openai";
@@ -143,7 +141,10 @@ async function callAnthropic(opts: ChatCallOptions): Promise<ChatResult> {
 }
 
 async function callOpenAI(opts: ChatCallOptions): Promise<ChatResult> {
-  const model = opts.openaiModel ?? process.env.OPENAI_MODEL ?? "gpt-4.1";
+  // Code fallback matches the production env default. If a fresh deploy
+  // forgets to set OPENAI_MODEL, we land on gpt-5-mini (premium-tier
+  // default) — NOT full gpt-5, which would 5× the per-call cost.
+  const model = opts.openaiModel ?? process.env.OPENAI_MODEL ?? "gpt-5-mini";
   const messages = anthropicToOpenAIMessages(
     opts.systemStable,
     opts.systemDynamic,
@@ -296,9 +297,12 @@ async function oneShotAnthropic(
 }
 
 async function oneShotOpenAI(opts: OneShotOptions): Promise<OneShotResult> {
+  // Code fallbacks match production env defaults — see comment in
+  // callChat above. Cheap = nano, premium = mini. Avoids accidentally
+  // landing on a more expensive default if env isn't loaded.
   const model = opts.cheap
-    ? process.env.OPENAI_CHEAP_MODEL ?? process.env.OPENAI_MODEL ?? "gpt-4.1-mini"
-    : process.env.OPENAI_MODEL ?? "gpt-4.1";
+    ? process.env.OPENAI_CHEAP_MODEL ?? process.env.OPENAI_MODEL ?? "gpt-5-nano"
+    : process.env.OPENAI_MODEL ?? "gpt-5-mini";
   const messages: ChatCompletionMessageParam[] = [];
   if (opts.systemText) {
     messages.push({ role: "system", content: opts.systemText });

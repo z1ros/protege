@@ -23,9 +23,11 @@ let currentState: VoiceState = "off";
 // is supposed to pair every WAKE:detected with a RECORDING:stopped, but
 // in practice false-positive wakes (bot voice bleed, ambient noise that
 // the wake-word ONNX scores low-but-positive) sometimes leave the chip
-// dangling. 20s sits well past the binary's 12s recording safety cap,
-// so a real recording always finishes before the watchdog fires.
-const LISTENING_WATCHDOG_MS = 20_000;
+// dangling. 13s = just past the binary's 12s recording safety cap. Any
+// real recording finishes before this fires; a stuck "Listening" gets
+// cleared 1s after the binary should have finished. Was 20s — felt too
+// long when the chip was wrong, user reported "fake Listening".
+const LISTENING_WATCHDOG_MS = 13_000;
 let listeningWatchdog: ReturnType<typeof setTimeout> | null = null;
 
 const ICON: Record<VoiceState, string> = {

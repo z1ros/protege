@@ -16,6 +16,15 @@ vitest.config.ts
 # Dev dependencies — `dist/` already inlines what's needed at runtime
 node_modules/**
 
+# Vendored runtime packages — `.vendor/` is populated by
+# `scripts/vendor-llama.mjs` before packaging. It contains a flat copy
+# of `node-llama-cpp/` (without its 28 MB C++ source folder, just the
+# JS runtime + bins manifest) so the extension can load it without
+# needing `node_modules/` to be present at runtime. WHITELIST it: the
+# blanket `node_modules/**` and `**/*.ts` patterns above would
+# otherwise strip parts of the vendor tree.
+!.vendor/**
+
 # Tests
 **/*.test.ts
 **/*.test.tsx

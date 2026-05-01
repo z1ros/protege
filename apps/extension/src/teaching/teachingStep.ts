@@ -1,7 +1,6 @@
 import * as vscode from "vscode";
-import { broadcast, mountedWebviewCount } from "../chat/webviewHost.js";
 import { setWakeSuspended } from "../voice/voiceCapture.js";
-import { getVoiceGender, setVoiceState } from "../voice/voiceStatusBar.js";
+import { getVoiceGender } from "../voice/voiceStatusBar.js";
 import { isWakeWordListening } from "../voice/voiceCapture.js";
 import type { HighlightRegion } from "../ai/tools.js";
 
@@ -61,18 +60,27 @@ function awaitPlayback(requestId: string, timeoutMs: number): Promise<"ended" | 
   });
 }
 
-/** Args shape for the `teach_step` tool call. Mirrors the Anthropic schema
- *  in apps/backend/src/anthropic.ts. */
+/** Args shape for the `teach_step` tool call. Schema FLATTENED 2026-05-01
+ *  to match what Haiku 4.5 reliably produces — the model was mangling
+ *  the previous nested `highlight` object. Backward-compat: still
+ *  accepts the old nested form if a future model emits it. */
 export interface TeachStepArgs {
-  highlight: {
-    path: string;
-    startLine: number;
-    endLine: number;
+  /** Flat fields (preferred — matches current schema in anthropic.ts). */
+  path?: string;
+  startLine?: number;
+  endLine?: number;
+  anchor?: string;
+  label?: string;
+  narration: string;
+  pauseMsAfter?: number;
+  /** Legacy nested shape — rare but accepted for safety. */
+  highlight?: {
+    path?: string;
+    startLine?: number;
+    endLine?: number;
     anchor?: string;
     label?: string;
   };
-  narration: string;
-  pauseMsAfter?: number;
 }
 
 /** Execute one teaching beat: apply a focus highlight, play TTS narration,
@@ -81,16 +89,26 @@ export interface TeachStepArgs {
  *
  *  Lazily imports highlightCode to avoid a circular dep with tools.ts. */
 export async function runTeachStep(args: TeachStepArgs): Promise<string> {
-  const { highlight, narration, pauseMsAfter } = args;
+  const { narration, pauseMsAfter } = args;
 
   if (!narration || typeof narration !== "string" || narration.trim().length === 0) {
-    return "teach_step error: narration is empty";
+    return "teach_step error: narration is empty (required string field)";
   }
+
+  // Resolve highlight fields from either the flat shape (preferred) or
+  // the legacy nested `highlight` object. Flat wins if both present.
+  const highlight = {
+    path: args.path ?? args.highlight?.path,
+    startLine: args.startLine ?? args.highlight?.startLine,
+    endLine: args.endLine ?? args.highlight?.endLine,
+    anchor: args.anchor ?? args.highlight?.anchor,
+    label: args.label ?? args.highlight?.label,
+  };
 
   enterTeachingStep();
   try {
     const h = highlight;
-    if (h && h.path && Number.isFinite(h.startLine) && Number.isFinite(h.endLine)) {
+    if (h.path && Number.isFinite(h.startLine) && Number.isFinite(h.endLine)) {
       try {
         const { highlightCodeForTeaching } = await import("../ai/tools.js");
         await highlightCodeForTeaching([
@@ -111,19 +129,22 @@ export async function runTeachStep(args: TeachStepArgs): Promise<string> {
       }
     }
 
-    if (mountedWebviewCount() === 0) {
-      return "teach_step error: no Protege panel open — open the sidebar first";
-    }
+    // Zero-UI mode (2026-04-30): teach_step works without a mounted
+    // sidebar. Audio plays host-side via afplay/aplay/powershell, the
+    // status-bar chip is the visual signal, the highlight goes
+    // straight into the editor. The old "no Protege panel open" error
+    // was a leftover from when audio routed through a webview <audio>
+    // element. Removed so chained teach_step walkthroughs work even
+    // with the sidebar closed.
 
-    // Flip the bottom status bar to "Speaking" optimistically. The
-    // host-side player does this in onStart, but if afplay takes ~50ms
-    // to spawn the chip would briefly look idle.
-    const wasWakeOn = isWakeWordListening();
-    if (wasWakeOn) setVoiceState("speaking");
-
+    // Chip state ("speaking") is owned by hostAudio.ts now — it flips
+    // unconditionally on actual playback start. The previous pre-flip
+    // here was defensive against a 50ms afplay spawn lag, but with
+    // hostAudio's centralized chip control it's redundant and would
+    // mask the real "no audio yet" state if TTS fetch errored.
     const tBroadcast = Date.now();
     console.log(
-      `[protege] teach_step PLAY narrationChars=${narration.trim().length} preview=${JSON.stringify(narration.trim().slice(0, 80))} wakeOn=${wasWakeOn}`
+      `[protege] teach_step PLAY narrationChars=${narration.trim().length} preview=${JSON.stringify(narration.trim().slice(0, 80))} wakeOn=${isWakeWordListening()}`
     );
 
     // Host-side audio (2026-04-30) — see voice/hostAudio.ts. Replaces
@@ -142,7 +163,9 @@ export async function runTeachStep(args: TeachStepArgs): Promise<string> {
     console.log(
       `[protege] teach_step RESOLVED reason=${result} elapsedMs=${elapsed}`
     );
-    if (wasWakeOn) setVoiceState(isWakeWordListening() ? "idle" : "off");
+    // Chip restoration ("idle"|"off") is owned by hostAudio.ts —
+    // playHostAudioStreaming's cleanup flips it back when audio ends.
+    // Removed the duplicate post-flip here (relied on stale wasWakeOn).
 
     if (typeof pauseMsAfter === "number" && pauseMsAfter > 0) {
       await new Promise((r) => setTimeout(r, Math.min(pauseMsAfter, 1500)));

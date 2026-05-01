@@ -64,26 +64,26 @@ export const chatRoute = new Hono();
 chatRoute.use("*", githubAuth());
 
 /**
- * Tool-enabled chat using Claude Sonnet 4.5 with prompt caching.
+ * Tool-enabled chat. Production provider is OpenAI (GPT-5 / GPT-5-nano);
+ * Anthropic Claude is a fallback when AI_PROVIDER=anthropic.
  *
  * The wire format stays OAITurn[] (OpenAI-shaped) so the extension's
- * chatRunner.ts doesn't need to change. Internally we translate to
- * Anthropic's messages / content-block format per call.
+ * chatRunner.ts doesn't need to change. Tool definitions in aiTools.ts
+ * are converted to OpenAI shape on demand by anthropicToolsToOpenAI()
+ * in llm.ts when the active provider is OpenAI.
  *
- * Prompt caching: the system prompt + tool definitions are marked with
- * cache_control: "ephemeral", so on repeat calls Anthropic reuses them
- * at ~10% of input token cost. Huge win for a mentor that makes many
- * multi-turn tool rounds per user question.
+ * Prompt caching: the system prompt + tool definitions are reused
+ * across repeat calls — Anthropic via cache_control: "ephemeral",
+ * OpenAI automatically by the SDK. Big input-cost win for a mentor
+ * that makes many multi-turn tool rounds per user question.
  */
 /**
- * Map the client-side backend preference + tier to a concrete Anthropic
- * model id.
+ * Resolve the concrete model id for the Anthropic FALLBACK path
+ * (only fires when AI_PROVIDER=anthropic — production is OpenAI).
  *
- * TEMP (2026-04-18): Sonnet is disabled server-side for cost reasons.
- * Every cloud Anthropic call — regardless of the client's stated
- * preference — routes to Haiku, so cheap and premium currently collapse
- * to the same id on the Anthropic side. When Sonnet is re-enabled,
- * branch on `tier === "premium"` here.
+ * TEMP (2026-04-18): Sonnet is disabled across the app for cost reasons.
+ * Every Anthropic-route call routes to Haiku regardless of tier. When
+ * Sonnet is re-enabled, branch on `tier === "premium"` here.
  */
 function resolveAnthropicModel(
   _backend: ChatRunRequest["backend"],
@@ -93,18 +93,23 @@ function resolveAnthropicModel(
 }
 
 /**
- * Map the tier to a concrete OpenAI model id.
- *   Cheap   → gpt-4o-mini ($0.15/$0.60 per MTok)
- *             — chosen for Live Review scans + AI-block summaries.
- *             ~5× cheaper than Haiku for short lint-shaped prompts.
- *   Premium → gpt-4.1 ($2/$8 per MTok)
- * Both can be overridden via env: OPENAI_CHEAP_MODEL / OPENAI_MODEL.
+ * Resolve the concrete model id for the OpenAI PRIMARY path —
+ * the default in production (AI_PROVIDER=openai).
+ *   Cheap   → gpt-5-nano (or OPENAI_CHEAP_MODEL override) — Live Review
+ *             scans, classify, memory reconciliation. Cheap classifier
+ *             tasks where premium reasoning is overkill.
+ *   Premium → gpt-5 (or OPENAI_MODEL override) — chat replies, teach,
+ *             voice-dialogue, multi-tool rounds.
  */
 function resolveOpenAIModel(tier: ChatTier): string {
   if (tier === "cheap") {
-    return process.env.OPENAI_CHEAP_MODEL ?? "gpt-4o-mini";
+    return process.env.OPENAI_CHEAP_MODEL ?? "gpt-5-nano";
   }
-  return process.env.OPENAI_MODEL ?? "gpt-4.1";
+  // Premium fallback is gpt-5-mini (NOT full gpt-5) — matches the
+  // production .env default. Full gpt-5 is 5× the per-call cost and
+  // not needed for chat quality at our context sizes; reserve it for
+  // a future "pro" tier if quality demands it.
+  return process.env.OPENAI_MODEL ?? "gpt-5-mini";
 }
 
 /**
@@ -142,11 +147,11 @@ function parseOwnedConceptName(content: string): string | null {
  * Server-side P6 mastery enforcer
  *
  * The TEACHING_TEXT persona block instructs the model to call `remember`
- * after every clean YOUR-TURN pass. Haiku follows this maybe 30-50% of
- * the time — its RLHF training pushes it toward conservative tool-use
- * even when the prompt explicitly demands it. So we detect the mastery
- * moment ourselves on the server and write the memory row when the model
- * doesn't.
+ * after every clean YOUR-TURN pass. In practice the model follows this
+ * maybe 30-50% of the time — RLHF training across both providers pushes
+ * the model toward conservative tool-use even when the prompt explicitly
+ * demands it. So we detect the mastery moment ourselves on the server
+ * and write the memory row when the model doesn't.
  *
  * Heuristic, not perfect — but deterministic and topic-agnostic. Three
  * signals must all match in the same turn:
@@ -1017,13 +1022,12 @@ chatRoute.post("/", async (c) => {
 
   // Per-request provider routing: cheap-tier requests (Live Review
   // scans, AI-block summaries — everywhere the extension's aiQuery
-  // sets `kind: "scan"`) get pinned to OpenAI / gpt-4o-mini regardless
-  // of the env-wide AI_PROVIDER, since that's ~5× cheaper than Haiku
-  // for short lint-shaped prompts. Premium-tier requests (chat,
-  // teaching, Compare, Fix it) keep the env default. The override
-  // gracefully falls back to Anthropic if OPENAI_API_KEY is missing
-  // (handled in callChat). This is the implementation of step 1 of
-  // the live-review-cost-cut plan.
+  // sets `kind: "scan"`) pin to OpenAI's cheap model (GPT-5-nano by
+  // default) regardless of the env-wide AI_PROVIDER. Cheap classifier-
+  // shaped prompts don't need the premium model. Premium-tier requests
+  // (chat, teaching, Compare, Fix it) keep the env default. The
+  // override gracefully falls back to Anthropic if OPENAI_API_KEY is
+  // missing (handled in callChat).
   //
   // Computed here (before toAnthropic) so historyTrim can route its
   // summary LLM call through the same provider as the main chat call.

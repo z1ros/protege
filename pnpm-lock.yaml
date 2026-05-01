@@ -132,6 +132,9 @@ importers:
       simple-icons:
         specifier: ^16.16.0
         version: 16.16.0
+      tar:
+        specifier: ^7.5.0
+        version: 7.5.13
       twoslash:
         specifier: ^0.3.8
         version: 0.3.8(typescript@5.9.3)
