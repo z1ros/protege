@@ -168,34 +168,22 @@ export function initAiBackend(context: vscode.ExtensionContext): void {
     }
   })();
 
-  // Pre-warm the on-device model if the user's preference needs it.
-  // The model file (~1.1 GB) was downloaded via `ai/downloadModel` once;
-  // subsequent sessions just load from disk (~2-3s warm-up).
-  if (currentBackend === "on-device" || currentBackend === "auto") {
-    void (async () => {
-      try {
-        const { log } = await import("../log.js");
-        const { initOnDeviceModel } = await import("./onDeviceModel.js");
-        log(
-          "aiBackend",
-          `[ON-DEVICE] pre-warm START on activate · backend=${currentBackend}`
-        );
-        await initOnDeviceModel(context.globalStorageUri.fsPath);
-        log("aiBackend", `[ON-DEVICE] pre-warm exited (check ON-DEVICE logs above for outcome)`);
-      } catch (err) {
-        const { log } = await import("../log.js");
-        log("aiBackend", `[ON-DEVICE] pre-warm THREW · ${err instanceof Error ? err.message : String(err)}`);
-      }
-    })();
-  } else {
-    void (async () => {
-      const { log } = await import("../log.js");
-      log(
-        "aiBackend",
-        `[ON-DEVICE] pre-warm SKIPPED · backend=${currentBackend} · pick "auto" or "on-device" in Live tab to enable Qwen`
-      );
-    })();
-  }
+  // On-device pre-warm retired 2026-05-01 — scan path no longer uses
+  // Qwen, so auto-loading 4.5GB into RAM at activation was waste even
+  // for users with backend="auto" or "on-device" persisted from older
+  // sessions. The on-device infrastructure (initOnDeviceModel,
+  // onDeviceModel.ts) is still on disk and gets loaded explicitly when:
+  //   - user runs `Protege: Download On-Device Model` command, or
+  //   - user clicks the on-device toggle in the Live tab UI (fires an
+  //     `ai/downloadModel` message that calls initOnDeviceModel)
+  // No automatic load on activation. Pure cloud out of the box.
+  void (async () => {
+    const { log } = await import("../log.js");
+    log(
+      "aiBackend",
+      `[ON-DEVICE] pre-warm SKIPPED · cloud-only by default · 'Protege: Download On-Device Model' command available for opt-in`
+    );
+  })();
 }
 
 export function setAiBackend(backend: AiBackend): void {
