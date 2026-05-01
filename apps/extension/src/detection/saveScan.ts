@@ -14,7 +14,7 @@ import type { Anchor, Suggestion } from "../review/reviewEngine.js";
  *
  * Fires on `onDidSaveTextDocument` with a short grace period so it doesn't
  * step on the LIVE scanner. Re-scans the saved file WITH context from its
- * direct neighbors (1-hop imports + importers), using the on-device model.
+ * direct neighbors (1-hop imports + importers), using the cloud scan model.
  *
  * What LIVE can't see, SAVE can:
  *   - "this prop is defined but never used in the child"
@@ -26,8 +26,8 @@ import type { Anchor, Suggestion } from "../review/reviewEngine.js";
  * merge into the same store the LIVE scanner writes to, so the Whisper
  * and Ghost render them without any surface changes.
  *
- * On-device-friendly: keeps neighbor context budget small (5 files max,
- * top 40 lines each) so Qwen 7B can chew it in ~8-15s.
+ * Keeps neighbor context budget small (5 files max, top 40 lines each)
+ * so the cheap-tier cloud scan stays under a few cents per pass.
  */
 
 // ---- Tuning ----

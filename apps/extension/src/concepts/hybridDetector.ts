@@ -1,9 +1,8 @@
-import { detectFromAst, type AstDetectedConcept } from "./astDetector.js";
-import { detectFromAi, type AiDetectedConcept } from "./aiDetector.js";
+import { detectFromAst } from "./astDetector.js";
 import { detectConceptsWithContext, type DetectedConcept } from "./detector.js";
 
 /**
- * Hybrid concept detection — three layers, each catching what the others miss:
+ * Hybrid concept detection — two layers:
  *
  *   Layer 1: TypeScript AST (instant, 200+ concepts, accurate)
  *            Detects: hooks, array methods, async patterns, TS types,
@@ -14,13 +13,8 @@ import { detectConceptsWithContext, type DetectedConcept } from "./detector.js";
  *            entirely. The detector.ts entry point delegates JS/TS to
  *            the AST layer, so this call is a no-op for those files.
  *
- *   Layer 3: On-device AI (fast, free, catches design patterns + soft concepts)
- *            Detects: SOLID principles, design patterns, architecture,
- *            code quality signals, framework idioms.
- *            Only runs if the on-device model (Qwen2.5-Coder) is loaded.
- *
- * The hybrid detector merges results from all three layers, taking the
- * highest context score when the same concept is detected by multiple layers.
+ * Layer 3 (on-device AI concept detection) was retired 2026-05-01 along
+ * with the rest of the on-device LLM path.
  */
 
 export interface HybridDetectionResult {
@@ -30,7 +24,7 @@ export interface HybridDetectionResult {
   sources: {
     ast: number;     // concepts found by AST
     regex: number;   // concepts found by regex (not already in AST)
-    ai: number;      // concepts found by AI (not already in AST or regex)
+    ai: number;      // always 0 since on-device retired; field kept for telemetry shape
     total: number;   // deduplicated total
   };
   /** Time taken in ms */
@@ -43,15 +37,15 @@ export interface HybridDetectionResult {
  * @param content File content
  * @param filePath Absolute or relative path (used for test-file detection)
  * @param languageId VS Code language identifier
- * @param fileHash Content hash for AI cache
- * @param enableAi Whether to run the AI layer (disabled by default for speed)
+ * @param _fileHash Content hash (unused since on-device AI retired)
+ * @param _enableAi Vestigial; on-device AI retired
  */
 export async function detectHybrid(
   content: string,
   filePath: string,
   languageId: string,
-  fileHash: string,
-  enableAi = false
+  _fileHash: string,
+  _enableAi = false
 ): Promise<HybridDetectionResult> {
   const startMs = performance.now();
   const merged = new Map<string, DetectedConcept>();
@@ -76,23 +70,6 @@ export async function detectHybrid(
   }
   const regexCount = merged.size - astCount;
 
-  // Layer 3: AI (only if enabled + file is long enough)
-  let aiCount = 0;
-  if (enableAi) {
-    try {
-      const aiResults = await detectFromAi(content, fileHash);
-      for (const r of aiResults) {
-        const existing = merged.get(r.name);
-        if (!existing || r.contextScore > existing.contextScore) {
-          merged.set(r.name, { name: r.name, contextScore: r.contextScore });
-        }
-      }
-      aiCount = merged.size - astCount - regexCount;
-    } catch {
-      // AI layer is optional — never block on it
-    }
-  }
-
   const durationMs = Math.round(performance.now() - startMs);
 
   return {
@@ -100,7 +77,7 @@ export async function detectHybrid(
     sources: {
       ast: astCount,
       regex: Math.max(0, regexCount),
-      ai: Math.max(0, aiCount),
+      ai: 0,
       total: merged.size,
     },
     durationMs,

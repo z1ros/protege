@@ -6,8 +6,8 @@ import { fetchConceptTips } from "../user/protegeClient.js";
 /**
  * AI-powered explanations — replaces all local regex "intelligence."
  *
- * Every explanation, teaching card, and tip now goes through real AI
- * (on-device Qwen or cloud Haiku/Sonnet depending on user's choice).
+ * Every explanation, teaching card, and tip goes through the cloud AI
+ * provider configured server-side.
  *
  * In-memory FIFO cache so the same error/concept doesn't hit the model
  * twice within a session. The tip slice (key prefix `tip:`) additionally

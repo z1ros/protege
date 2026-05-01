@@ -190,9 +190,9 @@ export function registerUnderlineWhisper(
         const s = findSuggestionAtLine(uri, args.line);
         if (!s) return;
         // Always route Fix through smartFix, not through the scan's
-        // pre-stored `fix` string. The scan's fix is often wrong (Qwen
-        // compresses it, Haiku sometimes hallucinates keys, etc.).
-        // smartFix fires a fresh cloud round-trip with full context.
+        // pre-stored `fix` string. The cheap-tier scan's fix is often
+        // compressed or hallucinates keys; smartFix fires a fresh
+        // premium-tier round-trip with full context.
         await vscode.commands.executeCommand("protege.smartFix", {
           uri,
           line: s.range.start.line,
@@ -407,7 +407,7 @@ export function buildActionHover(
   // "what's wrong + why it matters here" explanation, exactly the
   // depth the user asked for ("explain more, like one or two
   // paragraphs why"). Falls back to teaser, then message, when the
-  // lesson wasn't generated (older scans, on-device path).
+  // lesson wasn't generated (older scans).
   const explanation = (s.lesson && s.lesson.trim())
     ? s.lesson.trim()
     : compactMessage(s.teaser || s.message);

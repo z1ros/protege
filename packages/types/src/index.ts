@@ -662,18 +662,11 @@ export type WebviewToHost =
       type: "auth/logout";
     }
   | { type: "liveReview/toggle"; active: boolean }
-  | { type: "ai/setBackend"; backend: "on-device" | "cloud" | "auto" | "haiku" | "sonnet" }
-  /** Webview re-asks for the current backend on mount. The Live tab uses
-   *  this when it mounts late (user landed on a different tab first), so
-   *  it doesn't keep showing the React-state default ("auto") forever
-   *  while the persisted value is something else. */
-  | { type: "ai/getBackend" }
+  | { type: "ai/setBackend"; backend: "cloud" }
   /** Webview asks the host to refresh the quota snapshot from the
    *  backend (`GET /me/quota`). Live tab fires this on mount and on a
    *  refresh-now button. */
   | { type: "quota/get" }
-  | { type: "ai/downloadModel" }
-  | { type: "ai/removeModel" }
   | { type: "feature/toggle"; feature: "inlineErrors" | "didYouKnow"; enabled: boolean }
   | { type: "explainMode/set"; mode: "text" | "voice" | "both" }
   | { type: "chat/search"; query: string }
@@ -849,39 +842,30 @@ export type HostToWebview =
         line: number;
       };
     }
-  | {
-      type: "ai/modelStatus";
-      ready: boolean;
-      loading: boolean;
-      error: string | null;
-      downloadProgress: number;
-    }
   /** Host pushes today's per-user quota usage so the Live tab can
    *  render the "Today's usage" panel + cost pill. Sent on init,
    *  on `quota/get` requests, and after every 429 toast. */
   | { type: "quota/snapshot"; snapshot: QuotaSnapshot }
-  /** Host pushes the currently selected backend so the webview hydrates
-   *  from persisted state (globalState) instead of defaulting to "auto" on
-   *  every reload. */
-  | { type: "ai/backend"; backend: "on-device" | "cloud" | "auto" | "haiku" | "sonnet" }
+  /** Host pushes the currently selected backend. Always "cloud" since
+   *  on-device was retired 2026-05-01; kept for wire compatibility with
+   *  older webview builds that still listen for this. */
+  | { type: "ai/backend"; backend: "cloud" }
   /** Host reports the current `protege.explainMode` so the Live tab's
    *  3-option toggle (Text / Voice / Both) can reflect state at a glance.
    *  Sent on activate + whenever the setting changes (via user clicking
    *  the Live toggle OR editing settings.json directly). */
   | { type: "explainMode/state"; mode: "text" | "voice" | "both" }
-  /** Host reports which backend actually executed the most recent query.
-   *  The webview shows this as a "last call" chip so the user can prove
-   *  on-device is running vs. silently falling through to Claude. */
+  /** Host reports the most recent cloud query. The webview shows this
+   *  as a "last call" chip so the user sees the round-trip just ran. */
   | {
       type: "ai/lastCall";
-      backend: "on-device" | "cloud" | "haiku" | "sonnet";
+      backend: "cloud";
       atMs: number;
       durationMs: number;
       ok: boolean;
-      /** Set when the chosen backend couldn't run and we fell back (or
-       *  refused to). The chip must render this loudly. */
+      /** Set when the call failed; surfaced loudly on the chip. */
       fallback?: {
-        requested: "on-device" | "cloud" | "auto" | "haiku" | "sonnet";
+        requested: "cloud";
         reason: string;
       };
     }

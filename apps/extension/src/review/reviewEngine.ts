@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { aiQuery, getAiBackend, getLastCall } from "../ai/aiBackend.js";
+import { aiQuery, getLastCall } from "../ai/aiBackend.js";
 import { log, logBlock } from "../log.js";
 
 /**
@@ -14,13 +14,12 @@ import { log, logBlock } from "../log.js";
  *     Listed for completeness — scan-tier callsites won't see it.
  */
 function estimateScanCostUsd(
-  backend: string,
+  _backend: string,
   inTokens: number,
   outTokens: number
 ): number {
-  if (backend === "on-device") return 0;
   // Cloud scans go through the backend's "cheap tier" routing (see
-  // backend/routes/chat.ts → OPENAI_CHEAP_MODEL, default gpt-4o-mini).
+  // backend/routes/chat.ts → OPENAI_CHEAP_MODEL, default gpt-5-nano).
   // Cheap-tier published pricing: $0.15/Mtok input, $0.60/Mtok output.
   // Teach-tier callsites go through a separate code path and aren't
   // priced by this estimator.
@@ -35,10 +34,10 @@ let sessionCostUsd = 0;
 /**
  * Review Engine — AI-powered code review.
  *
- * Ships the active file to the user's selected backend (on-device Qwen or
- * Claude Haiku/Sonnet) and asks for a JSON array of issues. Unlike the
- * previous regex engine, this catches real bugs, logic errors, and
- * language-aware anti-patterns — not just surface patterns.
+ * Ships the active file to the configured cloud provider and asks for a
+ * JSON array of issues. Unlike the previous regex engine, this catches
+ * real bugs, logic errors, and language-aware anti-patterns — not just
+ * surface patterns.
  */
 
 /**
@@ -103,7 +102,7 @@ export interface Suggestion {
    *   "praise"    → they did something well, worth understanding why
    *   "concept"   → a pattern they're using — explain it so they own it
    *   "watch-out" → a real risk — framed as "next time, watch for this"
-   * Absent on older SAVE/FLOW findings and on-device scans.
+   * Absent on older SAVE/FLOW findings.
    */
   kind?: "praise" | "concept" | "watch-out";
 }
@@ -122,7 +121,6 @@ interface AiIssue {
 }
 
 const MAX_FILE_LINES = 400;
-const MAX_ISSUES = 5;          // on-device scans
 // Raised 2026-04-23 from 2 → 5. The "silence > noise" cap + URI-wide
 // rule cooldown combined to make LIVE feel dead — users reported "it
 // almost never finds anything." With per-line cooldowns now in place
@@ -137,78 +135,6 @@ interface PromptOptions {
   activeLine?: number;
 }
 
-// Few-shot examples — compact input→output pairs that show Qwen EXACTLY
-// what a well-formed finding looks like. Small models like Qwen follow
-// examples dramatically better than they follow instructions. Each example
-// is kept as short as possible to avoid eating the context budget. We pick
-// patterns the user would actually see in a real React/TS file — the exact
-// three issues that prompted this tuning pass (prefer-const, index-as-key,
-// missing-await-in-map) are all represented.
-const FEW_SHOT_EXAMPLES = `Examples:
-
-Input (JavaScript):
-\`\`\`
-let name = "Alice"
-console.log(name)
-\`\`\`
-Output: [{"line":1,"severity":"info","ruleId":"prefer-const","message":"\`name\` is never reassigned — use \`const\`.","fix":"const name = \\"Alice\\""}]
-
-Input (React):
-\`\`\`
-items.map((item, i) => <li key={i}>{item.name}</li>)
-\`\`\`
-Output: [{"line":1,"severity":"warn","ruleId":"index-as-key","message":"Array index as React \`key\` causes buggy reconciliation when items reorder.","fix":"items.map((item) => <li key={item.id}>{item.name}</li>)"}]
-
-Input (JavaScript):
-\`\`\`
-const data = users.map(u => fetchProfile(u))
-\`\`\`
-Output: [{"line":1,"severity":"warn","ruleId":"missing-await","message":"\`fetchProfile\` returns a Promise — wrap the map in \`Promise.all\` and \`await\`.","fix":"const data = await Promise.all(users.map(u => fetchProfile(u)))"}]
-
-Input:
-\`\`\`
-const sum = 1 + 2
-\`\`\`
-Output: []
-`;
-
-// Language-specific rule hints. Qwen does much better when the prompt
-// lists concrete rule names to look for vs "find bugs". Hints are layered:
-// base rules always apply; language-specific rules are appended based on
-// file extension / languageId.
-function ruleHintsFor(languageId: string, fileName: string): string {
-  const base = [
-    "prefer-const (let that's never reassigned)",
-    "off-by-one (loop bounds, slice indices)",
-    "stale-closure (captured variable in async/callback)",
-    "unused-variable / unused-parameter",
-    "magic-number (unexplained numeric literal)",
-    "nullable-access (property on maybe-null value)",
-  ];
-  const isTsx = /\.(tsx|jsx)$/i.test(fileName) || languageId === "typescriptreact" || languageId === "javascriptreact";
-  const isAsync = ["javascript", "typescript", "javascriptreact", "typescriptreact"].includes(languageId);
-
-  const extras: string[] = [];
-  if (isTsx) {
-    extras.push(
-      "index-as-key (array index used as React \`key\`)",
-      "missing-key (list element without \`key\`)",
-      "useEffect-missing-deps (effect references state without depping it)",
-      "useState-derived (state that could be derived from props)",
-      "stale-state-in-setter (setX(x + 1) instead of setX(p => p + 1))"
-    );
-  }
-  if (isAsync) {
-    extras.push(
-      "missing-await (Promise-returning call not awaited)",
-      "promise-in-map (array.map returning promises without Promise.all)",
-      "unhandled-rejection (async call without try/catch)"
-    );
-  }
-
-  return [...base, ...extras].map((r) => `  - ${r}`).join("\n");
-}
-
 // Prefix every line with its 1-based number. Used by ALL scan prompts so
 // the model copies the digit instead of counting lines itself — the
 // primary defense against JSON.line ≠ prose-line drift. JSX nesting and
@@ -221,114 +147,13 @@ function numberLines(code: string): string {
     .join("\n");
 }
 
-// Build a focus-window view of the code: the full file, but with a
-// CURSOR marker at the active line and the ±N line window labeled as
-// the "focus region". Qwen then knows where the user is actively
-// editing and concentrates attention there. When no cursor is provided
-// (SAVE / FLOW), we just return the plain code block (still numbered).
-function buildFocusedCode(
-  code: string,
-  lang: string,
-  allLines: string[] | undefined,
-  activeLine: number | undefined
-): string {
-  if (activeLine === undefined || !allLines || allLines.length === 0) {
-    return `\`\`\`${lang}\n${numberLines(code)}\n\`\`\``;
-  }
-  const start = Math.max(0, activeLine - FOCUS_WINDOW_LINES);
-  const end = Math.min(allLines.length - 1, activeLine + FOCUS_WINDOW_LINES);
-  // Emit the code with line numbers and an arrow at the cursor line so
-  // Qwen sees exactly where the user is. Annotated output is more tokens,
-  // but it dramatically improves "focus" in practice.
-  const numbered = allLines
-    .map((l, i) => {
-      const n = String(i + 1).padStart(3, " ");
-      const inFocus = i >= start && i <= end;
-      const isCursor = i === activeLine;
-      const marker = isCursor ? "→" : inFocus ? "·" : " ";
-      return `${n}${marker} ${l}`;
-    })
-    .join("\n");
-  return `\`\`\`${lang}
-${numbered}
-\`\`\`
-
-The \`→\` marker shows where the user's cursor is. Lines with \`·\` are
-inside the focus window (±${FOCUS_WINDOW_LINES} around cursor). Prioritize
-findings inside the focus window — that's what the user is actively
-editing. Still report critical bugs outside the window if you spot them.`;
-}
-
 function buildPrompt(
   languageId: string,
   fileName: string,
   code: string,
-  opts: PromptOptions = {}
+  _opts: PromptOptions = {}
 ): string {
-  // On-device Qwen2.5-Coder 7B handles the rich 8-field schema reasonably
-  // well — but we still keep a compact prompt for on-device as a safety
-  // margin. Smaller on-device models (or earlier Qwen variants) under a
-  // 512-token budget reliably produced one of:
-  //   (a) truncated JSON → parse fail → zero findings shown,
-  //   (b) findings dropped to fit the budget,
-  //   (c) shallow / generic content for the extra fields.
-  // 7B is much more reliable but inference is slower, so trimming the
-  // schema keeps latency in check. Cloud models (Haiku/Sonnet) always
-  // get the rich schema — they're big enough and fast enough to handle it.
-  //
-  // Strategy: give on-device a MINIMAL schema (5 fields). The client-side
-  // `deriveLabel/Teaser/Lesson/VoiceScript` fallbacks synthesize the rest.
-  // Surfaces keep working — they just look less teacher-y until the user
-  // switches to Haiku for real lessons.
-  const backend = getAiBackend();
-  const isOnDevice =
-    backend === "on-device" ||
-    (backend === "auto" && false); // "auto" resolves at call site; treat as cloud for prompt sizing
-
-  if (isOnDevice) {
-    // Three things are doing the heavy lifting for Qwen 7B here:
-    //   1. Few-shot examples — Qwen follows examples much better than
-    //      pure instructions. Three concrete input→output pairs teach
-    //      the exact schema and the bar for "is this a finding".
-    //   2. Language-specific rule list — telling Qwen to look for
-    //      "index-as-key" explicitly is 5-10× more effective than asking
-    //      it to "find React anti-patterns". Small models need names.
-    //   3. Focus window + cursor marker — Qwen's attention is finite;
-    //      concentrate it on where the user is actually editing.
-    const focused = buildFocusedCode(code, languageId, opts.allLines, opts.activeLine);
-    const rules = ruleHintsFor(languageId, fileName);
-
-    return `You are a code reviewer. Return ONLY a JSON array of issues. No prose, no markdown, no code fences — just the JSON array.
-
-Schema for each issue:
-- "line": 1-based line number
-- "severity": "warn" | "perf" | "info"
-- "ruleId": short kebab-case id
-- "message": one plain-English sentence
-- "fix": optional full-line replacement
-
-Rules to look for in this file (${languageId}):
-${rules}
-
-${FEW_SHOT_EXAMPLES}
-
-Output rules:
-- Max ${MAX_ISSUES} issues, highest-value first
-- Skip issues in commented-out code
-- NEVER flag placeholder / scaffolding code: empty arrays, empty divs, hardcoded stubs, TODO comments, half-written components. The user knows it's not done — narrating "X is empty" is noise.
-- NEVER flag observational stuff ("this variable holds X", "this renders Y"). Only flag things a senior reviewer would actually mention.
-- Quality bar: if the finding could be answered with "yeah, obviously" or "I haven't finished that yet", drop it.
-- If the code looks fine OR is clearly mid-edit, return []
-- Output ONLY the JSON array (starts with \`[\`, ends with \`]\`)
-
-File: ${fileName}
-
-${focused}
-
-Now review the file above and return the JSON array.`;
-  }
-
-  // Learning-first cloud prompt (Haiku / Sonnet).
+  // Learning-first cloud prompt.
   //
   // Silence-first framing. Most files SHOULD return []. A finding is a
   // signal worth interrupting for; everything else is noise. The prior
@@ -398,13 +223,11 @@ ${numberLines(code)}
 /**
  * Refinement prompt — used by hybrid Live Review phase 2.
  *
- * Instead of asking the cloud model to re-scan the whole file, we
- * hand it the candidate findings the on-device pass already detected
- * and ask for two things:
+ * Instead of asking the cloud model to re-scan the whole file, we hand
+ * it the candidate findings phase-1 detected and ask for two things:
  *   1. Validate each (drop false positives).
  *   2. Produce the rich teaching content (label, teaser, lesson,
- *      voiceScript) the on-device prompt's minimal schema doesn't
- *      include.
+ *      voiceScript) the phase-1 prompt's minimal schema doesn't include.
  *
  * Code excerpt is narrow: just the lines around each candidate (±10
  * lines), not the whole file. Cuts phase-2 prompt size ~75% vs the
@@ -459,7 +282,7 @@ function buildRefinementPrompt(
     2
   );
 
-  return `You are refining a code review. An on-device model produced the candidate findings below; your job is to (1) drop any that are false positives or not worth saying, and (2) polish the survivors into rich teaching content.
+  return `You are refining a code review. A first-pass scan produced the candidate findings below; your job is to (1) drop any that are false positives or not worth saying, and (2) polish the survivors into rich teaching content.
 
 File: ${fileName}
 Language: ${languageId}
@@ -468,7 +291,7 @@ Code (only the regions around each candidate, ±${REFINEMENT_CONTEXT_LINES} line
 
 ${codeBlocks}
 
-Candidate findings (from on-device pass):
+Candidate findings (from first-pass scan):
 ${candidatesJson}
 
 For each candidate you choose to keep, emit a JSON object with these fields:
@@ -607,17 +430,6 @@ function tryParse(raw: string): AiIssue[] | null {
     return null;
   }
 }
-
-/**
- * Number of lines above AND below the cursor to emphasize as the "focus
- * window" when on-device Qwen scans. Qwen 7B has 32k context but its
- * attention is still finite — a smaller, centered window gets deeper
- * analysis than dumping 400 lines at it. 40 lines above + 40 below ≈
- * one screen, which matches what the user is actually looking at.
- * Cloud models (Haiku / Sonnet) still get the full file — they have the
- * scale for it and catch cross-function issues the focus window misses.
- */
-const FOCUS_WINDOW_LINES = 40;
 
 // ---- Line-anchor reconciliation ----
 // Models occasionally disagree with themselves: JSON.line points at the
@@ -828,25 +640,20 @@ export async function reviewDocument(
   document: vscode.TextDocument,
   signal?: { cancelled: boolean },
   /**
-   * 0-based cursor line at scan time. When provided (and on-device is
-   * the active backend), the prompt emphasizes the window around this
-   * line — "the user is editing here, deep-dive it". When omitted, the
-   * prompt covers the whole file evenly. LiveReview passes the active
-   * editor's cursor; SAVE/FLOW tiers don't (they want full-file view).
+   * 0-based cursor line at scan time. When provided, the prompt
+   * emphasizes the window around this line — "the user is editing here,
+   * deep-dive it". When omitted, the prompt covers the whole file evenly.
+   * LiveReview passes the active editor's cursor; SAVE/FLOW tiers don't.
    */
   activeLine?: number,
-  /**
-   * Override the user's persisted backend for this single call. Used by
-   * the hybrid Live Review orchestrator (phase 1 forces "on-device",
-   * phase 2 forces "cloud"). Doesn't change setAiBackend / globalState.
-   */
-  forceBackend?: import("../ai/aiBackend.js").AiBackend,
+  /** Vestigial. Retained so existing callsites compile. */
+  _forceBackend?: import("../ai/aiBackend.js").AiBackend,
   /**
    * Refinement mode. When provided, the model is asked to validate +
    * polish these specific findings (instead of detecting from scratch),
    * and the prompt only includes the relevant line ranges + a small
    * window of context around each. Drops phase-2 cloud cost ~75% by
-   * eliminating the "re-detect what Qwen already found" pass.
+   * eliminating the "re-detect what phase-1 already found" pass.
    */
   candidates?: Suggestion[]
 ): Promise<Suggestion[]> {
@@ -875,7 +682,7 @@ export async function reviewDocument(
   );
 
   const started = Date.now();
-  const raw = await aiQuery(prompt, 512, { kind: "scan", forceBackend });
+  const raw = await aiQuery(prompt, 512, { kind: "scan" });
   const elapsed = Date.now() - started;
 
   if (signal?.cancelled) {
@@ -885,7 +692,7 @@ export async function reviewDocument(
   if (!raw) {
     log(
       "reviewEngine",
-      `scan FAIL ${fileName} after ${elapsed}ms — aiQuery returned null (model unavailable? on-device not ready?)`
+      `scan FAIL ${fileName} after ${elapsed}ms — aiQuery returned null (cloud unreachable?)`
     );
     return [];
   }
@@ -902,15 +709,11 @@ export async function reviewDocument(
   const costUsd = estimateScanCostUsd(backendUsed, inTokens, outTokens);
   sessionScanCount++;
   sessionCostUsd += costUsd;
-  // Prefix matches the hybrid orchestrator log: [QWEN] for on-device,
-  // [CLOUD] for any cloud-routed scan. The actual cloud model is decided
-  // by the backend env (OPENAI_CHEAP_MODEL, default gpt-4o-mini); the
-  // extension just labels it "cloud" generically.
-  const prefix = backendUsed === "on-device" ? "[QWEN]  " : "[CLOUD] ";
-  const displayBackend =
-    backendUsed === "on-device"
-      ? "qwen-7b (local)"
-      : "cloud (cheap-tier · model configured server-side)";
+  // The actual cloud model is decided by the backend env
+  // (OPENAI_CHEAP_MODEL, default gpt-5-nano); the extension just labels
+  // it "cloud" generically.
+  const prefix = "[CLOUD] ";
+  const displayBackend = "cloud (cheap-tier · model configured server-side)";
   log(
     "reviewEngine",
     `${prefix}scan · ${fileName} · ` +
@@ -933,8 +736,7 @@ export async function reviewDocument(
   const issues = extractJsonArray(raw);
   if (!issues) {
     // Critical: the model returned text but we couldn't parse JSON. Dump
-    // the raw reply so you can see what it actually said. Most common
-    // cause on Qwen 1.5B is markdown fences or prose before/after the array.
+    // the raw reply so you can see what it actually said.
     logBlock(
       "reviewEngine",
       `JSON PARSE FAIL for ${fileName} — first 800 chars of raw reply`,
@@ -995,11 +797,9 @@ export async function reviewDocument(
     (a, b) => order[a.severity] - order[b.severity] || a.range.start.line - b.range.start.line
   );
 
-  // Cloud (LEARN) caps tighter than on-device: two teaching moments per
-  // file beats five findings for confidence-first framing.
-  const backend = getAiBackend();
-  const isCloud = backend !== "on-device";
-  const cap = isCloud ? MAX_CLOUD_ISSUES : MAX_ISSUES;
+  // Cap findings at MAX_CLOUD_ISSUES — two teaching moments per file
+  // beats five findings for confidence-first framing.
+  const cap = MAX_CLOUD_ISSUES;
 
   log(
     "reviewEngine",

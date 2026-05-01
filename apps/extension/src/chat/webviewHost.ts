@@ -15,7 +15,6 @@ import { classifyResponse, dispatchRouterActions } from "./responseRouter.js";
 import { getHistory, appendMessage, searchHistory, clearHistory } from "./chatHistory.js";
 import { clearAllHighlights, setLessonActive } from "../ai/tools.js";
 import { isLiveReviewActive } from "../review/liveReview.js";
-import { getOnDeviceStatus, onStatusChange } from "../ai/onDeviceModel.js";
 import {
   startRecording,
   stopRecording,
@@ -174,23 +173,6 @@ export function mountedWebviewCount(): number {
   return mountedWebviews.size;
 }
 
-// Forward on-device model status changes to every mounted webview so the
-// Live tab's "On-Device" card reflects real download/load state.
-let modelStatusListenerRegistered = false;
-function ensureModelStatusListener() {
-  if (modelStatusListenerRegistered) return;
-  modelStatusListenerRegistered = true;
-  onStatusChange((status) => {
-    broadcast({
-      type: "ai/modelStatus",
-      ready: status.ready,
-      loading: status.loading,
-      error: status.error,
-      downloadProgress: status.downloadProgress,
-    });
-  });
-}
-
 export function pushTeachFinding(finding: Finding) {
   broadcast({ type: "teach/finding", finding });
 }
@@ -339,7 +321,6 @@ export function mountProtegeWebview(
   webview: vscode.Webview,
   context: vscode.ExtensionContext
 ) {
-  ensureModelStatusListener();
   webview.options = {
     enableScripts: true,
     localResourceRoots: [
@@ -728,11 +709,6 @@ export function mountProtegeWebview(
         const { setDidYouKnowEnabled } = await import("../hints/didYouKnow.js");
         setDidYouKnowEnabled(msg.enabled);
       }
-    } else if (msg.type === "ai/getBackend") {
-      // Live tab mounted late and missed the initial ai/backend push.
-      // Re-send the current persisted backend so its UI hydrates.
-      const { getAiBackend } = await import("../ai/aiBackend.js");
-      post(webview, { type: "ai/backend", backend: getAiBackend() });
     } else if (msg.type === "quota/get") {
       // Live tab requesting today's usage. Refetch from backend, then
       // post the snapshot. On auth/network failure post the last-known
@@ -745,16 +721,8 @@ export function mountProtegeWebview(
       if (snap) post(webview, { type: "quota/snapshot", snapshot: snap });
     } else if (msg.type === "ai/setBackend") {
       const { setAiBackend } = await import("../ai/aiBackend.js");
-      // Migrate legacy values from older webview builds: "haiku" /
-      // "sonnet" both collapse to the new canonical "cloud".
-      const migrated: "on-device" | "cloud" | "auto" =
-        msg.backend === "haiku" || msg.backend === "sonnet"
-          ? "cloud"
-          : msg.backend;
-      setAiBackend(migrated);
-      // Echo the persisted value back so the webview reflects the
-      // authoritative host state (and so new panels in parallel hydrate).
-      post(webview, { type: "ai/backend", backend: migrated });
+      setAiBackend("cloud");
+      post(webview, { type: "ai/backend", backend: "cloud" });
     } else if (msg.type === "explainMode/set") {
       // Persist to the `protege.explainMode` VS Code setting. The
       // onDidChangeConfiguration listener in extension.ts will broadcast
@@ -808,10 +776,6 @@ export function mountProtegeWebview(
           `Protege: couldn't run ${cmd}. Try reloading the window.`
         );
       }
-    } else if (msg.type === "ai/downloadModel") {
-      vscode.commands.executeCommand("protege.downloadOnDeviceModel");
-    } else if (msg.type === "ai/removeModel") {
-      vscode.commands.executeCommand("protege.removeOnDeviceModel");
     } else if (msg.type === "openExternal") {
       // Webview can't call openExternal itself — bounce through the host.
       // Used for jumping to macOS Settings → Privacy → Microphone.
@@ -1053,16 +1017,6 @@ async function sendInitialState(webview: vscode.Webview, userId: string | null) 
   webview.postMessage({
     type: "liveReview/state",
     active: isLiveReviewActive(),
-  } satisfies HostToWebview);
-
-  // Sync on-device model status so the AI Engine selector reflects real state
-  const modelStatus = getOnDeviceStatus();
-  webview.postMessage({
-    type: "ai/modelStatus",
-    ready: modelStatus.ready,
-    loading: modelStatus.loading,
-    error: modelStatus.error,
-    downloadProgress: modelStatus.downloadProgress,
   } satisfies HostToWebview);
 
   // Send current Code IQ — only when signed in. Pre-auth this is a no-op;

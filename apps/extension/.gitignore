@@ -1,9 +1,3 @@
-# Vendored node-llama-cpp source for on-device opt-in users — populated
-# by `scripts/vendor-llama.mjs`, ~19MB of llama.cpp C++ source + bindings
-# that get bundled into the .vsix only when on-device is built.
-# Not in source control — re-vendored on demand via the script.
-.vendor/
-
 # Build artifacts
 dist/
 out/

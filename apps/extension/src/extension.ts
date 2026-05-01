@@ -64,7 +64,6 @@ import { registerInsetWizardCommand } from "./hints/insetWizard.js";
 import { registerCommands } from "./commands/index.js";
 import { registerTeachPopup } from "./teaching/teachPopup.js";
 import { registerTeachingFlow } from "./teaching/teachingFlow.js";
-import { registerOnDeviceModel } from "./ai/onDeviceModel.js";
 import { initAiBackend, onBackendCall } from "./ai/aiBackend.js";
 import { registerExerciseEngine } from "./teaching/exerciseEngine.js";
 import { initChatHistory, disposeChatHistory } from "./chat/chatHistory.js";
@@ -686,7 +685,6 @@ export async function activate(context: vscode.ExtensionContext) {
     ...commandDisposables,
     ...registerTeachPopup(),
     ...registerTeachingFlow(),
-    ...registerOnDeviceModel(context),
     ...registerExerciseEngine(context),
     vscode.window.registerWebviewViewProvider("protege.launcher", launcher),
     vscode.commands.registerCommand("protege.toggle", () =>
@@ -755,21 +753,6 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("protege.showLogs", async () => {
       const { showLogs } = await import("./log.js");
       showLogs();
-    }),
-    vscode.commands.registerCommand("protege.toggleMaxPlanBackend", async () => {
-      // Max Plan quick switch — flips the AI backend between Qwen 7B
-      // (on-device) and the configured cloud provider. For A/B testing
-      // the two engines in the Max tier without leaving the editor.
-      const { getAiBackend, setAiBackend } = await import("./ai/aiBackend.js");
-      const current = getAiBackend();
-      const next = current === "on-device" ? "cloud" : "on-device";
-      setAiBackend(next);
-      broadcast({ type: "ai/backend", backend: next });
-      vscode.window.showInformationMessage(
-        next === "on-device"
-          ? "Protege: switched to Qwen 7B (on-device)"
-          : "Protege: switched to Cloud (provider configured server-side)"
-      );
     }),
     vscode.commands.registerCommand("protege.toggleVoiceExplain", async () => {
       const cfg = vscode.workspace.getConfiguration("protege");

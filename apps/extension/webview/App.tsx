@@ -621,12 +621,6 @@ export function App() {
   const [historyPanelMessages, setHistoryPanelMessages] = useState<
     ChatMessage[]
   >([]);
-  const [modelStatus, setModelStatus] = useState<{
-    ready: boolean;
-    loading: boolean;
-    error: string | null;
-    downloadProgress: number;
-  }>({ ready: false, loading: false, error: null, downloadProgress: 0 });
   const [tipDetail, setTipDetail] = useState<TipDetail | null>(null);
   // Message IDs whose learning-fork chips have been clicked (either path).
   // Scoped per-render so rehydrated history doesn't re-offer stale forks
@@ -776,13 +770,6 @@ export function App() {
         void playExplainAudio(msg.text, msg.voice ?? "female", msg.requestId);
       } else if (msg.type === "liveReview/state") {
         setLiveMode(msg.active);
-      } else if (msg.type === "ai/modelStatus") {
-        setModelStatus({
-          ready: msg.ready,
-          loading: msg.loading,
-          error: msg.error,
-          downloadProgress: msg.downloadProgress,
-        });
       } else if (msg.type === "tip/detail") {
         setTipDetail(msg.tip);
       } else if (msg.type === "scan/started") {
@@ -1775,7 +1762,6 @@ export function App() {
               return next;
             });
           }}
-          modelStatus={modelStatus}
         />
       ) : mode === "echo" ? (
         <EchoTab />

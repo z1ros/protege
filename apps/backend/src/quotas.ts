@@ -67,7 +67,7 @@ export const USER_FACING_LIMITS = {
 // Heavy users (8-hour deep coding sessions) may hit this; intended.
 // If they keep hitting it, we look at per-user analytics and decide
 // whether to bump the cap or charge those users.
-export const DAILY_USD_HARD_CAP = 0.5;
+export const DAILY_USD_HARD_CAP = 3.0;
 
 const COLUMN_BY_KIND: Record<QuotaKind, string> = {
   scan: "scan_calls",

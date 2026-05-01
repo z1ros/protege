@@ -59,18 +59,6 @@
         "title": "Protege: Toggle Auto-Accept AI Edits"
       },
       {
-        "command": "protege.testOnDevice",
-        "title": "Protege: Test On-Device Model"
-      },
-      {
-        "command": "protege.downloadOnDeviceModel",
-        "title": "Protege: Download On-Device Model"
-      },
-      {
-        "command": "protege.removeOnDeviceModel",
-        "title": "Protege: Remove On-Device Model (free ~4.7 GB)"
-      },
-      {
         "command": "protege.showLogs",
         "title": "Protege: Show Logs"
       },
@@ -185,10 +173,6 @@
       {
         "command": "protege.openTeachPeek",
         "title": "Protege: Open Teach Peek"
-      },
-      {
-        "command": "protege.toggleMaxPlanBackend",
-        "title": "Protege: Max Plan — switch Qwen 7B ↔ Haiku"
       },
       {
         "command": "protege.showEchoEventStream",
@@ -393,7 +377,7 @@
           "default": 30,
           "minimum": 0,
           "maximum": 1000,
-          "description": "Hourly cap on AUTO-FIRED cloud LLM calls (file-open greeter, vibe brief, struggle chip — anything that fires without you clicking). User-triggered actions (chat, ⌘K P, Learning Mode, voice Explain) bypass this cap. In `auto` backend mode these route on-device first, so this only kicks in when you've explicitly picked a cloud backend like Haiku. Set to 0 to disable all auto-fired cloud calls; raise it if you want a chattier hint surface."
+          "description": "Hourly cap on AUTO-FIRED cloud LLM calls (file-open greeter, vibe brief, struggle chip — anything that fires without you clicking). User-triggered actions (chat, ⌘K P, Learning Mode, voice Explain) bypass this cap. Set to 0 to disable all auto-fired cloud calls; raise it if you want a chattier hint surface."
         },
         "protege.codeReview.liveReview": {
           "type": "boolean",
@@ -493,8 +477,6 @@
     "dev": "cross-env NODE_ENV=development concurrently -n ext,ui -c blue,green \"tsup --watch\" \"vite --port 5173 --strictPort\"",
     "dev:ext": "tsup --watch",
     "dev:ui": "vite --port 5173 --strictPort",
-    "vendor:llama": "node scripts/vendor-llama.mjs",
-    "prebuild": "pnpm run vendor:llama",
     "build": "tsup && vite build",
     "build:ext": "tsup",
     "build:webview": "vite build",
@@ -503,7 +485,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "tar": "^7.5.0",
     "@blocknote/core": "^0.49.0",
     "@blocknote/mantine": "^0.49.0",
     "@blocknote/react": "^0.49.0",
@@ -519,7 +500,6 @@
     "@typescript/vfs": "^1.6.4",
     "d3-force": "^3.0.0",
     "lucide-react": "^1.8.0",
-    "node-llama-cpp": "^3.18.1",
     "prism-themes": "^1.9.0",
     "prismjs": "^1.30.0",
     "react-markdown": "^10.1.0",

@@ -78,12 +78,9 @@ export function registerAnalyzer(
       content,
     };
 
-    // 1. Hybrid concept detection — AST + regex + AI (optional).
+    // 1. Hybrid concept detection — AST + regex.
     //    AST layer is instant (<50ms). Regex catches Python/CSS.
-    //    AI layer only runs if on-device model is loaded.
-    const { getOnDeviceStatus } = await import("../ai/onDeviceModel.js");
-    const aiEnabled = getOnDeviceStatus().ready;
-    const detection = await detectHybrid(content, doc.fileName, doc.languageId, fileHash, aiEnabled);
+    const detection = await detectHybrid(content, doc.fileName, doc.languageId, fileHash, false);
     const concepts = detection.concepts.map((c) => c.name);
     const contextScores: Record<string, number> = {};
     for (const c of detection.concepts) {
@@ -167,58 +164,15 @@ export function registerAnalyzer(
     const existing = realtimeDebounce.get(key);
     if (existing) clearTimeout(existing);
 
-    const timer = setTimeout(async () => {
+    const timer = setTimeout(() => {
       realtimeDebounce.delete(key);
       try {
-        // Light analysis — local only, no network
-        const content = doc.getText();
-        const concepts = detectConcepts(doc.languageId, content);
-
-        // Feed detected concepts to the status bar (so it knows what's
-        // on the current line even between saves)
-        // The status bar already listens to cursor changes, but this
-        // ensures the concept list is fresh.
-
-        // Run AI-powered inline analysis if the user has it enabled.
-        // This calls the on-device model or Haiku (depending on user
-        // preference) to explain any new issues it detects.
-        const { aiQuery } = await import("../ai/aiBackend.js");
-        const { isOnDeviceReady } = await import("../ai/onDeviceModel.js");
-
-        // Only do AI analysis if on-device model is ready (free + instant)
-        // or if user explicitly chose a cloud backend.
-        // This prevents burning cloud credits on every keystroke.
-        if (isOnDeviceReady()) {
-          // Quick check: are there obvious issues AI should explain?
-          const hasErrors = vscode.languages.getDiagnostics(doc.uri)
-            .some(d => d.severity === vscode.DiagnosticSeverity.Error);
-
-          if (hasErrors) {
-            // AI inline errors are already handled by inlineErrors.ts
-            // listener — no need to duplicate here. But we CAN do a
-            // proactive concept-aware check that the diagnostic system
-            // doesn't cover.
-          }
-
-          // Detect patterns the review engine might miss — things that
-          // need semantic understanding (e.g. "this useEffect has no
-          // cleanup but it starts a subscription")
-          if (concepts.length > 0) {
-            const lastLine = e.contentChanges[0]?.range.start.line;
-            if (lastLine !== undefined) {
-              const lineText = doc.lineAt(lastLine).text;
-              // Check if this line has a concept we should teach about
-              const lineConcepts = detectConcepts(doc.languageId, lineText);
-              if (lineConcepts.length > 0) {
-                // Update status bar with the freshest concept
-                // (statusBarLive already does this on cursor move,
-                // but this ensures it's up-to-date during typing too)
-              }
-            }
-          }
-        }
+        // Light analysis — local only, no network. Inline-error handling
+        // and the status-bar concept feed live in their own listeners
+        // (inlineErrors.ts, statusBarLive.ts); nothing further to do here
+        // until we have a real per-keystroke task that warrants the wake.
+        detectConcepts(doc.languageId, doc.getText());
       } catch (err) {
-        // Real-time analysis failures are non-fatal
         log.appendLine(`[protege] realtime analysis err: ${err}`);
       }
     }, 1500);

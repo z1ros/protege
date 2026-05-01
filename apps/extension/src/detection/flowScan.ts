@@ -20,7 +20,7 @@ import type { Anchor, Suggestion } from "../review/reviewEngine.js";
  *   • API contract drift between frontend + backend
  *
  * Implementation: rotates through small "clusters" of related files from
- * the workspace index and asks the on-device model to identify cross-file
+ * the workspace index and asks the cloud scan model to identify cross-file
  * flows. One cluster per idle window so we never block the machine.
  *
  * Feature-flagged to off by default for now — enable via setting
@@ -32,7 +32,7 @@ const IDLE_COOLDOWN_MS = 90_000;    // min gap between two IDLE passes
 const CLUSTER_SIZE = 4;             // files per pass
 const MAX_BYTES_PER_FILE = 40_000;
 const NEIGHBOR_HEAD_LINES = 30;
-const MAX_PASS_TIME_MS = 20_000;    // kill-switch if Qwen stalls
+const MAX_PASS_TIME_MS = 20_000;    // kill-switch if scan call stalls
 
 let lastActivityMs = Date.now();
 let lastPassEndedMs = 0;
