@@ -10,8 +10,11 @@ import { openai } from "./openai.js";
 export type ProviderId = "anthropic" | "openai";
 
 export function getProvider(): ProviderId {
-  const raw = (process.env.AI_PROVIDER ?? "anthropic").toLowerCase();
-  return raw === "openai" ? "openai" : "anthropic";
+  // Default = openai (production primary). Set AI_PROVIDER=anthropic
+  // to flip to the Anthropic fallback path. Was defaulting to anthropic
+  // historically — corrected because production runs OpenAI.
+  const raw = (process.env.AI_PROVIDER ?? "openai").toLowerCase();
+  return raw === "anthropic" ? "anthropic" : "openai";
 }
 
 export interface ChatToolUse {
@@ -32,10 +35,10 @@ export interface ChatResult {
 export interface ChatCallOptions {
   anthropicModel: string;
   /**
-   * Override for the OpenAI model id. When omitted, callOpenAI falls
-   * back to OPENAI_MODEL env (or "gpt-4.1"). Lets the chat route pick
-   * a cheaper id (gpt-4.1-mini) for cheap-tier requests without a
-   * second env var dance at the callsite.
+   * Override for the OpenAI model id. When omitted, callOpenAI reads
+   * OPENAI_MODEL env (no silent fallback — missing env throws). Lets
+   * the chat route pin cheap-tier (gpt-5-nano) for Live Review scans
+   * while the rest of the app stays on gpt-5-mini.
    */
   openaiModel?: string;
   /**

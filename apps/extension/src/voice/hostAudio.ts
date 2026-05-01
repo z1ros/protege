@@ -591,9 +591,55 @@ export async function playHostAudioStreaming(
 
 /** Convenience: VS Code disposable that stops any in-flight playback on
  *  extension deactivation. */
+/**
+ * Kill any orphan audio-player processes from a prior extension
+ * session. When the user reloads VS Code (Cmd+R) mid-playback, the
+ * JS context is torn down but the OS-level afplay/aplay/powershell
+ * child keeps running until the WAV finishes. The user reloads,
+ * sees an empty chat, and hears the bot still talking from the
+ * "previous chat" — confusing as hell.
+ *
+ * Called once on extension activation. Best-effort: if pkill isn't
+ * present or no orphans exist, this is a silent no-op.
+ */
+export function killOrphanAudioProcesses(): void {
+  const player = pickPlayer();
+  if (!player) return;
+  // Only kill processes that match our temp-file naming pattern
+  // (`protege-tts-*.wav`). Avoids nuking unrelated afplay invocations
+  // the user might have running for their own audio. The `-f` flag
+  // matches against the full command line, not just the process name.
+  const { spawn } = require("node:child_process") as typeof import("node:child_process");
+  try {
+    if (process.platform === "darwin" || process.platform === "linux") {
+      const proc = spawn("pkill", ["-f", "protege-tts-"], { stdio: "ignore" });
+      proc.on("error", () => {}); // pkill not present — silent
+    } else if (process.platform === "win32") {
+      // Windows: PowerShell pattern-kill
+      spawn(
+        "powershell",
+        [
+          "-NoProfile",
+          "-Command",
+          "Get-Process | Where-Object { $_.MainWindowTitle -like '*protege-tts-*' } | Stop-Process -Force",
+        ],
+        { stdio: "ignore" }
+      ).on("error", () => {});
+    }
+    console.log("[protege] host audio: killed any orphan afplay processes from prior session");
+  } catch {
+    // Defensive: spawn shouldn't throw, but be safe
+  }
+}
+
 export function registerHostAudioCleanup(
   context: vscode.ExtensionContext
 ): void {
+  // Sweep orphans from prior sessions BEFORE we register our own
+  // disposable. Without this, a Cmd+R reload mid-playback leaves the
+  // user hearing the bot from the previous session — see comment on
+  // killOrphanAudioProcesses().
+  killOrphanAudioProcesses();
   context.subscriptions.push({
     dispose: () => stopHostAudio(),
   });

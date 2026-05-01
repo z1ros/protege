@@ -5,6 +5,7 @@ import { showWeakSpots } from "./weakSpots.js";
 import { quizMe } from "./quizMe.js";
 import { compareCommand, registerCompareProvider } from "./compare.js";
 import { fixItCommand } from "./fixIt.js";
+import { registerSwitchBackendCommand } from "./switchBackend.js";
 
 /**
  * Register all Protege command palette commands.
@@ -27,5 +28,8 @@ export function registerCommands(
     // diff scheme. Registered alongside the commands so it's torn down
     // on extension deactivate.
     ...registerCompareProvider(context),
+    // Backend URL switcher — quick-pick between Production / Local /
+    // Custom. Useful during dev and when debugging prod auth issues.
+    registerSwitchBackendCommand(),
   ];
 }
