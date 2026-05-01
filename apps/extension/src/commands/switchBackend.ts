@@ -37,53 +37,35 @@ function describeCurrent(): string {
 }
 
 /**
- * Status-bar indicator showing the current backend, clickable to fire
- * the switch command. Lives left-side, low-priority so it doesn't
- * fight the more frequently-used items.
- *
- * Disposed alongside the command registration.
+ * Developer-mode gate. The backend switcher is an internal admin tool —
+ * end users should never see it (or have the ability to point Protege at
+ * arbitrary backends). To enable, set `protege.developerMode: true` in
+ * your user-global settings.json, OR launch Cursor with PROTEGE_DEV=1
+ * in the environment.
  */
-function createBackendStatusBarItem(): vscode.StatusBarItem {
-  const item = vscode.window.createStatusBarItem(
-    vscode.StatusBarAlignment.Left,
-    50
-  );
-  item.command = "protege.switchBackend";
-  item.tooltip = "Click to switch the Protege backend (Production ↔ Local)";
-  refreshBackendStatusBarItem(item);
-  item.show();
-  return item;
-}
-
-function refreshBackendStatusBarItem(item: vscode.StatusBarItem): void {
-  const url = getCurrentBackendUrl();
-  if (url === PROD_BACKEND_URL) {
-    item.text = "$(cloud) Protege: Prod";
-    item.backgroundColor = undefined;
-  } else if (url === LOCAL_BACKEND_URL) {
-    item.text = "$(plug) Protege: Local";
-    // Highlight when on a non-prod target so it's hard to forget
-    // you're not hitting production. Subtle warning bg.
-    item.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
-  } else {
-    item.text = "$(question) Protege: Custom";
-    item.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
+function isDeveloperMode(): boolean {
+  if (process.env.PROTEGE_DEV === "1" || process.env.PROTEGE_DEV === "true") {
+    return true;
+  }
+  try {
+    return (
+      vscode.workspace
+        .getConfiguration("protege")
+        .get<boolean>("developerMode") === true
+    );
+  } catch {
+    return false;
   }
 }
 
 export function registerSwitchBackendCommand(): vscode.Disposable {
-  // Status-bar item lives for the extension lifetime; we wrap it in
-  // the command's disposable so deactivate cleans both up.
-  const statusBarItem = createBackendStatusBarItem();
-
-  // Keep the status bar in sync if the user edits settings.json by
-  // hand instead of using the command. Without this, the indicator
-  // would stay stale until next reload.
-  const configWatcher = vscode.workspace.onDidChangeConfiguration((e) => {
-    if (e.affectsConfiguration("protege.backendUrl")) {
-      refreshBackendStatusBarItem(statusBarItem);
-    }
-  });
+  // Don't even register the command for non-dev users. Without
+  // registration, the command palette shows "Command 'protege.
+  // switchBackend' not found" if someone discovers the id — exactly
+  // the right behaviour: it's not a feature, it's an internal tool.
+  if (!isDeveloperMode()) {
+    return new vscode.Disposable(() => {});
+  }
 
   const cmd = vscode.commands.registerCommand(
     "protege.switchBackend",
@@ -184,6 +166,5 @@ export function registerSwitchBackendCommand(): vscode.Disposable {
     }
   );
 
-  // Bundle all three so deactivate cleans them up together.
-  return vscode.Disposable.from(cmd, statusBarItem, configWatcher);
+  return cmd;
 }
