@@ -72,14 +72,6 @@ export function ProfilePage({
           <div className="hero-stat-label microcaps">Concepts</div>
           <div className="hero-stat-sub">mastered</div>
         </div>
-        <div className="hero-stat">
-          <div className="hero-stat-value">
-            <span className="serif-num">{unlocked.length}</span>
-            <span className="hero-stat-unit">/{milestones.length}</span>
-          </div>
-          <div className="hero-stat-label microcaps">Milestones</div>
-          <div className="hero-stat-sub">+{bonusIq} bonus IQ</div>
-        </div>
       </div>
 
       {/* Plan moved up here (was below Recent wins). User-facing

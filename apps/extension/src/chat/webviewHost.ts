@@ -394,6 +394,13 @@ export function mountProtegeWebview(
   let activeAbort: AbortController | null = null;
 
   const sub = webview.onDidReceiveMessage(async (msg: WebviewToHost) => {
+    if (msg.type === "chat/typing") {
+      // Stamp the freshness marker so the wake-recording handler can
+      // tell "user was just typing" from "user is idle / using voice".
+      // No reply, no broadcast — pure side-effect on lastTypedAt.
+      noteUserTyping();
+      return;
+    }
     if (msg.type === "chat/abort") {
       // Abort the in-flight turn so the user can interrupt a long
       // generation. Doesn't clear the user's message — only kills the
@@ -1115,6 +1122,24 @@ let wakeListeningTimer: ReturnType<typeof setTimeout> | null = null;
  *  Listening chip for a recording that's already over. */
 let wakeRecordingActive = false;
 
+/** Last time the user typed in the chat composer (epoch ms). The webview
+ *  posts a `chat/typing` message on every keystroke; we use the freshness
+ *  of this stamp to suppress wake-recording turns that fire while the
+ *  user is actively writing — i.e. the wake word false-fired (or a
+ *  voice-dialogue follow-up window stayed open) and ambient room speech
+ *  got captured as if it were a Protege command. If the user is typing,
+ *  whatever the mic just heard is not their question to Protege. */
+let lastTypedAt = 0;
+const TYPING_SUPPRESSION_MS = 8000;
+
+export function noteUserTyping(): void {
+  lastTypedAt = Date.now();
+}
+
+function isUserActivelyTyping(): boolean {
+  return Date.now() - lastTypedAt < TYPING_SUPPRESSION_MS;
+}
+
 export async function startGlobalWakeListener(
   context: vscode.ExtensionContext,
   userId: string
@@ -1210,6 +1235,26 @@ export async function startGlobalWakeListener(
               return;
             }
             if (wav.length < 1000) {
+              setVoiceState("idle");
+              return;
+            }
+            // Typing-mode gate: if the user has typed in the chat
+            // composer in the last 8s, treat this wake recording as
+            // ambient room noise and drop it. The user reported a
+            // case where they were chatting with a friend in the room
+            // while typing in Protege; the wake binary false-fired,
+            // ~3s of conversation was captured, Whisper produced a
+            // grammatical English sentence ("This place turned out
+            // very expensive."), every content filter passed it, and
+            // it landed as a YOU message in chat. Content-based
+            // filtering can't catch full-sentence ambient speech —
+            // the only reliable signal is the user's intent, and
+            // active typing is a strong "I'm using text right now,
+            // not voice" signal.
+            if (isUserActivelyTyping()) {
+              console.log(
+                `[protege] dropped wake recording — user typed ${Date.now() - lastTypedAt}ms ago (typing-mode gate)`,
+              );
               setVoiceState("idle");
               return;
             }

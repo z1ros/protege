@@ -323,6 +323,15 @@ export async function startWakeWordListener(
       }
 
       if (trimmed === "WAKE:detected") {
+        // Loud log so the user can clearly distinguish a real wake fire
+        // from the constant `protege-mic: prob=…` polling stream.
+        // Without this it's easy to misread "wake fired and I didn't
+        // mean it to" when actually the mic was opened by an unrelated
+        // path (post-TTS follow-up, manual toggle, barge-in).
+        pipeLog(
+          "protege-wake",
+          `🎤 WAKE FIRED · avg=${lastWakeAvg.toFixed(3)} (threshold gate passed) — opening mic`
+        );
         if (suspended) {
           pipeLog("protege-wake", "wake suppressed (mic suspended during bot speech)");
           continue;
@@ -640,20 +649,25 @@ export async function transcribe(wavBuffer: Buffer): Promise<string> {
   }
 
   // Min-word filter — short transcripts on near-silence are
-  // overwhelmingly Whisper hallucinations ("yay", "oh wow", "uh huh").
-  // A real question or command is almost always 3+ words ("what is
-  // this", "explain this code", "go to the next step"). The handful
-  // of legitimate short commands ("stop", "cancel", "repeat") are in
-  // the ghost-list above and dropped intentionally — voice mode is
-  // long-form Q&A, not single-word commands. If you find a legit
-  // short command being eaten by this filter, add it to the
-  // SHORT_COMMAND_ALLOWLIST below.
+  // overwhelmingly Whisper hallucinations.
+  //
+  // Bumped 3 → 4 (2026-05-01) after a real-world false positive:
+  // mic auto-opened for a voice-dialogue follow-up window, captured
+  // ~3s of room tone, Whisper produced the 3-word phrase
+  // "Already upside down." — passed the old 3-word filter, fired a
+  // ghost /chat call. Voice-dialogue users speak in full sentences
+  // ("what about this part", "show me an example", "yes please
+  // continue"); a 4-word floor cuts that whole class without
+  // affecting natural speech.
+  //
+  // Legit 1–3 word voice commands are deliberately dropped — voice
+  // mode is long-form Q&A. If a use case for short commands turns
+  // up, add it to SHORT_COMMAND_ALLOWLIST.
   const SHORT_COMMAND_ALLOWLIST = new Set<string>([
-    // Empty for now — keep this filter strict by default. Add valid
-    // 1–2 word voice commands here if a real-use case turns up.
+    // Empty for now — keep this filter strict by default.
   ]);
   const wordCount = normalized.split(/\s+/).filter(Boolean).length;
-  if (wordCount < 3 && !SHORT_COMMAND_ALLOWLIST.has(normalized)) {
+  if (wordCount < 4 && !SHORT_COMMAND_ALLOWLIST.has(normalized)) {
     pipeLog("protege-stt", `dropped short transcript (${wordCount} word${wordCount === 1 ? "" : "s"}): "${text}"`);
     return "";
   }

@@ -63,6 +63,10 @@
         "title": "Protege: Show Logs"
       },
       {
+        "command": "protege.diagnoseWake",
+        "title": "Protege: Diagnose Wake Word (threshold + status)"
+      },
+      {
         "command": "protege.toggleVoiceExplain",
         "title": "Protege: Cycle Explain Mode (text → voice → both)"
       },

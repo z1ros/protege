@@ -618,6 +618,7 @@ export type WebviewToHost =
     }
   | { type: "chat/clear" }
   | { type: "chat/abort" }
+  | { type: "chat/typing" }
   | { type: "ready" }
   | { type: "watcher/engage"; nudgeId: string; triggerId: UnpromptedTriggerId; context: UnpromptedNudge["context"] }
   | { type: "watcher/dismiss"; nudgeId: string }

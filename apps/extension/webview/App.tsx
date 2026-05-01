@@ -1490,7 +1490,15 @@ export function App() {
                   </div>
                 );
               })}
-              {loading && (
+              {/* "thinking..." bubble shows ONLY while we're waiting for
+                  the first chunk of the assistant reply. Once the reply
+                  has been appended, hide it even though `loading` is
+                  still true — the host keeps `loading` true while TTS
+                  plays so the composer's Stop button stays clickable
+                  (see webviewHost.ts: ttsKickedOff branch). Without this
+                  guard the user sees both the rendered reply AND a
+                  ghost "thinking..." bubble underneath it during TTS. */}
+              {loading && messages[messages.length - 1]?.role !== "assistant" && (
                 <div className="msg msg-assistant">
                   <div className="role">Protege</div>
                   <div className="content">
@@ -1611,6 +1619,12 @@ export function App() {
                         ? e.target.value.slice(0, MAX_CHAT_CHARS)
                         : e.target.value;
                     setInput(next);
+                    // Tell the host the user is actively typing — the
+                    // wake-recording handler uses this to suppress
+                    // ambient room speech that the wake binary false-
+                    // fired on. Cheap fire-and-forget; host just
+                    // updates a single timestamp.
+                    vscode.postMessage({ type: "chat/typing" });
                   }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !e.shiftKey) {
@@ -1788,7 +1802,6 @@ export function App() {
                 totalConcepts={totalConcepts}
                 ruleCount={ruleCount}
                 streak={streak}
-                milestones={milestones}
                 recentGains={recentGains}
               />
             )}

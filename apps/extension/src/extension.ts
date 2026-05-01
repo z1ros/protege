@@ -754,6 +754,38 @@ export async function activate(context: vscode.ExtensionContext) {
       const { showLogs } = await import("./log.js");
       showLogs();
     }),
+    vscode.commands.registerCommand("protege.diagnoseWake", async () => {
+      // Quick status read for "is wake actually firing or am I imagining
+      // it?". Surfaces threshold + listener state + reveals the log
+      // channel so the user can watch real WAKE FIRED lines vs the
+      // background prob=… polling stream.
+      const {
+        getStoredWakeThreshold,
+        getWakeEnabled,
+        DEFAULT_WAKE_THRESHOLD,
+      } = await import("./voice/wakeWordCalibration.js");
+      const { isWakeWordListening } = await import("./voice/voiceCapture.js");
+      const threshold = getStoredWakeThreshold(context);
+      const enabled = getWakeEnabled(context);
+      const listening = isWakeWordListening();
+      const lines = [
+        `Wake listener: ${enabled ? "ON" : "OFF"} (toggle: status-bar chip or "Protege: Toggle Wake")`,
+        `Currently running: ${listening ? "yes" : "no"}`,
+        `Threshold: ${threshold.toFixed(3)} (default ${DEFAULT_WAKE_THRESHOLD.toFixed(3)} · floor 0.135 · max 0.35)`,
+        ``,
+        `Real "Protege" voice peaks ≈ 0.22-0.28; background noise tops ≈ 0.18.`,
+        `If you're getting false fires, recalibrate via "Protege: Calibrate Wake Word"`,
+        `or open the Output → "protege-wake" channel and watch for "🎤 WAKE FIRED" lines.`,
+        `The constant prob=0.0X stream is the binary polling — NOT wake firing.`,
+      ];
+      const { log } = await import("./log.js");
+      for (const l of lines) log("wake", l);
+      const { showLogs } = await import("./log.js");
+      showLogs();
+      vscode.window.showInformationMessage(
+        `Wake: ${enabled ? "ON" : "OFF"} · threshold ${threshold.toFixed(3)}. See Output → Protege for details.`
+      );
+    }),
     vscode.commands.registerCommand("protege.toggleVoiceExplain", async () => {
       const cfg = vscode.workspace.getConfiguration("protege");
       const order = ["text", "voice", "both"] as const;

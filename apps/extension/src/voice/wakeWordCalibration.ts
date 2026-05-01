@@ -17,13 +17,23 @@ const PROMPT_DEFER_MS = 7 * 24 * 60 * 60_000;
 /** Threshold used when the user has not calibrated yet. Tuned for the
  *  LiveKit-trained model (2026-04-18): real-voice peaks 0.22–0.28,
  *  background noise tops ~0.18. See main.rs.
- *  Bumped 2026-04-22 from 0.13 → 0.135 after "okay okay" was triggering
- *  at avg≈0.178 on a stored 0.12 calibration. 0.135 is the new floor
- *  enforced by MIN_THRESHOLD below, so even an older calibration that
- *  picked 0.12 will now be treated as 0.135. */
-export const DEFAULT_WAKE_THRESHOLD = 0.135;
+ *
+ *  Bumped 2026-05-01 from 0.135 → 0.18 (the documented noise ceiling).
+ *  The old 0.135 floor sat BELOW the noise ceiling, so the wake binary
+ *  could fire on background noise alone — which is exactly the
+ *  false-positive class users hit. 0.18 is the sweet spot:
+ *    - just above noise (no false fires from room tone, fans, music
+ *      bleed, or short ambient spikes)
+ *    - well below voice floor (real "Protege" still trips at 0.22+)
+ *
+ *  Cost: a very softly spoken "Protege" might land at 0.18-0.21 and
+ *  miss. Users who genuinely speak softly can recalibrate via
+ *  "Protege: Calibrate Wake Word" — that command picks an empirical
+ *  threshold from their actual voice samples. The 2026-04-22 history
+ *  ("okay okay" triggering at 0.178) confirms 0.18 is a safe floor. */
+export const DEFAULT_WAKE_THRESHOLD = 0.18;
 
-const MIN_THRESHOLD = 0.135;
+const MIN_THRESHOLD = 0.18;
 const MAX_THRESHOLD = 0.35;
 const SAMPLES_REQUIRED = 3;
 

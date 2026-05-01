@@ -479,44 +479,14 @@ function hasOverlappingDiagnostic(uri: vscode.Uri, range: vscode.Range): boolean
 }
 
 // ---- Status bar ----
-
-let statusItem: vscode.StatusBarItem | null = null;
-
-function getStatusItem(): vscode.StatusBarItem {
-  if (!statusItem) {
-    statusItem = vscode.window.createStatusBarItem(
-      vscode.StatusBarAlignment.Right,
-      90
-    );
-    statusItem.command = "protege.toggleLiveReview";
-  }
-  return statusItem;
-}
-
-function updateStatusBar(): void {
-  const item = getStatusItem();
-  if (!active) {
-    item.hide();
-    return;
-  }
-  if (isScanning) {
-    // Shortened chip: icon-only while scanning so the status bar row
-    // doesn't balloon. Full context lives in the tooltip.
-    item.text = "$(sync~spin) Live";
-    item.tooltip = "Protege Live — scanning this file";
-  } else {
-    const count = currentSuggestions.length;
-    // Short form: "Live · N" when there are issues, just "Live" otherwise.
-    // Full "Protege Live · N issues" was eating real estate next to four
-    // other Protege status items (IQ, streak, Go Live, Wake state).
-    item.text = count > 0 ? `$(eye) Live · ${count}` : "$(eye) Live";
-    item.tooltip =
-      count > 0
-        ? `Protege Live — ${count} issue${count === 1 ? "" : "s"} found. Click to stop.`
-        : "Protege Live — ON. Click to stop.";
-  }
-  item.show();
-}
+//
+// The "Live · N issues found" status bar item was retired 2026-05-01.
+// Live Review state is already surfaced inside the Protege panel
+// (Editor Intelligence toggle in the Live tab) and via the underline
+// decorations in the editor itself; the extra status bar chip just
+// added clutter next to the other Protege items. broadcastState()
+// still posts liveReview/state to the webview, so the panel toggle
+// reflects on/off without the bottom-bar indicator.
 
 function broadcastState(): void {
   try {
@@ -662,7 +632,6 @@ function startLiveReview(): void {
         `tab-switch dedup HIT · ${editor.document.fileName.split(/[\\/]/).pop()} · ${currentSuggestions.length} cached findings`
       );
       refreshAllSurfaces();
-      updateStatusBar();
       broadcastState();
       return;
     }
@@ -722,7 +691,6 @@ function startLiveReview(): void {
     if (active) refreshAllSurfaces();
   });
 
-  updateStatusBar();
   broadcastState();
   notifyLiveReviewOn();
 }
@@ -766,7 +734,6 @@ function stopLiveReview(): void {
 
   currentSuggestions = [];
 
-  updateStatusBar();
   broadcastState();
   notifyLiveReviewOff();
 }
@@ -925,7 +892,6 @@ async function runHybridScan(editor: vscode.TextEditor): Promise<void> {
         `[HYBRID] ▸ restored ${polished.length} polished finding${polished.length === 1 ? "" : "s"} from last refine`
       );
       refreshAllSurfaces();
-      updateStatusBar();
       broadcastState();
     }
     return;
@@ -1137,7 +1103,6 @@ async function runReview(
   const cancelSignal = { cancelled: false };
 
   isScanning = true;
-  updateStatusBar();
   broadcastState();
 
   const scanFile = editor.document.fileName.split(/[\\/]/).pop() ?? "file";
@@ -1164,7 +1129,6 @@ async function runReview(
   if (mySeq !== scanSeq || !active) {
     cancelSignal.cancelled = true;
     isScanning = false;
-    updateStatusBar();
     broadcastState();
     return NONE;
   }
@@ -1267,7 +1231,6 @@ async function runReview(
   // subscribes via onSuggestionsChanged() below.
   scanChangeEmitter.fire(key);
 
-  updateStatusBar();
   broadcastState();
   return { findingsStored: liveAdded.length, findings: liveAdded };
 }
@@ -1438,8 +1401,6 @@ export function registerLiveReview(
       /* paused */
     })
   );
-
-  disposables.push(getStatusItem());
 
   disposables.push(
     new vscode.Disposable(() => {
