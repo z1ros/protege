@@ -22,6 +22,7 @@ builder = "NIXPACKS"
 buildCommand = """
 corepack enable && \
 pnpm install --frozen-lockfile && \
+pnpm --filter @protege/types build && \
 pnpm --filter @protege/backend exec prisma generate && \
 pnpm --filter @protege/backend build
 """
