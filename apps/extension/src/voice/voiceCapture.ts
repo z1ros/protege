@@ -582,10 +582,17 @@ export async function transcribe(wavBuffer: Buffer): Promise<string> {
   const GHOST_TRANSCRIPTS = new Set([
     "",
     "thank you",
+    "thank you so much",
+    "thank you for watching",
     "thanks",
     "thanks for watching",
+    "thanks for watching this video",
+    "thanks for listening",
     "you",
     "bye",
+    "bye bye",
+    "see ya",
+    "see you",
     ".",
     "okay",
     "ok",
@@ -600,11 +607,24 @@ export async function transcribe(wavBuffer: Buffer): Promise<string> {
     "mm",
     "mm hmm",
     "mmhmm",
+    "ah",
+    "ha",
+    "hm",
+    "hmm",
+    "oh",
+    "well",
+    "yay",
+    "ta da",
+    "tada",
+    "ta-da",
+    "amen",
+    "wow",
     "subscribe",
     "like and subscribe",
     "please subscribe",
     "see you next time",
     "see you in the next video",
+    "if you enjoyed this video",
   ]);
   if (GHOST_TRANSCRIPTS.has(normalized)) {
     pipeLog("protege-stt", `dropped ghost transcript: "${text}"`);
@@ -616,6 +636,25 @@ export async function transcribe(wavBuffer: Buffer): Promise<string> {
   // the same 4-word phrase twice.
   if (looksRepetitive(text)) {
     pipeLog("protege-stt", `dropped repetitive hallucination: "${text.slice(0, 120)}"`);
+    return "";
+  }
+
+  // Min-word filter — short transcripts on near-silence are
+  // overwhelmingly Whisper hallucinations ("yay", "oh wow", "uh huh").
+  // A real question or command is almost always 3+ words ("what is
+  // this", "explain this code", "go to the next step"). The handful
+  // of legitimate short commands ("stop", "cancel", "repeat") are in
+  // the ghost-list above and dropped intentionally — voice mode is
+  // long-form Q&A, not single-word commands. If you find a legit
+  // short command being eaten by this filter, add it to the
+  // SHORT_COMMAND_ALLOWLIST below.
+  const SHORT_COMMAND_ALLOWLIST = new Set<string>([
+    // Empty for now — keep this filter strict by default. Add valid
+    // 1–2 word voice commands here if a real-use case turns up.
+  ]);
+  const wordCount = normalized.split(/\s+/).filter(Boolean).length;
+  if (wordCount < 3 && !SHORT_COMMAND_ALLOWLIST.has(normalized)) {
+    pipeLog("protege-stt", `dropped short transcript (${wordCount} word${wordCount === 1 ? "" : "s"}): "${text}"`);
     return "";
   }
 

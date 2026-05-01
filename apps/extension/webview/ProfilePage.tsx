@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
 import type {
   GainEvent,
-  MilestoneSummary,
   QuotaSnapshot,
   StreakInfo,
 } from "@protege/types";
@@ -27,23 +26,17 @@ interface Props {
   totalConcepts: number;
   ruleCount: number;
   streak: StreakInfo;
-  milestones: MilestoneSummary[];
   recentGains: GainEvent[];
 }
 
 export function ProfilePage({
   userName,
   memberSince,
-  codeIq,
   totalConcepts,
   ruleCount,
   streak,
-  milestones,
   recentGains,
 }: Props) {
-  const unlocked = milestones.filter((m) => m.unlocked);
-  const bonusIq = unlocked.reduce((s, m) => s + m.bonusIq, 0);
-
   return (
     <div className="page profile-page">
       <CinematicPlate
@@ -55,10 +48,10 @@ export function ProfilePage({
         <div className="profile-hero-over">
           <div className="microcaps">Your profile</div>
           <div className="profile-name serif">{userName}</div>
-          <div className="profile-iq">
-            <span className="serif-num">{codeIq}</span>
-            <span className="profile-iq-label microcaps">Progress</span>
-          </div>
+          {/* "Progress" IQ display removed 2026-05-01 — the number never
+              tracked accurately, so showing it as a headline metric was
+              misleading. Streak / Concepts / Milestones below remain as
+              the real progress signals. */}
         </div>
       </CinematicPlate>
 

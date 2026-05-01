@@ -125,7 +125,13 @@
   font-style: italic;
   font-size: 64px;
   font-weight: 600;
-  line-height: 0.95;
+  /* line-height bumped 0.95 → 1.15 because Georgia italic numerals have
+     tall ascenders that pierced the top of the line box at 0.95. The
+     parent `.sj-hero` clips with `overflow: hidden` (needed for the
+     glow gradient mask), so the overflowing top of the "5" was getting
+     sliced off. 1.15 gives the ascender room to live inside the line
+     without affecting the baseline alignment with "day streak". */
+  line-height: 1.15;
   letter-spacing: -0.02em;
   color: var(--glow);
   background: linear-gradient(180deg, #ffffff 0%, rgba(var(--electric-rgb), 0.85) 100%);

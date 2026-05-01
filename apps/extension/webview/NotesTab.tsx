@@ -804,8 +804,6 @@ export function NotesTab(): React.ReactElement {
         <div className="notes-empty-title">A blank canvas</div>
         <div className="notes-empty-sub">
           Capture an idea, paste a snippet, or sketch a plan.
-          <br />
-          Highlight text or type <kbd>/</kbd> for blocks and formatting.
         </div>
         <button className="notes-empty-btn" onClick={handleNew}>
           <IconPlus size={14} />

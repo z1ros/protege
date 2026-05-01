@@ -46,17 +46,17 @@ const ICON: Record<VoiceState, string> = {
 };
 
 const LABEL: Record<VoiceState, string> = {
-  // Idle now reads as just "Protege" — minimal, doesn't shout "Listening"
-  // when nothing is actually happening. The chip only shows an active
-  // verb when the system is doing something: listening (mic capture
-  // after wake), thinking (LLM/STT in flight), or speaking (TTS).
-  off: "Protege · off",
-  idle: "Protege",
+  // Off / idle are both rendered with an explicit ON / OFF tag so the
+  // user can glance-read wake-listener state without clicking. Active
+  // verbs (Listening, Thinking, Speaking) replace the on/off tag while
+  // the system is doing something — those imply "wake is on".
+  off: "Protege · OFF",
+  idle: "Protege · ON",
   listening: "Protege · Listening",
   thinking: "Protege · Thinking",
   // Three dots + caps for stronger visual signal. Combined with the
   // background-color flip in render(), this makes the chip pop.
-  speaking: "Protege · SPEAKING ●●●",
+  speaking: "Protege · speaking",
   error: "Protege · Voice error",
 };
 
@@ -147,10 +147,12 @@ function render(state: VoiceState): void {
       : undefined;
   item.tooltip =
     state === "off"
-      ? 'Wake word is off. Click to turn on — then say "Protege".'
+      ? 'Wake word is OFF. Click to turn ON — then say "Protege".'
+      : state === "idle"
+      ? 'Wake word is ON — say "Protege" to talk. Click to turn OFF.'
       : state === "error"
       ? "Voice engine hit an error. Click to toggle wake off/on."
-      : `Protege voice · ${LABEL[state].toLowerCase()}. Click to turn wake off.`;
+      : `Protege voice · ${LABEL[state].toLowerCase()}. Click to turn wake OFF.`;
 }
 
 /** Call when wake-word `error` fires. Auto-recovers to idle after 4s so
