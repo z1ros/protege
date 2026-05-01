@@ -7,10 +7,11 @@ import type {
   OAITurn,
   ToolCall,
 } from "@protege/types";
-import { MENTOR_SYSTEM_PROMPT } from "../anthropic.js";
+import { MENTOR_SYSTEM_PROMPT } from "../aiTools.js";
 import { callChat, getProvider } from "../llm.js";
 import { githubAuth, resolveUserId } from "../middleware/auth.js";
 import { enforceQuotaInline, enforceCostCapOnly } from "../middleware/quota.js";
+import { trimAndSummarize } from "../chat/historyTrim.js";
 import {
   addCostUsd,
   addChatMinutes,
@@ -1014,17 +1015,6 @@ chatRoute.post("/", async (c) => {
     messages.push({ role: "user", content: body.newUserMessage });
   }
 
-  // Translate OAITurn[] → Anthropic format
-  const { systemStable, systemDynamic, anthropicMessages } = toAnthropic(messages);
-
-  // One-shot callers (review engine, voice explain) pass `noTools: true`.
-  // Without this flag, Claude can respond with a tool call instead of
-  // text — which the one-shot path can't consume, so the caller sees an
-  // empty reply and the scan produces zero suggestions. The scan prompt
-  // asks for JSON-only, but Claude sometimes "prepares" by calling
-  // read_file before answering. Disabling tools forces a direct reply.
-  const useTools = body.noTools !== true;
-
   // Per-request provider routing: cheap-tier requests (Live Review
   // scans, AI-block summaries — everywhere the extension's aiQuery
   // sets `kind: "scan"`) get pinned to OpenAI / gpt-4o-mini regardless
@@ -1034,9 +1024,49 @@ chatRoute.post("/", async (c) => {
   // gracefully falls back to Anthropic if OPENAI_API_KEY is missing
   // (handled in callChat). This is the implementation of step 1 of
   // the live-review-cost-cut plan.
+  //
+  // Computed here (before toAnthropic) so historyTrim can route its
+  // summary LLM call through the same provider as the main chat call.
   const envProvider = getProvider();
   const provider =
     tier === "cheap" && process.env.OPENAI_API_KEY ? "openai" : envProvider;
+
+  // Trim conversation history. Long sessions (multi-tool turns + many
+  // user messages) inflate input-token cost O(n) per round. Below 20
+  // turns this is a no-op; above 20 it keeps the last ~14 plus a
+  // synthetic summary of older turns prepended to systemDynamic. See
+  // chat/historyTrim.ts. Quality impact is ~zero for typical chats;
+  // cost reduction is 30-50% on long sessions.
+  const trimResult = await trimAndSummarize(messages, {
+    provider,
+    userId,
+    openaiModel,
+    anthropicModel,
+  });
+  if (trimResult.trimmed) {
+    console.log(
+      `[protege] /chat history trim · dropped=${trimResult.droppedCount} · summarized=${trimResult.summarized} · keptTurns=${trimResult.messages.length}`
+    );
+    messages = trimResult.messages;
+  }
+
+  // Translate OAITurn[] → Anthropic format
+  const { systemStable, systemDynamic: systemDynamicBase, anthropicMessages } = toAnthropic(messages);
+  // Append the summary of dropped turns (when historyTrim produced one)
+  // to the dynamic system block so the model still has coarse context
+  // for what happened earlier in the conversation. Stable-vs-dynamic
+  // split preserved: only the dynamic block changes per-trim.
+  const systemDynamic = trimResult.summaryNote
+    ? systemDynamicBase + trimResult.summaryNote
+    : systemDynamicBase;
+
+  // One-shot callers (review engine, voice explain) pass `noTools: true`.
+  // Without this flag, Claude can respond with a tool call instead of
+  // text — which the one-shot path can't consume, so the caller sees an
+  // empty reply and the scan produces zero suggestions. The scan prompt
+  // asks for JSON-only, but Claude sometimes "prepares" by calling
+  // read_file before answering. Disabling tools forces a direct reply.
+  const useTools = body.noTools !== true;
   const loggedModel = provider === "openai" ? openaiModel : anthropicModel;
   const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
   const lastUserContent =
@@ -1208,8 +1238,13 @@ chatRoute.post("/", async (c) => {
     // Pure server-tool round — synthesize a continuation by calling the LLM
     // again with the tool results appended. This keeps the UX instant
     // (no extra client roundtrip) when the model is just updating memory.
-    const { systemStable: ss2, systemDynamic: sd2, anthropicMessages: am2 } =
+    const { systemStable: ss2, systemDynamic: sd2Base, anthropicMessages: am2 } =
       toAnthropic(messages);
+    // Carry the same summary note (when historyTrim produced one) into
+    // the second-round call so the model retains coarse history context
+    // for the post-tool continuation. Without this, the second callChat
+    // would silently lose the summary block we paid to generate.
+    const sd2 = trimResult.summaryNote ? sd2Base + trimResult.summaryNote : sd2Base;
     const result2 = await callChat({
       anthropicModel,
       openaiModel,
