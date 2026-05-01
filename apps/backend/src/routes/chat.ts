@@ -63,26 +63,26 @@ export const chatRoute = new Hono();
 chatRoute.use("*", githubAuth());
 
 /**
- * Tool-enabled chat using Claude Sonnet 4.5 with prompt caching.
+ * Tool-enabled chat. Production provider is OpenAI (GPT-5 family);
+ * Anthropic Claude is a fallback path when AI_PROVIDER=anthropic.
  *
  * The wire format stays OAITurn[] (OpenAI-shaped) so the extension's
- * chatRunner.ts doesn't need to change. Internally we translate to
- * Anthropic's messages / content-block format per call.
+ * chatRunner.ts doesn't need to change. Anthropic-shape tool definitions
+ * in anthropic.ts are converted to OpenAI shape on demand by
+ * anthropicToolsToOpenAI() in llm.ts when the active provider is OpenAI.
  *
- * Prompt caching: the system prompt + tool definitions are marked with
- * cache_control: "ephemeral", so on repeat calls Anthropic reuses them
- * at ~10% of input token cost. Huge win for a mentor that makes many
- * multi-turn tool rounds per user question.
+ * Prompt caching: the system prompt + tool definitions are reused on
+ * repeat calls — Anthropic via cache_control: "ephemeral", OpenAI
+ * automatically by the SDK. Big input-cost win for a mentor that makes
+ * many multi-turn tool rounds per user question.
  */
 /**
- * Map the client-side backend preference + tier to a concrete Anthropic
- * model id.
+ * Resolve the concrete model id for the Anthropic FALLBACK path
+ * (only fires when AI_PROVIDER=anthropic — production is OpenAI).
  *
- * TEMP (2026-04-18): Sonnet is disabled server-side for cost reasons.
- * Every cloud Anthropic call — regardless of the client's stated
- * preference — routes to Haiku, so cheap and premium currently collapse
- * to the same id on the Anthropic side. When Sonnet is re-enabled,
- * branch on `tier === "premium"` here.
+ * TEMP (2026-04-18): Sonnet is disabled across the app for cost reasons.
+ * Every Anthropic-route call routes to Haiku regardless of tier. When
+ * Sonnet is re-enabled, branch on `tier === "premium"` here.
  */
 function resolveAnthropicModel(
   _backend: ChatRunRequest["backend"],
@@ -92,18 +92,25 @@ function resolveAnthropicModel(
 }
 
 /**
- * Map the tier to a concrete OpenAI model id.
- *   Cheap   → gpt-4o-mini ($0.15/$0.60 per MTok)
- *             — chosen for Live Review scans + AI-block summaries.
- *             ~5× cheaper than Haiku for short lint-shaped prompts.
- *   Premium → gpt-4.1 ($2/$8 per MTok)
- * Both can be overridden via env: OPENAI_CHEAP_MODEL / OPENAI_MODEL.
+ * Resolve the concrete model id for the OpenAI PRIMARY path —
+ * the default in production (AI_PROVIDER=openai).
+ *   Cheap   → OPENAI_CHEAP_MODEL env (gpt-5-nano in prod) — Live Review
+ *             scans, classify, memory reconciliation. Cheap classifier
+ *             tasks where premium reasoning is overkill.
+ *   Premium → OPENAI_MODEL env (gpt-5-mini in prod) — chat replies,
+ *             teach, voice-dialogue, multi-tool rounds.
+ * NO code fallback. If env is missing we throw loudly — silent fallback
+ * to a retired or pricier model id is worse than a fast-fail.
  */
 function resolveOpenAIModel(tier: ChatTier): string {
   if (tier === "cheap") {
-    return process.env.OPENAI_CHEAP_MODEL ?? "gpt-4o-mini";
+    const m = process.env.OPENAI_CHEAP_MODEL;
+    if (!m) throw new Error("OPENAI_CHEAP_MODEL env is not set");
+    return m;
   }
-  return process.env.OPENAI_MODEL ?? "gpt-4.1";
+  const m = process.env.OPENAI_MODEL;
+  if (!m) throw new Error("OPENAI_MODEL env is not set");
+  return m;
 }
 
 /**

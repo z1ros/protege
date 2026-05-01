@@ -2,24 +2,58 @@ import * as vscode from "vscode";
 import type { AnalyzeResponse, Finding, MeResponse } from "@protege/types";
 import { authHeaders, getCachedGitHubUser, getGitHubUser, clearCachedUser } from "./auth.js";
 
-/**
- * Resolution order:
- *   1. PROTEGE_BACKEND_URL env var (developer override)
- *   2. `protege.backendUrl` VS Code setting (per-user override / self-hosting)
- *   3. Hardcoded production default
- *
- * Read once at module load. Changing the setting requires reloading the
- * window — the extension caches BACKEND_URL across all callers.
- */
+// ╔════════════════════════════════════════════════════════════════════╗
+// ║  TEAM SWITCH — change this ONE line to flip backend, then reload.  ║
+// ║                                                                    ║
+// ║    "local" → http://localhost:8787  (you must run `pnpm dev`)     ║
+// ║    "prod"  → Railway production                                    ║
+// ║    null    → use default (local in dev build, prod in .vsix)       ║
+// ║                                                                    ║
+// ║  Wins over env var + VS Code setting. After editing, save the      ║
+// ║  file → tsup --watch rebuilds → press Cmd+R in the extension dev   ║
+// ║  host window. ~5 seconds to switch.                                ║
+// ╚════════════════════════════════════════════════════════════════════╝
+// "local" → http://localhost:8787  (must be running `pnpm dev` in apps/backend)
+// "prod"  → https://protege-backend-production.up.railway.app
+const TEAM_OVERRIDE: "local" | "prod" | null = "prod";
+
 /** Canonical production backend URL — Railway-hosted Hono server. */
 export const PROD_BACKEND_URL = "https://protege-backend-production.up.railway.app";
 
 /** Local-dev backend URL — what `pnpm dev` in apps/backend listens on. */
 export const LOCAL_BACKEND_URL = "http://localhost:8787";
 
+/**
+ * Resolution order (top wins):
+ *   0. TEAM_OVERRIDE constant above (in-code switch)
+ *   1. PROTEGE_BACKEND_URL env var (one-shot dev override)
+ *   2. `protege.backendUrl` VS Code setting (persistent per-user toggle —
+ *      what the "Protege: Switch Backend" command writes to)
+ *   3. Default — LOCAL when running this repo from source (`pnpm dev` →
+ *      __PROTEGE_DEV_BUILD__ = true), PROD when installed from .vsix.
+ *
+ * Read once at module load. Changing any layer requires reloading the
+ * extension window — the extension caches BACKEND_URL across all callers.
+ */
+
+/**
+ * True when the extension was built for development (NODE_ENV=development),
+ * false for production .vsix builds. Injected at compile time by tsup —
+ * see apps/extension/tsup.config.ts. Lets the default backend flip
+ * between local and prod without runtime gymnastics.
+ */
+declare const __PROTEGE_DEV_BUILD__: boolean;
+const isDevBuild =
+  typeof __PROTEGE_DEV_BUILD__ !== "undefined" ? __PROTEGE_DEV_BUILD__ : false;
+
 function resolveBackendUrl(): string {
+  // 0. TEAM_OVERRIDE — the in-code switch at the top of this file.
+  if (TEAM_OVERRIDE === "local") return LOCAL_BACKEND_URL;
+  if (TEAM_OVERRIDE === "prod") return PROD_BACKEND_URL;
+  // 1. Env var
   const envOverride = process.env.PROTEGE_BACKEND_URL;
   if (envOverride && envOverride.trim()) return envOverride.trim();
+  // 2. VS Code setting
   try {
     const setting = vscode.workspace
       .getConfiguration("protege")
@@ -28,7 +62,8 @@ function resolveBackendUrl(): string {
   } catch {
     // vscode API not available (e.g. during unit tests) — fall through.
   }
-  return PROD_BACKEND_URL;
+  // 3. Default (varies by build flavor)
+  return isDevBuild ? LOCAL_BACKEND_URL : PROD_BACKEND_URL;
 }
 
 export const BACKEND_URL = resolveBackendUrl();

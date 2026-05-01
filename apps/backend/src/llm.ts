@@ -12,8 +12,11 @@ import { openai } from "./openai.js";
 export type ProviderId = "anthropic" | "openai";
 
 export function getProvider(): ProviderId {
-  const raw = (process.env.AI_PROVIDER ?? "anthropic").toLowerCase();
-  return raw === "openai" ? "openai" : "anthropic";
+  // Default = openai (production primary). Set AI_PROVIDER=anthropic
+  // to flip to the Anthropic fallback path. Was defaulting to anthropic
+  // historically — corrected because production runs OpenAI.
+  const raw = (process.env.AI_PROVIDER ?? "openai").toLowerCase();
+  return raw === "anthropic" ? "anthropic" : "openai";
 }
 
 export interface ChatToolUse {
@@ -34,10 +37,10 @@ export interface ChatResult {
 export interface ChatCallOptions {
   anthropicModel: string;
   /**
-   * Override for the OpenAI model id. When omitted, callOpenAI falls
-   * back to OPENAI_MODEL env (or "gpt-4.1"). Lets the chat route pick
-   * a cheaper id (gpt-4.1-mini) for cheap-tier requests without a
-   * second env var dance at the callsite.
+   * Override for the OpenAI model id. When omitted, callOpenAI reads
+   * OPENAI_MODEL env (no silent fallback — missing env throws). Lets
+   * the chat route pin cheap-tier (gpt-5-nano) for Live Review scans
+   * while the rest of the app stays on gpt-5-mini.
    */
   openaiModel?: string;
   /**
@@ -131,7 +134,14 @@ async function callAnthropic(opts: ChatCallOptions): Promise<ChatResult> {
 }
 
 async function callOpenAI(opts: ChatCallOptions): Promise<ChatResult> {
-  const model = opts.openaiModel ?? process.env.OPENAI_MODEL ?? "gpt-4.1";
+  // No silent fallback to a retired model id — if env is missing, fail
+  // loud. The chat route's resolveOpenAIModel sets opts.openaiModel
+  // explicitly, so this path mostly takes that. The env-only path is
+  // for callers that don't pass openaiModel.
+  const model = opts.openaiModel ?? process.env.OPENAI_MODEL;
+  if (!model) {
+    throw new Error("callOpenAI: no model specified (opts.openaiModel and OPENAI_MODEL env both missing)");
+  }
   const messages = anthropicToOpenAIMessages(
     opts.systemStable,
     opts.systemDynamic,
@@ -273,9 +283,19 @@ async function oneShotAnthropic(
 }
 
 async function oneShotOpenAI(opts: OneShotOptions): Promise<OneShotResult> {
+  // No silent fallback. Cheap calls require OPENAI_CHEAP_MODEL (with
+  // fallback to OPENAI_MODEL only because some envs configure both at
+  // once); premium requires OPENAI_MODEL. Either missing = throw, so
+  // misconfigured deploys fail at the first call instead of silently
+  // routing to a retired model id.
   const model = opts.cheap
-    ? process.env.OPENAI_CHEAP_MODEL ?? process.env.OPENAI_MODEL ?? "gpt-4.1-mini"
-    : process.env.OPENAI_MODEL ?? "gpt-4.1";
+    ? process.env.OPENAI_CHEAP_MODEL ?? process.env.OPENAI_MODEL
+    : process.env.OPENAI_MODEL;
+  if (!model) {
+    throw new Error(
+      `oneShotOpenAI: no model specified (cheap=${opts.cheap}, OPENAI_CHEAP_MODEL=${process.env.OPENAI_CHEAP_MODEL ?? "unset"}, OPENAI_MODEL=${process.env.OPENAI_MODEL ?? "unset"})`
+    );
+  }
   const messages: ChatCompletionMessageParam[] = [];
   if (opts.systemText) {
     messages.push({ role: "system", content: opts.systemText });
