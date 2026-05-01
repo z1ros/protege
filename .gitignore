@@ -28,5 +28,31 @@ voice/*.wav
 voice/*.mp3
 voice/elevanlabs/
 
-# Per-developer handoff log written by Claude — see .claude/SKILLS/engineering.md
+# Claude Code session artifacts (handoff logs, agent team transcripts, redesign
+# prompts, audit dumps). Per-developer; not for sharing.
 .claude/HANDOFF.md
+.claude/Untitled
+.claude/logs.md
+.claude/SKILLS/
+.claude/agent-teams-review/
+.claude/agent-teams-reference.md
+.claude/agent-teams-review-prompt.md
+.claude/agent-teams-transcript.md
+.claude/file-open-mentor-redesign/
+.claude/file-open-mentor-redesign-prompt.md
+.claude/live-review-health-timer-redesign/
+.claude/live-review-health-timer-redesign-prompt.md
+.claude/pre-pr-audit/
+.claude/pre-pr-audit-2/
+.claude/pre-pr-audit-prompt.md
+.claude/pre-pr-review/
+.claude/vibe-brief-redesign/
+.claude/vibe-brief-redesign-prompt.md
+
+# Per-developer editor settings.
+.vscode/
+
+# Stray empty files created by typo'd shell commands (e.g. `> pnpm`).
+/pnpm
+/tsx
+/protege@0.0.1
