@@ -135,6 +135,31 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON notes TO service_role;
 -- ---------------------------------------------------------------
 -- chat_messages
 -- ---------------------------------------------------------------
+--
+-- One-time corrective: drop a pre-existing chat_messages table when its
+-- `id` column was created as UUID (mismatch with the backend's text ids
+-- like "m_<timestamp>_<random>"). Caught by the deep audit on
+-- 2026-04-30 — every chat sync was silently failing with
+-- "invalid input syntax for type uuid" before this guard.
+--
+-- Safe because the table is intended to be append-only and any rows
+-- present at the time of the type fix can't have come from the real
+-- backend (the writes were rejected). Dropping is idempotent — once the
+-- table is in the right shape, the DO block becomes a no-op.
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'chat_messages'
+      AND column_name = 'id'
+      AND data_type = 'uuid'
+  ) THEN
+    DROP TABLE chat_messages CASCADE;
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS chat_messages (
   id         TEXT PRIMARY KEY,
@@ -144,6 +169,14 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   source     TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- ALTERs in case an older table exists without the columns we need.
+-- CREATE TABLE IF NOT EXISTS is a no-op when the table already exists,
+-- so without these the new schema never applies. Caught by the deep
+-- audit on 2026-04-30 — `source` was missing on a pre-existing table
+-- and chat sync was silently failing.
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS source TEXT;
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now();
 
 CREATE INDEX IF NOT EXISTS idx_chat_messages_user_created
   ON chat_messages (user_id, created_at);
