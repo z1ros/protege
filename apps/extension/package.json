@@ -50,6 +50,14 @@
         "title": "Protege: Test On-Device Model"
       },
       {
+        "command": "protege.downloadOnDeviceModel",
+        "title": "Protege: Download On-Device Model"
+      },
+      {
+        "command": "protege.removeOnDeviceModel",
+        "title": "Protege: Remove On-Device Model (free ~4.7 GB)"
+      },
+      {
         "command": "protege.showLogs",
         "title": "Protege: Show Logs"
       },
@@ -401,8 +409,8 @@
         },
         "protege.teaching.patternSpotter": {
           "type": "boolean",
-          "default": true,
-          "description": "Pattern spotter — recognises common patterns inline and tags them for review."
+          "default": false,
+          "description": "Pattern spotter — RETIRED. The proactive idle-time popup was removed 2026-04-30. Setting kept for backwards compatibility; flipping it to true currently has no effect."
         },
         "protege.teaching.ghostMentor": {
           "type": "boolean",

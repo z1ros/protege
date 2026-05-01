@@ -23,7 +23,6 @@ import { registerLiveReview } from "./review/liveReview.js";
 import { registerStatusBarLive, updateStatusBarData } from "./review/statusBarLive.js";
 import { registerUnderlineWhisper } from "./hints/underlineWhisper.js";
 import { registerGhostMentor } from "./hints/ghostMentor.js";
-import { registerPatternSpotter } from "./detection/patternSpotter.js";
 import { registerStruggleChip, showStruggleChip } from "./hints/struggleChip.js";
 import { registerSaveRecap } from "./detection/saveRecap.js";
 import { registerConceptTrail } from "./concepts/conceptTrail.js";
@@ -70,7 +69,7 @@ import { initAiBackend, onBackendCall } from "./ai/aiBackend.js";
 import { registerExerciseEngine } from "./teaching/exerciseEngine.js";
 import { initChatHistory, disposeChatHistory } from "./chat/chatHistory.js";
 import { initNotesStore } from "./notes/notesStore.js";
-import { runWakeCalibration, hasCompletedWakeCalibration, getWakeEnabled as getWakeEnabledFor } from "./voice/wakeWordCalibration.js";
+import { runWakeCalibration, shouldShowCalibrationPrompt, recordCalibrationPromptDeferred, getWakeEnabled as getWakeEnabledFor } from "./voice/wakeWordCalibration.js";
 import { stopWakeWordListener, isWakeWordListening } from "./voice/voiceCapture.js";
 import { registerVoiceStatusBar, setVoiceState } from "./voice/voiceStatusBar.js";
 import { registerHostAudioCleanup } from "./voice/hostAudio.js";
@@ -209,6 +208,17 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (!e.affectsConfiguration("protege.explainMode")) return;
       broadcast({ type: "explainMode/state", mode: readExplainMode() });
+    }),
+    // Mirror the Live Review master-switch to all mounted webviews so
+    // the Live tab can bop a red attention dot when it's OFF. Toggling
+    // the setting (Settings UI or palette) updates the dot in real time.
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration("protege.codeReview.liveReview")) return;
+      const enabled =
+        vscode.workspace
+          .getConfiguration("protege")
+          .get<boolean>("codeReview.liveReview", true) !== false;
+      broadcast({ type: "liveReview/enabled", enabled });
     })
   );
 
@@ -534,12 +544,12 @@ export async function activate(context: vscode.ExtensionContext) {
   // and Live Review's per-line findings. Module file kept on disk in
   // case we revive any of its sub-features (ownership-aware nudge, voice
   // overview command) under a redesign.
-  // Proactive Pattern Spotter — after long activity + a pause, surfaces
-  // ONE learning-moment pitch as a native notification. Silence-biased;
-  // 15min cooldown, 24h per-concept dedup.
-  const patternSpotterDisposables = [
-    gated("teaching.patternSpotter", () => registerPatternSpotter(context)),
-  ];
+  // Pattern Spotter retired 2026-04-30 — the proactive idle-time
+  // notification ("Teach me / Not now" popup) was nag-equivalent and the
+  // user explicitly asked never to surface dialogs that fire without a
+  // direct action. Module file kept on disk in case we revive it as a
+  // non-popup surface (gutter dot, status-bar chip) later.
+  const patternSpotterDisposables: vscode.Disposable[] = [];
   // Struggle Chip — watcher nudges now render as a CodeLens row above
   // the friction line instead of force-opening the sidebar. The
   // registered command fetches a 2-sentence hint; "Learn more" is the
@@ -1033,10 +1043,11 @@ export async function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  // First-run wake-word calibration prompt. Only shown once per user, and only
-  // if they haven't calibrated. Non-blocking — user can dismiss and calibrate
-  // later via the command palette.
-  if (!hasCompletedWakeCalibration(context)) {
+  // First-run wake-word calibration prompt. Shown once on initial install
+  // and again at most once per week if the user hits "Later" — no
+  // reload-loop nag. Always reachable manually via the
+  // `Protege: Calibrate wake word` command palette entry.
+  if (shouldShowCalibrationPrompt(context)) {
     setTimeout(async () => {
       const choice = await vscode.window.showInformationMessage(
         "Protege can calibrate its wake word to your voice — 30 seconds, improves detection accuracy. Want to do it now?",
@@ -1045,6 +1056,10 @@ export async function activate(context: vscode.ExtensionContext) {
       );
       if (choice === "Calibrate") {
         await vscode.commands.executeCommand("protege.calibrateWakeWord");
+      } else {
+        // "Later" or dismiss → snooze the prompt for a week so we don't
+        // re-ask on every Cursor restart.
+        await recordCalibrationPromptDeferred(context);
       }
     }, 3000);
   }
