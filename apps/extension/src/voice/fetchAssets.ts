@@ -42,8 +42,18 @@ const VERSION_STAMP_FILE = ".voice-version";
  *  settings (`.vscode/settings.json` shipped inside any opened repo)
  *  redirect this would be a one-click RCE primitive. If a self-host
  *  fork ever needs a different host, edit this constant + republish
- *  the extension — that's the right governance boundary. */
-const RELEASE_BASE = "https://github.com/z1ros/protege/releases/download";
+ *  the extension — that's the right governance boundary.
+ *
+ *  Re-pointed 2026-05-02 to `BohdanChuprynka/protege-voice-assets`,
+ *  a dedicated PUBLIC repo holding only the wake-word binary tarballs
+ *  for all 4 platforms (darwin-arm64, darwin-x64, linux-x64, win32-x64).
+ *  Source code stays in the private `z1ros/protege` repo; binaries live
+ *  here so unauthenticated `fetch()` from end-user machines works.
+ *  Standard GitHub-Releases-as-CDN pattern — free, fast, unlimited
+ *  bandwidth. The brief intermediate Railway-hosting attempt (route at
+ *  apps/backend/src/routes/voiceAssets.ts) was a stopgap; this is the
+ *  real answer. */
+const RELEASE_BASE = "https://github.com/BohdanChuprynka/protege-voice-assets/releases/download";
 
 interface AssetTarget {
   platform: NodeJS.Platform;
@@ -62,7 +72,12 @@ function targetForHost(): AssetTarget {
 }
 
 function releaseUrlFor(target: AssetTarget): string {
-  return `${RELEASE_BASE}/${ASSET_VERSION}/${target.tarball}`;
+  // GitHub release-download URLs use the GIT TAG as the path segment,
+  // not just the version number. The CI workflow tags releases with a
+  // `voice-` prefix (so they don't collide with extension version tags
+  // in the same repo). Final URL pattern:
+  //   https://github.com/<owner>/<repo>/releases/download/voice-v0.0.1/protege-voice-v0.0.1-darwin-arm64.tar.gz
+  return `${RELEASE_BASE}/voice-${ASSET_VERSION}/${target.tarball}`;
 }
 
 export interface AssetCheck {
