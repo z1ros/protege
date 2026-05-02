@@ -251,8 +251,24 @@ export interface OneShotResult {
 export async function callOneShot(
   opts: OneShotOptions
 ): Promise<OneShotResult> {
-  const provider = getProvider();
-  if (provider === "openai") return oneShotOpenAI(opts);
+  // When `cheap: true` is requested, route through OpenAI's cheap-tier
+  // (gpt-5-nano via OPENAI_CHEAP_MODEL) regardless of the env-wide
+  // AI_PROVIDER — mirrors callChat's pin at chat.ts:1094. Without this,
+  // an Anthropic-backed deploy silently runs cheap-tier calls on Haiku
+  // while estimateCallCostUsd("cheap", ...) bills the user at nano
+  // rates (under-billing ~6×). Falls back to Anthropic if OPENAI_API_KEY
+  // is missing.
+  const requested =
+    opts.cheap && process.env.OPENAI_API_KEY ? "openai" : getProvider();
+  if (requested === "openai") {
+    if (!process.env.OPENAI_API_KEY) {
+      console.warn(
+        "[protege] callOneShot: provider=openai requested but OPENAI_API_KEY missing — falling back to Anthropic"
+      );
+      return oneShotAnthropic(opts);
+    }
+    return oneShotOpenAI(opts);
+  }
   return oneShotAnthropic(opts);
 }
 

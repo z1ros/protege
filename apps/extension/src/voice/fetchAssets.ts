@@ -1,8 +1,7 @@
-import * as vscode from "vscode";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import { exec } from "node:child_process";
+import { execFile } from "node:child_process";
 
 /**
  * Voice-engine asset bootstrap.
@@ -29,7 +28,7 @@ import { exec } from "node:child_process";
  * activation can short-circuit when the cache matches.
  */
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 /** Bumping this triggers a re-fetch on the next activation. Keep in
  *  lockstep with the GitHub Release tag that hosts the matching tarballs. */
@@ -37,8 +36,14 @@ export const ASSET_VERSION = "v0.0.1";
 
 const VERSION_STAMP_FILE = ".voice-version";
 
-const DEFAULT_RELEASE_BASE =
-  "https://github.com/z1ros/protege/releases/download";
+/** Hardcoded constant — NOT user-overridable. The fetcher unpacks a
+ *  Mach-O / ELF / PE binary and chmods it 755, so the host URL is the
+ *  trust root for arbitrary native code execution. Letting workspace
+ *  settings (`.vscode/settings.json` shipped inside any opened repo)
+ *  redirect this would be a one-click RCE primitive. If a self-host
+ *  fork ever needs a different host, edit this constant + republish
+ *  the extension — that's the right governance boundary. */
+const RELEASE_BASE = "https://github.com/z1ros/protege/releases/download";
 
 interface AssetTarget {
   platform: NodeJS.Platform;
@@ -57,12 +62,7 @@ function targetForHost(): AssetTarget {
 }
 
 function releaseUrlFor(target: AssetTarget): string {
-  const override = vscode.workspace
-    .getConfiguration("protege")
-    .get<string>("voiceAssets.releaseUrl", "")
-    .trim();
-  const base = override || DEFAULT_RELEASE_BASE;
-  return `${base}/${ASSET_VERSION}/${target.tarball}`;
+  return `${RELEASE_BASE}/${ASSET_VERSION}/${target.tarball}`;
 }
 
 export interface AssetCheck {
@@ -165,6 +165,31 @@ export async function fetchVoiceAssets(
   fs.mkdirSync(tmpDir, { recursive: true });
   const archivePath = path.join(tmpDir, target.tarball);
 
+  try {
+    await runFetchPipeline(target, url, archivePath, tmpDir, binDir, modelsDir, onProgress);
+  } finally {
+    // Always clean up the tmp dir — both on success (no longer needed)
+    // and on throw (so a partially-downloaded archive doesn't sit on
+    // disk eating space across reloads).
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      // Best-effort; the next call's stale-tmp check will clear it.
+    }
+  }
+
+  onProgress?.({ loaded: 0, total: 0, phase: "done" });
+}
+
+async function runFetchPipeline(
+  target: AssetTarget,
+  url: string,
+  archivePath: string,
+  tmpDir: string,
+  binDir: string,
+  modelsDir: string,
+  onProgress?: ProgressCallback
+): Promise<void> {
   // ---- Phase 1: download ----
   onProgress?.({ loaded: 0, total: 0, phase: "fetching" });
   const res = await fetch(url, { redirect: "follow" });
@@ -202,9 +227,12 @@ export async function fetchVoiceAssets(
   // We don't bundle a JS tar lib — keeps the .vsix small and the path
   // simple. If a target platform lacks tar in PATH, this throws and the
   // UI surfaces the error.
+  //
+  // Use execFile (not exec) so paths with spaces/quotes pass through as
+  // an argv array, no shell, no quoting concerns on Windows.
   onProgress?.({ loaded, total, phase: "extracting" });
   try {
-    await execAsync(`tar -xzf "${archivePath}" -C "${tmpDir}"`);
+    await execFileAsync("tar", ["-xzf", archivePath, "-C", tmpDir]);
   } catch (err) {
     throw new FetchError(
       `Voice assets extraction failed: ${
@@ -228,16 +256,31 @@ export async function fetchVoiceAssets(
     );
   }
 
+  // Defense-in-depth: reject non-regular files. A tarball with symlinks
+  // (e.g. `bin/protege-mic-darwin-arm64` → `/etc/passwd`) would otherwise
+  // cause `copyFileSync` to follow the link and write the target's
+  // contents into the install dir. The release pipeline doesn't produce
+  // symlinks, so this purely guards against a tampered archive.
+  const binStat = fs.lstatSync(extractedBin);
+  if (!binStat.isFile()) {
+    throw new FetchError(
+      `Voice assets archive contains non-regular file at bin/${target.binName}`
+    );
+  }
   fs.copyFileSync(extractedBin, path.join(binDir, target.binName));
   if (process.platform !== "win32") {
     fs.chmodSync(path.join(binDir, target.binName), 0o755);
   }
   for (const f of fs.readdirSync(extractedModelsDir)) {
     if (!f.endsWith(".onnx")) continue;
-    fs.copyFileSync(
-      path.join(extractedModelsDir, f),
-      path.join(modelsDir, f)
-    );
+    const src = path.join(extractedModelsDir, f);
+    const modelStat = fs.lstatSync(src);
+    if (!modelStat.isFile()) {
+      throw new FetchError(
+        `Voice assets archive contains non-regular file at models/${f}`
+      );
+    }
+    fs.copyFileSync(src, path.join(modelsDir, f));
   }
 
   // Stamp the install so the next activation skips the fetch.
@@ -246,45 +289,10 @@ export async function fetchVoiceAssets(
     ASSET_VERSION,
     "utf8"
   );
-
-  // Cleanup
-  fs.rmSync(tmpDir, { recursive: true, force: true });
-
-  onProgress?.({ loaded, total, phase: "done" });
+  // tmpDir cleanup happens in the outer finally (whether this path
+  // returns normally or throws), so partial archives don't linger.
 }
 
-/**
- * Convenience wrapper — checks first, fetches only if needed. Returns
- * `true` when the assets are now in place (whether they were already
- * there or just fetched), `false` if the fetcher errored. Logs the
- * error to the supplied OutputChannel rather than throwing so call
- * sites can fail-soft (e.g., voice-mode shows the error UI but the
- * rest of the extension keeps running).
- */
-export async function ensureVoiceAssets(
-  extensionPath: string,
-  log: vscode.OutputChannel,
-  onProgress?: ProgressCallback
-): Promise<boolean> {
-  const check = checkAssets(extensionPath);
-  if (check.missing.length === 0 && check.versionMatch) return true;
-  if (check.missing.length === 0 && !check.versionMatch) {
-    log.appendLine(
-      `[voice/fetch] assets present but version stamp differs — re-fetching ${ASSET_VERSION}`
-    );
-  } else {
-    log.appendLine(
-      `[voice/fetch] missing assets: ${check.missing.join(", ")} — fetching ${ASSET_VERSION}`
-    );
-  }
-  try {
-    await fetchVoiceAssets(extensionPath, onProgress);
-    log.appendLine(`[voice/fetch] install complete`);
-    return true;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log.appendLine(`[voice/fetch] FAILED: ${msg}`);
-    onProgress?.({ loaded: 0, total: 0, phase: "error", error: msg });
-    return false;
-  }
-}
+// Note: `voiceCapture.ts` exposes its own `ensureVoiceEngine` wrapper
+// that drives the VS Code progress notification UI directly. There is
+// no need for a separate convenience wrapper here.

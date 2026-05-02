@@ -5,7 +5,7 @@ import type {
   ChatMessage,
   Finding,
 } from "@protege/types";
-import { currentUserIdOrNull, fetchMe } from "../user/protegeClient.js";
+import { BACKEND_URL, authedFetch, currentUserIdOrNull, fetchMe } from "../user/protegeClient.js";
 import { getGitHubUser, isSignedIn, onAuthChange, signOut } from "../user/auth.js";
 import { isOptedOut } from "../user/authState.js";
 import { runChat } from "./chatRunner.js";
@@ -46,6 +46,24 @@ import {
   type PanelState as EchoPanelState,
 } from "../echo/panel.js";
 import type { EchoHostToWebview } from "@protege/types";
+
+// Audited allowlist for webview-initiated `command:` URIs. Adding a button
+// in the webview that dispatches a new command requires adding the id here.
+// Keep this set small — every entry is a trusted execution path.
+const ALLOWED_WEBVIEW_COMMANDS = new Set<string>([
+  "protege.applyReviewFix",
+  "protege.teachConcept",
+]);
+
+// Schemes the webview is allowed to open via vscode.env.openExternal. `https`
+// covers normal links; `x-apple.systempreferences` is the macOS Settings
+// deeplink used by the microphone-permissions flow.
+const ALLOWED_EXTERNAL_SCHEMES = new Set<string>([
+  "http",
+  "https",
+  "mailto",
+  "x-apple.systempreferences",
+]);
 
 /**
  * Registry so outside code (analyzer, status bar) can broadcast messages
@@ -781,11 +799,25 @@ export function mountProtegeWebview(
       // Used for jumping to macOS Settings → Privacy → Microphone.
       // Also detects "command:<id>" URIs from the Quick Actions buttons and
       // runs them as VS Code commands (openExternal can't execute commands).
+      //
+      // Security: a webview-initiated `command:` dispatch is a sandbox-escape
+      // surface — any XSS in rendered chat or prompt-injected file content
+      // could pivot into arbitrary command execution. We restrict to a
+      // small, audited allowlist of commands the Quick Actions UI actually
+      // emits. Add new entries here when adding new buttons; do not relax
+      // the allowlist to a `protege.*` prefix match.
       try {
         if (msg.url.startsWith("command:")) {
           const rest = msg.url.slice("command:".length);
           const qIdx = rest.indexOf("?");
           const commandId = qIdx === -1 ? rest : rest.slice(0, qIdx);
+          if (!ALLOWED_WEBVIEW_COMMANDS.has(commandId)) {
+            console.warn(
+              "[protege] blocked webview command dispatch:",
+              commandId
+            );
+            return;
+          }
           let args: unknown[] = [];
           if (qIdx !== -1) {
             try {
@@ -797,7 +829,15 @@ export function mountProtegeWebview(
           }
           await vscode.commands.executeCommand(commandId, ...args);
         } else {
-          await vscode.env.openExternal(vscode.Uri.parse(msg.url));
+          const parsed = vscode.Uri.parse(msg.url);
+          if (!ALLOWED_EXTERNAL_SCHEMES.has(parsed.scheme)) {
+            console.warn(
+              "[protege] blocked openExternal scheme:",
+              parsed.scheme
+            );
+            return;
+          }
+          await vscode.env.openExternal(parsed);
         }
       } catch (err) {
         console.warn("[protege] openExternal failed:", err);
@@ -822,11 +862,89 @@ export function mountProtegeWebview(
     } else if (msg.type === "voice/openInBrowser") {
       const id = requireUserIdOrToast();
       if (!id) return;
-      const url = `http://localhost:8787/voice?userId=${encodeURIComponent(id)}`;
+      const url = `${BACKEND_URL}/voice?userId=${encodeURIComponent(id)}`;
       try {
         await vscode.env.openExternal(vscode.Uri.parse(url));
       } catch (err) {
         console.warn("[protege] voice/openInBrowser failed:", err);
+      }
+    } else if (msg.type === "voice/ttsRequest") {
+      // Webview asks for TTS audio. Proxy through authedFetch so the
+      // GitHub token never leaves the host process. Reply with base64-
+      // encoded WAV bytes (or an error) tagged with the requestId.
+      const reqId = msg.requestId;
+      try {
+        const res = await authedFetch(`${BACKEND_URL}/tts`, {
+          method: "POST",
+          body: JSON.stringify({ text: msg.text, voice: msg.voice }),
+        });
+        if (res.status === 503) {
+          post(webview, {
+            type: "voice/ttsResponse",
+            requestId: reqId,
+            error: "kokoro-warming-up",
+          });
+        } else if (!res.ok) {
+          post(webview, {
+            type: "voice/ttsResponse",
+            requestId: reqId,
+            error: `tts HTTP ${res.status}`,
+          });
+        } else {
+          const buf = Buffer.from(await res.arrayBuffer());
+          post(webview, {
+            type: "voice/ttsResponse",
+            requestId: reqId,
+            audioBase64: buf.toString("base64"),
+          });
+        }
+      } catch (err) {
+        post(webview, {
+          type: "voice/ttsResponse",
+          requestId: reqId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    } else if (msg.type === "voice/ttsStatusRequest") {
+      const reqId = msg.requestId;
+      try {
+        const res = await authedFetch(`${BACKEND_URL}/tts/status`);
+        if (!res.ok) {
+          post(webview, {
+            type: "voice/ttsStatusResponse",
+            requestId: reqId,
+            ready: false,
+            warmupError: null,
+            networkError: `status HTTP ${res.status}`,
+          });
+        } else {
+          const data = (await res.json()) as {
+            ready: boolean;
+            warmupError: string | null;
+            stage?: "idle" | "downloading" | "loading" | "ready" | "error";
+            progress?: number;
+            loadedBytes?: number;
+            totalBytes?: number;
+          };
+          post(webview, {
+            type: "voice/ttsStatusResponse",
+            requestId: reqId,
+            ready: data.ready,
+            warmupError: data.warmupError,
+            stage: data.stage,
+            progress: data.progress,
+            loadedBytes: data.loadedBytes,
+            totalBytes: data.totalBytes,
+          });
+        }
+      } catch (err) {
+        post(webview, {
+          type: "voice/ttsStatusResponse",
+          requestId: reqId,
+          ready: false,
+          warmupError: null,
+          networkError: err instanceof Error ? err.message : String(err),
+        });
       }
     } else if (msg.type === "voice/start") {
       try {

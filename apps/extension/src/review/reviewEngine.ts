@@ -646,8 +646,6 @@ export async function reviewDocument(
    * LiveReview passes the active editor's cursor; SAVE/FLOW tiers don't.
    */
   activeLine?: number,
-  /** Vestigial. Retained so existing callsites compile. */
-  _forceBackend?: import("../ai/aiBackend.js").AiBackend,
   /**
    * Refinement mode. When provided, the model is asked to validate +
    * polish these specific findings (instead of detecting from scratch),

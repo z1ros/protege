@@ -5,7 +5,7 @@
   "packageManager": "pnpm@9.0.0",
   "scripts": {
     "dev:backend": "pnpm --filter @protege/backend dev",
-    "dev:extension": "pnpm --filter @protege/extension dev",
+    "dev:extension": "pnpm --filter protege dev",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "postinstall": "pnpm --filter @protege/types build && pnpm --filter @protege/backend prepare-kokoro"

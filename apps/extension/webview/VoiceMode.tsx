@@ -21,8 +21,123 @@ type MicState = "unknown" | "blocked" | "ok";
 type Phase = "idle" | "listening" | "thinking" | "speaking" | "warming";
 type TtsStatus = "unknown" | "warming" | "ready" | "error";
 
-const BACKEND_URL = "http://localhost:8787";
 const BAR_COUNT = 24;
+
+// VoiceMode never talks to the backend directly anymore — it goes through
+// the host bridge so the GitHub token stays in the extension process.
+// `requestTts` and `requestTtsStatus` post a request id, then await the
+// matching response from `onHostMessage`. Each awaiter is paired with a
+// timeout that rejects + cleans the Map entry if the host never responds
+// (host crash, dropped message, webview reload mid-flight). Without it
+// the promise hangs forever and the voice UI sticks at "thinking".
+const TTS_TIMEOUT_MS = 30_000;
+const TTS_STATUS_TIMEOUT_MS = 10_000;
+
+let voiceRequestSeq = 0;
+
+interface TtsAwaiter {
+  resolve: (msg: { audioBase64?: string; error?: string }) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+interface TtsStatusAwaiter {
+  resolve: (msg: TtsStatusResult) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+const ttsAwaiters = new Map<string, TtsAwaiter>();
+const ttsStatusAwaiters = new Map<string, TtsStatusAwaiter>();
+
+function nextRequestId(prefix: string): string {
+  voiceRequestSeq += 1;
+  return `${prefix}-${Date.now()}-${voiceRequestSeq}`;
+}
+
+function settleTtsAwaiter(
+  requestId: string,
+  msg: { audioBase64?: string; error?: string }
+): void {
+  const a = ttsAwaiters.get(requestId);
+  if (!a) return;
+  ttsAwaiters.delete(requestId);
+  clearTimeout(a.timer);
+  a.resolve(msg);
+}
+
+function settleTtsStatusAwaiter(
+  requestId: string,
+  msg: TtsStatusResult
+): void {
+  const a = ttsStatusAwaiters.get(requestId);
+  if (!a) return;
+  ttsStatusAwaiters.delete(requestId);
+  clearTimeout(a.timer);
+  a.resolve(msg);
+}
+
+function requestTtsBlob(text: string, voice: Voice): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const requestId = nextRequestId("tts");
+    const timer = setTimeout(() => {
+      ttsAwaiters.delete(requestId);
+      reject(new Error("tts request timed out"));
+    }, TTS_TIMEOUT_MS);
+    ttsAwaiters.set(requestId, {
+      resolve: ({ audioBase64, error }) => {
+        if (error) {
+          reject(new Error(error));
+          return;
+        }
+        if (!audioBase64) {
+          reject(new Error("tts response missing audio"));
+          return;
+        }
+        try {
+          const bytes = Uint8Array.from(atob(audioBase64), (c) =>
+            c.charCodeAt(0)
+          );
+          // Cast through a fresh ArrayBuffer view so TS doesn't complain
+          // about SharedArrayBuffer semantics — Uint8Array.buffer is
+          // ArrayBufferLike at the type level.
+          const buf = bytes.buffer.slice(0) as ArrayBuffer;
+          resolve(new Blob([buf], { type: "audio/wav" }));
+        } catch (e) {
+          reject(e instanceof Error ? e : new Error(String(e)));
+        }
+      },
+      timer,
+    });
+    vscode.postMessage({ type: "voice/ttsRequest", requestId, text, voice });
+  });
+}
+
+interface TtsStatusResult {
+  ready: boolean;
+  warmupError: string | null;
+  stage?: "idle" | "downloading" | "loading" | "ready" | "error";
+  progress?: number;
+  loadedBytes?: number;
+  totalBytes?: number;
+  networkError?: string;
+}
+
+function requestTtsStatus(): Promise<TtsStatusResult> {
+  return new Promise((resolve) => {
+    const requestId = nextRequestId("tts-status");
+    const timer = setTimeout(() => {
+      ttsStatusAwaiters.delete(requestId);
+      // Status poller treats this as a transient "host unreachable" —
+      // the same shape the bridge returns when authedFetch itself fails.
+      // The poller will re-arm and try again on its next tick.
+      resolve({
+        ready: false,
+        warmupError: null,
+        networkError: "tts-status request timed out",
+      });
+    }, TTS_STATUS_TIMEOUT_MS);
+    ttsStatusAwaiters.set(requestId, { resolve, timer });
+    vscode.postMessage({ type: "voice/ttsStatusRequest", requestId });
+  });
+}
 
 function formatMB(bytes: number): string {
   return `${(bytes / 1_048_576).toFixed(1)} MB`;
@@ -155,45 +270,35 @@ export function VoiceMode({
     let timer: ReturnType<typeof setTimeout> | null = null;
 
     const poll = async () => {
-      try {
-        const res = await fetch(`${BACKEND_URL}/tts/status`);
-        if (!res.ok) throw new Error(`status HTTP ${res.status}`);
-        const data = (await res.json()) as {
-          ready: boolean;
-          warmupError: string | null;
-          stage?: "idle" | "downloading" | "loading" | "ready" | "error";
-          progress?: number;
-          loadedBytes?: number;
-          totalBytes?: number;
-        };
-        if (cancelled) return;
-        if (data.warmupError) {
-          setTtsStatus("error");
-          setTtsWarmupError(data.warmupError);
-          return; // stop polling — nothing will fix itself
-        }
-        if (data.ready) {
-          setTtsStatus("ready");
-          setTtsWarmupError(null);
-          return;
-        }
-        setTtsStatus("warming");
-        if (data.stage === "downloading") {
-          setDownloadProgress(data.progress ?? 0);
-          setDownloadLoaded(data.loadedBytes ?? 0);
-          setDownloadTotal(data.totalBytes ?? 0);
-          setIsDownloading(true);
-        } else {
-          setIsDownloading(false);
-        }
-        // Poll faster while downloading so the bar moves smoothly.
-        timer = setTimeout(poll, data.stage === "downloading" ? 500 : 1500);
-      } catch (err) {
-        if (cancelled) return;
-        // Backend not reachable yet — keep trying, slower
+      const data = await requestTtsStatus();
+      if (cancelled) return;
+      if (data.networkError) {
+        // Host couldn't reach the backend — keep trying, slower.
         setTtsStatus("warming");
         timer = setTimeout(poll, 2500);
+        return;
       }
+      if (data.warmupError) {
+        setTtsStatus("error");
+        setTtsWarmupError(data.warmupError);
+        return; // stop polling — nothing will fix itself
+      }
+      if (data.ready) {
+        setTtsStatus("ready");
+        setTtsWarmupError(null);
+        return;
+      }
+      setTtsStatus("warming");
+      if (data.stage === "downloading") {
+        setDownloadProgress(data.progress ?? 0);
+        setDownloadLoaded(data.loadedBytes ?? 0);
+        setDownloadTotal(data.totalBytes ?? 0);
+        setIsDownloading(true);
+      } else {
+        setIsDownloading(false);
+      }
+      // Poll faster while downloading so the bar moves smoothly.
+      timer = setTimeout(poll, data.stage === "downloading" ? 500 : 1500);
     };
 
     poll();
@@ -227,23 +332,22 @@ export function VoiceMode({
     setPhase("thinking");
     setStatusDetail("");
     const t0 = performance.now();
-    const res = await fetch(`${BACKEND_URL}/tts`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text, voice }),
-    });
+    let blob: Blob;
+    try {
+      blob = await requestTtsBlob(text, voice);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (message === "kokoro-warming-up") {
+        setTtsStatus("warming");
+        setPhase("warming");
+        setStatusDetail("Warming up voice engine…");
+      }
+      throw e;
+    }
     const tFetch = performance.now();
     console.log(
       `[protege-tts] Kokoro generate: ${Math.round(tFetch - t0)}ms (chars=${text.length})`
     );
-    if (res.status === 503) {
-      setTtsStatus("warming");
-      setPhase("warming");
-      setStatusDetail("Warming up voice engine…");
-      throw new Error("kokoro-warming-up");
-    }
-    if (!res.ok) throw new Error(`tts HTTP ${res.status}`);
-    const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     stopAudio();
 
@@ -346,6 +450,25 @@ export function VoiceMode({
   /* ============ Host-side voice messages ============ */
   useEffect(() => {
     return onHostMessage((msg) => {
+      if (msg.type === "voice/ttsResponse") {
+        settleTtsAwaiter(msg.requestId, {
+          audioBase64: msg.audioBase64,
+          error: msg.error,
+        });
+        return;
+      }
+      if (msg.type === "voice/ttsStatusResponse") {
+        settleTtsStatusAwaiter(msg.requestId, {
+          ready: msg.ready,
+          warmupError: msg.warmupError,
+          stage: msg.stage,
+          progress: msg.progress,
+          loadedBytes: msg.loadedBytes,
+          totalBytes: msg.totalBytes,
+          networkError: msg.networkError,
+        });
+        return;
+      }
       if (msg.type === "voice/recording") {
         if (msg.active) {
           // Barge-in: if the bot was mid-sentence, cut it off so the user
@@ -417,13 +540,7 @@ export function VoiceMode({
     const oldUrl = fillerUrlRef.current;
     (async () => {
       try {
-        const res = await fetch(`${BACKEND_URL}/tts`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ text: "Mm-hmm.", voice }),
-        });
-        if (!res.ok) return;
-        const blob = await res.blob();
+        const blob = await requestTtsBlob("Mm-hmm.", voice);
         if (cancelled) return;
         const url = URL.createObjectURL(blob);
         fillerUrlRef.current = url;

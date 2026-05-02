@@ -5,7 +5,6 @@ import {
   markExplained,
   onOwnershipChanged,
 } from "../user/ownership.js";
-import { aiQuery } from "../ai/aiBackend.js";
 import { log } from "../log.js";
 
 /**
@@ -20,18 +19,18 @@ import { log } from "../log.js";
  *      which code the AI wrote.
  *   2. A single CodeLens at the top line of each region reads:
  *        ◎ AI block · N lines · ✿ Teach me this block
- *   3. Clicking the lens fires one LLM call that returns a 2-line
- *      briefing ("what it does" + "one thing to know"), rendered as
- *      a rich hover popup anchored to the block.
+ *   3. Clicking the lens routes the block code into the Protege chat
+ *      panel as a teaching prompt. No upfront LLM call on lens render —
+ *      the surface stays free until the user actually opts in. Earlier
+ *      builds fired a `kind: "teach"` summary on first render to swap
+ *      the lens title from the placeholder to a per-block one-liner;
+ *      that bypassed the auto-fire budget gate (teach-tier ignores it)
+ *      and burned a premium-tier call every time `cmd+/` mis-flagged
+ *      a region as auto-inserted. Removed 2026-05-01.
  *   4. Hover actions:
  *        ✓ Got it     → markExplained → decoration + lens disappear
  *        ↗ Tell me more → push context to sidebar chat + markExplained
  *        ✕ Dismiss    → markExplained (same effect as Got it)
- *
- * No upfront LLM cost. Explanations generated on demand when the user
- * clicks the lens. Per-block 5s cooldown + global 2-in-flight cap
- * prevent spam. Results are not cached — user explicitly said: don't
- * cache, just keep the surface optimized.
  *
  * When a region's `explainedAt` is stamped (here, or by Explain-back,
  * or by a predict-and-reveal "Got it"), ownership.ts fires
@@ -40,9 +39,7 @@ import { log } from "../log.js";
 
 // ---- Tuning ----
 
-const SUMMARY_TOKENS = 60;
 const COOLDOWN_MS = 5_000;
-const SUMMARY_INFLIGHT_CAP = 2;
 /** Max chars of block code sent to the LLM — prevents a single giant
  *  block from eating the context budget. Larger blocks get truncated
  *  with a marker in the prompt. */
@@ -60,15 +57,6 @@ let blockDecoration: vscode.TextEditorDecorationType | null = null;
  *  Prevents spam-clicking the same lens — routes the click to chat only
  *  once per 5s window. */
 const lastCallAt = new Map<string, number>();
-
-/** Short lens-title summaries for each block, populated lazily as the
- *  lens provider requests them. Keyed by `${uri}:${startLine}:${endLine}`.
- *  Session-scoped (not persisted) — user said don't cache across runs,
- *  but re-generating the same title every render would hammer the API.
- *  In-memory only; cleared on module dispose. */
-const summaries = new Map<string, string>();
-const summariesInFlight = new Set<string>();
-let summaryConcurrent = 0;
 
 /** Active hover anchor decoration for the most recently clicked block.
  *  Only one at a time — disposed before a new click renders. */
@@ -109,15 +97,7 @@ class AiBlockLensProvider implements vscode.CodeLensProvider {
         startLine: r.startLine,
         endLine: r.endLine,
       };
-      const key = keyFor(args);
-      const summary = summaries.get(key);
-      // Lens title carries the per-block summary when generated,
-      // otherwise a provisional "AI block · N lines" while the summary
-      // call is in flight. Either way the click action opens the
-      // deeper teaching hover.
-      const title = summary
-        ? `◎ ${summary} · ✿ Teach me this block`
-        : `◎ AI block · ${lineCount} ${lineCount === 1 ? "line" : "lines"} · ✿ Teach me this block`;
+      const title = `◎ AI block · ${lineCount} ${lineCount === 1 ? "line" : "lines"} · ✿ Teach me this block`;
       lenses.push(
         new vscode.CodeLens(range, {
           title,
@@ -127,12 +107,6 @@ class AiBlockLensProvider implements vscode.CodeLensProvider {
           arguments: [args],
         })
       );
-      // Lazy-queue the summary generation if we don't have one yet.
-      // Fires async; on completion the provider refreshes and the
-      // placeholder title swaps to the real summary.
-      if (!summary && !summariesInFlight.has(key)) {
-        void ensureSummary(doc, args);
-      }
     }
     return lenses;
   }
@@ -269,9 +243,6 @@ export function registerAiBlocks(
     dispose() {
       clearPendingHover();
       lastCallAt.clear();
-      summaries.clear();
-      summariesInFlight.clear();
-      summaryConcurrent = 0;
       lensProvider = null;
       blockDecoration = null;
       aiBlocksContext = null;
@@ -318,83 +289,6 @@ function paintBlocksFor(editor: vscode.TextEditor): void {
   } catch {
     /* editor disposed mid-paint */
   }
-}
-
-// ---- Summary generation (lens-title) ----
-
-/** Fire a short LLM call to produce the lens-title summary for a
- *  block. Short = 5–10 words that name what the block does. Cheap
- *  (~30 token output), concurrency-capped at 2. Refreshes the lens
- *  provider on completion so the placeholder title swaps to the real
- *  summary without the user needing to type. */
-async function ensureSummary(
-  doc: vscode.TextDocument,
-  args: AiBlockArgs
-): Promise<void> {
-  const key = keyFor(args);
-  if (summaries.has(key)) return;
-  if (summariesInFlight.has(key)) return;
-  if (summaryConcurrent >= SUMMARY_INFLIGHT_CAP) return;
-  summariesInFlight.add(key);
-  summaryConcurrent++;
-  try {
-    const summary = await generateSummary(doc, args);
-    if (summary) {
-      summaries.set(key, summary);
-      lensProvider?.refresh();
-    }
-  } catch (err) {
-    log(
-      "aiBlocks",
-      `summary gen failed — ${err instanceof Error ? err.message : String(err)}`
-    );
-  } finally {
-    summariesInFlight.delete(key);
-    summaryConcurrent = Math.max(0, summaryConcurrent - 1);
-  }
-}
-
-async function generateSummary(
-  doc: vscode.TextDocument,
-  args: AiBlockArgs
-): Promise<string | null> {
-  const lang = doc.languageId;
-  const safeStart = Math.max(0, Math.min(doc.lineCount - 1, args.startLine));
-  const safeEnd = Math.max(
-    safeStart,
-    Math.min(doc.lineCount - 1, args.endLine)
-  );
-  const endChar = doc.lineAt(safeEnd).text.length;
-  let code = doc.getText(new vscode.Range(safeStart, 0, safeEnd, endChar));
-  if (code.length > MAX_BLOCK_CHARS) code = code.slice(0, MAX_BLOCK_CHARS);
-
-  const prompt = `Summarize what this code block DOES in ONE short phrase (4–8 words max). Reference a real identifier. Start with a verb in imperative/gerund form.
-
-Examples of good phrases:
- - "Fetches user todos from /api"
- - "Filters completed items"
- - "Wires reset-password form submission"
- - "Debounces search input by 300ms"
-
-Code:
-\`\`\`${lang}
-${code}
-\`\`\`
-
-Return ONLY the phrase — no quotes, no preamble, no trailing period. Under 60 characters.`;
-
-  const raw = await aiQuery(prompt, SUMMARY_TOKENS, { kind: "teach" });
-  if (!raw) return null;
-  const cleaned = raw
-    .trim()
-    .replace(/^["'`]/, "")
-    .replace(/["'`]$/, "")
-    .replace(/\.$/, "")
-    .replace(/\n[\s\S]*$/, "") // keep only the first line
-    .slice(0, 60)
-    .trim();
-  if (!cleaned || cleaned.length < 4) return null;
-  return cleaned;
 }
 
 // ---- Teach flow ----
@@ -528,9 +422,6 @@ async function markReviewed(args: AiBlockArgs): Promise<void> {
     );
     return;
   }
-  // Drop the summary so memory stays bounded if the user reviews lots
-  // of blocks — the lens for this block won't render again anyway.
-  summaries.delete(keyFor(args));
   clearPendingHover();
   // onOwnershipChanged fires from markExplained → lensProvider + decoration repaint.
 }

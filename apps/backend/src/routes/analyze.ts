@@ -1,11 +1,20 @@
 import { Hono } from "hono";
 import type { AnalyzeRequest, AnalyzeResponse, Finding } from "@protege/types";
 import { callOneShot } from "../llm.js";
-import { githubAuth } from "../middleware/auth.js";
+import { githubAuth, resolveUserId } from "../middleware/auth.js";
+import { enforceCostCapOnly } from "../middleware/quota.js";
+import { addCostUsd, estimateCallCostUsd } from "../quotas.js";
 
 export const analyzeRoute = new Hono();
 
 analyzeRoute.use("*", githubAuth());
+// Daily $ cap. /analyze fires on every save (1.5s-debounced) and ships
+// full file content to the LLM — without this, a typo-loop on save
+// could blow through DAILY_USD_HARD_CAP even though /chat is gated.
+analyzeRoute.use("*", async (c, next) => {
+  const blocked = await enforceCostCapOnly(c);
+  return blocked ?? next();
+});
 
 const MAX_CONTENT_BYTES = 200_000;
 
@@ -37,6 +46,7 @@ JSON only. Exact shape:
 
 analyzeRoute.post("/", async (c) => {
   const body = (await c.req.json()) as AnalyzeRequest;
+  const userId = resolveUserId(c, body.userId);
 
   const content = body.file?.content ?? "";
   if (Buffer.byteLength(content, "utf8") > MAX_CONTENT_BYTES) {
@@ -46,11 +56,27 @@ analyzeRoute.post("/", async (c) => {
     );
   }
 
-  const { text } = await callOneShot({
+  // Pin to cheap-tier. callOneShot honors `cheap: true` by routing to
+  // OpenAI gpt-5-nano (when OPENAI_API_KEY is set) regardless of the
+  // env-wide AI_PROVIDER, so the actual model billed matches the
+  // cheap-tier addCostUsd label below.
+  const { text, usage } = await callOneShot({
     systemText: ANALYZE_PROMPT,
     userText: `File: ${body.file.path} (${body.file.language})\n\n${body.file.content}`,
     maxTokens: 1024,
+    cheap: true,
   });
+
+  // Bump the daily $ rollup so the cost-cap middleware on the next call
+  // sees this scan's spend. Fire-and-forget — the response shouldn't
+  // block on the rollup write. Without this bump, enforceCostCapOnly
+  // never trips on /analyze traffic alone.
+  if (usage.inputTokens > 0 || usage.outputTokens > 0) {
+    void addCostUsd(
+      userId,
+      estimateCallCostUsd("cheap", usage.inputTokens, usage.outputTokens)
+    );
+  }
 
   let findings: Finding[] = [];
   try {

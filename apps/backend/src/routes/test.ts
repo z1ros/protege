@@ -3,7 +3,21 @@ import { callOneShot, getProvider } from "../llm.js";
 
 export const testRoute = new Hono();
 
+// Diagnostic-only. Two reasons this is gated:
+//   1. The response leaks a key prefix + length, which narrows brute-force
+//      space for a leaked-elsewhere full key.
+//   2. The handler runs `callOneShot` (a real LLM round-trip) on every
+//      hit. Anonymous + un-rate-limited = a free spend faucet.
+// Same gate pattern as /echo/debug/recent and /voice. Set
+// PROTEGE_DEBUG_ENDPOINTS=1 to flip on for a temporary prod debugging
+// window without redeploying.
 testRoute.get("/", async (c) => {
+  const debugAllowed =
+    process.env.NODE_ENV !== "production" ||
+    process.env.PROTEGE_DEBUG_ENDPOINTS === "1";
+  if (!debugAllowed) {
+    return c.json({ error: "not_found" }, 404);
+  }
   const provider = getProvider();
   const apiKey =
     provider === "openai"

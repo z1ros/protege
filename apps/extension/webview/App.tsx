@@ -1788,7 +1788,6 @@ export function App() {
                 totalConcepts={totalConcepts}
                 ruleCount={ruleCount}
                 streak={streak}
-                milestones={milestones}
                 recentGains={recentGains}
               />
             )}

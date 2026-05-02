@@ -15,7 +15,7 @@ import { authHeaders, getCachedGitHubUser, getGitHubUser, clearCachedUser } from
 // ╚════════════════════════════════════════════════════════════════════╝
 // "local" → http://localhost:8787  (must be running `pnpm dev` in apps/backend)
 // "prod"  → https://protege-backend-production.up.railway.app
-const TEAM_OVERRIDE: "local" | "prod" | null = "prod";
+const TEAM_OVERRIDE: "local" | "prod" | null = null;
 
 /** Canonical production backend URL — Railway-hosted Hono server. */
 export const PROD_BACKEND_URL = "https://protege-backend-production.up.railway.app";

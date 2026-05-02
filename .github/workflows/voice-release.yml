@@ -27,12 +27,18 @@ on:
         required: true
         default: "v0.0.1-test"
 
+# Default to read-only at the workflow level. Only the `release` job
+# below escalates to `contents: write` because only that job creates the
+# GitHub Release. Build matrix jobs only need read access for checkout
+# and the `gh release download voice-models-base` step.
 permissions:
-  contents: write   # needed to create releases + upload assets
+  contents: read
 
 jobs:
   build:
     name: Build ${{ matrix.target }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -150,6 +156,8 @@ jobs:
     name: Attach to GitHub Release
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # softprops/action-gh-release needs to create + edit releases
     steps:
       - name: Resolve version
         id: ver
