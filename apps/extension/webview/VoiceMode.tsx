@@ -264,6 +264,40 @@ export function VoiceMode({
     phaseRef.current = phase;
   }, [phase]);
 
+  /* ============ Stuck-thinking watchdog ============
+   * The "voice/recording: false" handler flips phase from "listening" to
+   * "thinking" so the chip doesn't visibly drop to idle during the
+   * transcribe + chat-fetch window (1-3s). Normally chat fires next and
+   * the chat-loading priority slot keeps the chip on "thinking" until the
+   * reply lands.
+   *
+   * BUT: if the host bails before chat fires (RMS gate drops audio,
+   * Whisper returns empty, echo guard rejects, isWakeSuspended, the
+   * 12s safety-cap caught only bot bleed) the host calls
+   * setVoiceState("idle") on its own status bar but never tells the
+   * webview. Phase stays "thinking" forever, the orb keeps pulsing, and
+   * the panel reads as a stuck "Listening" / "Thinking" loop.
+   *
+   * Real-world repro 2026-05-02: bot finished TTS, voice tail tripped
+   * wake, recording ran 12s safety cap, audio was bot bleed below RMS
+   * threshold → host dropped silently → phase stuck for 40+ seconds.
+   *
+   * The watchdog: if phase is "thinking" for >8 seconds AND the
+   * `loading` prop never went true (= chat never actually started),
+   * something bailed silently. Force-reset to "idle". 8s is enough to
+   * cover the worst-case Whisper round-trip + chat fetch start. */
+  useEffect(() => {
+    if (phase !== "thinking") return;
+    if (loading) return; // real chat in flight; let it finish
+    const t = setTimeout(() => {
+      if (phaseRef.current === "thinking" && !loading) {
+        console.log("[protege-voice] stuck-thinking watchdog → resetting to idle");
+        setPhase(conversationRef.current ? "listening" : "idle");
+      }
+    }, 8000);
+    return () => clearTimeout(t);
+  }, [phase, loading]);
+
   /* ============ Kokoro warmup poller ============ */
   useEffect(() => {
     let cancelled = false;
