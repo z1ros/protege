@@ -49,8 +49,12 @@ jobs:
             platform: darwin
             arch: arm64
             ext: ""
-          # Intel Mac — older MacBooks and Hackintoshes.
-          - os: macos-13
+          # Intel Mac — cross-compile from the Apple Silicon runner.
+          # GitHub-hosted macos-13 runners (real Intel hardware) are
+          # heavily queued (10-30 min waits). Apple Silicon runners ship
+          # the x86_64 toolchain so `cargo build --target x86_64-apple-darwin`
+          # works out of the box, no Intel runner needed.
+          - os: macos-14
             target: x86_64-apple-darwin
             platform: darwin
             arch: x64

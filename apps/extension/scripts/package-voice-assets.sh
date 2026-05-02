@@ -26,22 +26,13 @@ set -euo pipefail
 # the fetcher uses the version stamp to decide whether to re-fetch.
 VERSION="v0.0.1"
 
-PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')"
-case "$PLATFORM" in
-  darwin) PLATFORM="darwin" ;;
-  linux)  PLATFORM="linux" ;;
-  *)      echo "ERROR: unsupported host platform: $(uname -s)"; exit 1 ;;
-esac
+PLATFORM=""
+ARCH=""
 
-ARCH="$(uname -m)"
-case "$ARCH" in
-  arm64|aarch64) ARCH="arm64" ;;
-  x86_64)        ARCH="x64" ;;
-  *)             echo "ERROR: unsupported host arch: $(uname -m)"; exit 1 ;;
-esac
-
-# Allow overriding for cross-platform packaging (you build the binary
-# elsewhere and drop it into bin/ with the right name).
+# Parse args FIRST so an explicit --platform / --arch override skips host
+# detection entirely. Without this, running on a Windows GitHub runner
+# (uname reports `MINGW64_NT-...`) fails the host-detection switch
+# before the overrides are even read.
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --platform) PLATFORM="$2"; shift 2 ;;
@@ -49,6 +40,26 @@ while [[ $# -gt 0 ]]; do
     *)          echo "Unknown flag: $1"; exit 1 ;;
   esac
 done
+
+# Fall back to host detection only for values the caller didn't supply.
+if [[ -z "$PLATFORM" ]]; then
+  HOST_PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  case "$HOST_PLATFORM" in
+    darwin)              PLATFORM="darwin" ;;
+    linux)               PLATFORM="linux" ;;
+    mingw*|msys*|cygwin*) PLATFORM="win32" ;;
+    *) echo "ERROR: unsupported host platform: $(uname -s). Pass --platform <p>."; exit 1 ;;
+  esac
+fi
+
+if [[ -z "$ARCH" ]]; then
+  HOST_ARCH="$(uname -m)"
+  case "$HOST_ARCH" in
+    arm64|aarch64) ARCH="arm64" ;;
+    x86_64)        ARCH="x64" ;;
+    *) echo "ERROR: unsupported host arch: $(uname -m). Pass --arch <a>."; exit 1 ;;
+  esac
+fi
 
 EXT_BIN_EXT=""
 if [[ "$PLATFORM" == "win32" ]]; then EXT_BIN_EXT=".exe"; fi
