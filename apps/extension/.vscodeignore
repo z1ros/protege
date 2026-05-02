@@ -50,11 +50,29 @@ node_modules/**
 .next/**
 coverage/**
 
-# Native Rust source for protege-mic — only the compiled binary in
-# `bin/protege-mic-<platform>-<arch>` ships. The Rust crate (Cargo.toml,
-# src/, target/) is dev-only — target/ alone is ~1.1 GB which both
-# bloats the extension AND chokes vsce's secret scanner with files >2 GB.
+# Native Rust source for protege-mic — fetchAssets.ts pulls the
+# pre-built binary from a GitHub Release at first voice-mode use, so
+# neither the source nor the binary ships in the .vsix. Keeping native/
+# in the package would balloon it past the 50 MB marketplace cap (the
+# Cargo `target/` dir alone is ~1.1 GB).
 native/**
+
+# Wake-word binary + ONNX models are NOT bundled into the .vsix.
+# fetchAssets.ts downloads the platform-specific tarball from a GitHub
+# Release on first voice-mode click. This keeps the .vsix lean (well
+# under the 50 MB cap), avoids macOS quarantine on the binary (Node's
+# fetch doesn't tag downloads with com.apple.quarantine), and means a
+# new platform binary doesn't require re-publishing the marketplace
+# extension.
+bin/**
+models/**
+
+# Tarballs produced by scripts/package-voice-assets.sh are publish
+# artifacts, not extension files.
+release-artifacts/**
+
+# Tmp dir fetchAssets.ts uses during install.
+.voice-tmp/**
 
 # On-device model cache — the runtime downloads Qwen 7B GGUF (~4.7 GB)
 # into globalStorage at first use. A stray `.model-cache/` at the
