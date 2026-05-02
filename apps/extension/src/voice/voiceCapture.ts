@@ -605,22 +605,57 @@ function computeWavRms(wav: Buffer): number {
   return Math.sqrt(sumSq / sampleCount);
 }
 
-/** Detect Whisper's "repeat-phrase" hallucination signature. Real speech
- *  from a coding Q&A rarely has the exact same 4+ word phrase twice; when
- *  Whisper is confused by noise it often regurgitates something like
- *  "You can't see it. You can't see it." Returns true if we should drop. */
-function looksRepetitive(text: string): boolean {
-  const words = text.toLowerCase().replace(/[.!?,]/g, "").split(/\s+/).filter(Boolean);
-  if (words.length < 8) return false;
+/** Detect Whisper's "repeat-phrase" hallucination AND extract just the
+ *  trailing real content if any. Real speech rarely has the exact same
+ *  4+ word phrase twice; when Whisper is confused by noise it
+ *  regurgitates something like "Can you hear me? Can you hear me?".
+ *
+ *  But sometimes Whisper repeats AT THE START and then transcribes a
+ *  REAL question after — e.g. "Can you hear me? Can you hear me? Like,
+ *  explain the weather today." Dropping the whole transcript was too
+ *  aggressive (real test case 2026-05-02 — user's first voice question
+ *  after the new fetcher landed got eaten by this filter).
+ *
+ *  Returns:
+ *    - { keep: text }       → no repetition detected, use as-is
+ *    - { keep: trimmed }    → repetition was a prefix; trimmed content is real
+ *    - { keep: "" }         → entire transcript was repetition junk; drop */
+function dedupRepetitiveTranscript(text: string): { keep: string } {
+  const tokens = text
+    .toLowerCase()
+    .replace(/[.!?,]/g, "")
+    .split(/\s+/)
+    .filter(Boolean);
+  if (tokens.length < 8) return { keep: text };
+
   const phraseLen = 4;
   const seen = new Map<string, number>();
-  for (let i = 0; i + phraseLen <= words.length; i++) {
-    const phrase = words.slice(i, i + phraseLen).join(" ");
-    const count = (seen.get(phrase) ?? 0) + 1;
-    seen.set(phrase, count);
-    if (count >= 2) return true;
+  for (let i = 0; i + phraseLen <= tokens.length; i++) {
+    const phrase = tokens.slice(i, i + phraseLen).join(" ");
+    if (seen.has(phrase)) {
+      // Found a repeat. Walk to the LAST occurrence of this phrase to
+      // find where the echo finishes. Real content (if any) starts at
+      // the word index immediately after that last occurrence.
+      let lastEnd = seen.get(phrase)! + phraseLen;
+      for (let j = i; j + phraseLen <= tokens.length; j++) {
+        const p2 = tokens.slice(j, j + phraseLen).join(" ");
+        if (p2 === phrase) lastEnd = j + phraseLen;
+      }
+      const tailWords = tokens.length - lastEnd;
+      if (tailWords < 3) return { keep: "" }; // entirely junk
+
+      // Reconstruct the trailing real content from the ORIGINAL text
+      // (preserving capitalization + punctuation). We re-tokenize the
+      // original by whitespace and slice to match the post-repetition
+      // tail. Best-effort: punctuation might align imperfectly across
+      // the boundary, but the real sentence comes through readable.
+      const origTokens = text.split(/\s+/).filter(Boolean);
+      const trimmed = origTokens.slice(lastEnd).join(" ").trim();
+      return { keep: trimmed };
+    }
+    seen.set(phrase, i);
   }
-  return false;
+  return { keep: text };
 }
 
 export async function transcribe(wavBuffer: Buffer): Promise<string> {
@@ -664,7 +699,9 @@ export async function transcribe(wavBuffer: Buffer): Promise<string> {
   }
 
   const data = (await res.json()) as { text?: string };
-  const text = (data.text ?? "").trim();
+  // `let` because the dedup step below may strip a Whisper-repetition
+  // prefix and reassign the trailing real content.
+  let text = (data.text ?? "").trim();
 
   // Exact-match ghost filter — the short-phrase hallucinations Whisper
   // outputs on silence.
@@ -721,12 +758,18 @@ export async function transcribe(wavBuffer: Buffer): Promise<string> {
     return "";
   }
 
-  // Repetition sniff — classic Whisper-on-noise output has a repeated
-  // phrase ("You can't see it. You can't see it."). Reject if we see
-  // the same 4-word phrase twice.
-  if (looksRepetitive(text)) {
+  // Repetition sniff — Whisper-on-noise often repeats a 4+ word phrase
+  // ("Can you hear me? Can you hear me?"). If the WHOLE transcript is
+  // junk, drop it. If there's a repetition prefix followed by real
+  // content, strip the prefix and keep the real part.
+  const dedup = dedupRepetitiveTranscript(text);
+  if (dedup.keep === "") {
     pipeLog("protege-stt", `dropped repetitive hallucination: "${text.slice(0, 120)}"`);
     return "";
+  }
+  if (dedup.keep !== text) {
+    pipeLog("protege-stt", `stripped repetition prefix · was="${text.slice(0, 80)}…" now="${dedup.keep.slice(0, 80)}"`);
+    text = dedup.keep;
   }
 
   // Min-word filter — short transcripts on near-silence are
@@ -747,8 +790,12 @@ export async function transcribe(wavBuffer: Buffer): Promise<string> {
   const SHORT_COMMAND_ALLOWLIST = new Set<string>([
     // Empty for now — keep this filter strict by default.
   ]);
-  const wordCount = normalized.split(/\s+/).filter(Boolean).length;
-  if (wordCount < 4 && !SHORT_COMMAND_ALLOWLIST.has(normalized)) {
+  // Re-normalize against the (possibly trimmed) text so the word count
+  // reflects what's actually being sent downstream — not the original
+  // text before the repetition-prefix strip.
+  const normalizedFinal = text.toLowerCase().replace(/[.!?,]/g, "").trim();
+  const wordCount = normalizedFinal.split(/\s+/).filter(Boolean).length;
+  if (wordCount < 4 && !SHORT_COMMAND_ALLOWLIST.has(normalizedFinal)) {
     pipeLog("protege-stt", `dropped short transcript (${wordCount} word${wordCount === 1 ? "" : "s"}): "${text}"`);
     return "";
   }
