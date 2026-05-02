@@ -10,6 +10,225 @@ import type { QuotaSnapshot } from "@protege/types";
  * from this single panel.
  */
 
+/* ==========================================================
+   Advanced surface catalog — every Protege editor surface in
+   one inventory. Read-only for now; the `?` tooltip explains
+   each surface in plain English. Future: wire `featureFlag` to
+   the existing `gated()` plumbing so each row can be toggled.
+   Stays inline in this file (vs. its own module) so the diff
+   for adding/removing surfaces is one edit.
+   ========================================================== */
+
+type SurfaceCategory =
+  | "CodeLens"
+  | "Inline decoration"
+  | "Hover action"
+  | "Save-time check"
+  | "Live Review"
+  | "Hint"
+  | "Watcher trigger"
+  | "Teaching surface"
+  | "Auto-suggestion"
+  | "Status bar"
+  | "Voice"
+  | "Other";
+
+interface AdvancedSurface {
+  id: string;
+  label: string;
+  category: SurfaceCategory;
+  description: string;
+  sourceFile: string;
+  featureFlag?: string;
+  status: "active" | "paused" | "experimental";
+}
+
+/** Render order for category groups. */
+const SURFACE_CATEGORY_ORDER: SurfaceCategory[] = [
+  "CodeLens",
+  "Inline decoration",
+  "Hover action",
+  "Save-time check",
+  "Live Review",
+  "Hint",
+  "Watcher trigger",
+  "Teaching surface",
+  "Auto-suggestion",
+  "Status bar",
+  "Voice",
+  "Other",
+];
+
+const ADVANCED_SURFACES: AdvancedSurface[] = [
+  { id: "highlight-codelens", label: "Highlight CodeLens", category: "CodeLens",
+    description: "Renders 'Apply fix · Teach me · Dismiss' actions above lines the AI highlights during chat conversations.",
+    sourceFile: "apps/extension/src/ai/tools.ts", status: "active" },
+  { id: "didyouknow-codelens", label: "Did You Know CodeLens", category: "CodeLens",
+    description: "Shows teaching tip preview above lines with new concepts, triggered at natural pauses (idle, file switch, save).",
+    sourceFile: "apps/extension/src/hints/didYouKnow.ts", featureFlag: "teaching.didYouKnow", status: "active" },
+  { id: "ghost-mentor-codelens", label: "Ghost Mentor Lens", category: "CodeLens",
+    description: "Floating AI coaching lens above the cursor line when a high-confidence teachable moment is detected (800ms debounce).",
+    sourceFile: "apps/extension/src/hints/ghostMentor.ts", featureFlag: "teaching.ghostMentor", status: "active" },
+  { id: "struggle-chip-codelens", label: "Struggle Chip Lens", category: "CodeLens",
+    description: "Shows 'Stuck here? Hint' above lines where friction is detected; click fetches a 2-sentence hint tailored to the code.",
+    sourceFile: "apps/extension/src/hints/struggleChip.ts", featureFlag: "teaching.struggleChip", status: "active" },
+  { id: "aiblocks-codelens", label: "AI Block Lens", category: "CodeLens",
+    description: "Marks unreviewed auto-inserted code blocks with 'AI block · N lines · Teach me this block' action above the region.",
+    sourceFile: "apps/extension/src/hints/aiBlocks.ts", featureFlag: "aiBlocks.enabled", status: "active" },
+
+  { id: "underline-whisper", label: "Underline Whisper", category: "Inline decoration",
+    description: "Thin Protege-blue underline on teachable tokens; hover reveals a one-line tip, 'Learn' opens inline peek.",
+    sourceFile: "apps/extension/src/hints/underlineWhisper.ts", featureFlag: "codeReview.underlineWhispers", status: "active" },
+  { id: "error-line-highlight", label: "Error Line Highlight", category: "Inline decoration",
+    description: "Subtle white background wash on any line containing a diagnostic (TypeScript, ESLint, or Protege).",
+    sourceFile: "apps/extension/src/review/errorLineHighlight.ts", featureFlag: "codeReview.errorLineHighlight", status: "active" },
+  { id: "aiblock-wash", label: "AI Block Wash", category: "Inline decoration",
+    description: "Subtle blue line background + left-edge stripe on unreviewed auto-inserted code regions.",
+    sourceFile: "apps/extension/src/hints/aiBlocks.ts", featureFlag: "aiBlocks.enabled", status: "active" },
+  { id: "misconception-flag", label: "Misconception Flag", category: "Inline decoration",
+    description: "Amber-bordered line decoration on code matching specific wrong mental models (e.g., await in .map, .sort mutation).",
+    sourceFile: "apps/extension/src/concepts/misconceptions.ts", featureFlag: "misconceptions.enabled", status: "active" },
+  { id: "concept-trail-dot", label: "Concept Trail Dot", category: "Inline decoration",
+    description: "Blue gutter dot on the first line where a new concept appears in the current session.",
+    sourceFile: "apps/extension/src/concepts/conceptTrail.ts", featureFlag: "recap.conceptTrail", status: "active" },
+  { id: "teaching-highlight", label: "Teaching Highlight", category: "Inline decoration",
+    description: "Background highlight on code lines the AI points at during active lessons.",
+    sourceFile: "apps/extension/src/ai/tools.ts", status: "active" },
+
+  { id: "whisper-hover", label: "Whisper Hover", category: "Hover action",
+    description: "Hover tooltip on Underline Whisper tokens showing a one-line tip with 'Learn' link to full teaching.",
+    sourceFile: "apps/extension/src/hints/underlineWhisper.ts", featureFlag: "codeReview.underlineWhispers", status: "active" },
+  { id: "ghost-mentor-hover", label: "Ghost Mentor Peek", category: "Hover action",
+    description: "Inline peek decoration when clicking the Ghost Mentor lens headline, showing full teaching content.",
+    sourceFile: "apps/extension/src/hints/ghostMentor.ts", featureFlag: "teaching.ghostMentor", status: "active" },
+  { id: "misconception-hover", label: "Misconception Hover", category: "Hover action",
+    description: "Hover on amber-flagged lines showing the wrong belief, correct mental model, and Quiz/Show fix/Dismiss actions.",
+    sourceFile: "apps/extension/src/concepts/misconceptions.ts", featureFlag: "misconceptions.enabled", status: "active" },
+  { id: "concept-trail-hover", label: "Concept Trail Hover", category: "Hover action",
+    description: "Markdown card popup on blue gutter dots showing concept name and 'Learn more' link.",
+    sourceFile: "apps/extension/src/concepts/conceptTrail.ts", featureFlag: "recap.conceptTrail", status: "active" },
+  { id: "struggle-chip-hover", label: "Struggle Chip Hint", category: "Hover action",
+    description: "Inline hover showing a 2-sentence AI-generated hint specific to the detected friction and code context.",
+    sourceFile: "apps/extension/src/hints/struggleChip.ts", featureFlag: "teaching.struggleChip", status: "active" },
+
+  { id: "live-review-analyzer", label: "Live Review Scan", category: "Save-time check",
+    description: "Real-time analyzer firing 3 seconds after typing stops, detecting defects and surfacing them as blue underlines.",
+    sourceFile: "apps/extension/src/review/liveReview.ts", featureFlag: "codeReview.liveReview", status: "active" },
+  { id: "save-recap-toast", label: "Save Recap Toast", category: "Save-time check",
+    description: "Brief 4-second status-bar toast summarizing concepts newly detected in a file after save.",
+    sourceFile: "apps/extension/src/detection/saveRecap.ts", featureFlag: "recap.saveRecap", status: "active" },
+  { id: "finding-diagnostics", label: "Finding Diagnostics", category: "Save-time check",
+    description: "Native VS Code diagnostics collection for Live Review findings, making them appear in the Problems panel.",
+    sourceFile: "apps/extension/src/review/findingDiagnostics.ts", featureFlag: "codeReview.liveReview", status: "active" },
+
+  { id: "live-review-underline", label: "Live Review Underline", category: "Live Review",
+    description: "Blue underline under code identified as problematic by the continuous analyzer.",
+    sourceFile: "apps/extension/src/review/liveReview.ts", featureFlag: "codeReview.liveReview", status: "active" },
+  { id: "live-review-hover", label: "Live Review Hover", category: "Live Review",
+    description: "Rich hover popup on a finding showing issue description, reason, and Apply fix / Teach me / Dismiss buttons.",
+    sourceFile: "apps/extension/src/review/liveReview.ts", featureFlag: "codeReview.liveReview", status: "active" },
+
+  { id: "didyouknow-tip", label: "Did You Know Tip", category: "Hint",
+    description: "MarkdownString popover revealing full concept tip text with 'Learn more' and 'Dismiss' actions.",
+    sourceFile: "apps/extension/src/hints/didYouKnow.ts", featureFlag: "teaching.didYouKnow", status: "active" },
+
+  { id: "error-persists", label: "Error Persists", category: "Watcher trigger",
+    description: "Nudge fired when an error has been present on the same line for over 10 seconds without being nudged in the last 60s.",
+    sourceFile: "apps/extension/src/watcher/triggers.ts", status: "active" },
+  { id: "struggle-cluster", label: "Struggle Cluster", category: "Watcher trigger",
+    description: "Nudge detected when the user performs 5+ undo actions within a 20-second window.",
+    sourceFile: "apps/extension/src/watcher/triggers.ts", status: "active" },
+  { id: "stare-pause", label: "Stare Pause", category: "Watcher trigger",
+    description: "Nudge when the cursor has not moved for 90+ seconds on a file with errors or substantial content.",
+    sourceFile: "apps/extension/src/watcher/triggers.ts", status: "active" },
+  { id: "build-fail-loop", label: "Build Fail Loop", category: "Watcher trigger",
+    description: "Nudge triggered after 3+ consecutive file saves that each contained errors.",
+    sourceFile: "apps/extension/src/watcher/triggers.ts", status: "active" },
+  { id: "flow-detected", label: "Flow Detected", category: "Watcher trigger",
+    description: "Positive nudge fired when 5+ clean (error-free) saves occur within a 3-minute window.",
+    sourceFile: "apps/extension/src/watcher/triggers.ts", status: "active" },
+  { id: "late-night-marathon", label: "Late Night Marathon", category: "Watcher trigger",
+    description: "Nudge after 11 PM if the user has made 20+ saves over 90+ minutes, encouraging a break.",
+    sourceFile: "apps/extension/src/watcher/triggers.ts", status: "active" },
+  { id: "win-detected", label: "Win Detected", category: "Watcher trigger",
+    description: "Event-driven nudge fired when an error is cleared or a test passes.",
+    sourceFile: "apps/extension/src/watcher/triggers.ts", status: "active" },
+  { id: "concept-breakthrough", label: "Concept Breakthrough", category: "Watcher trigger",
+    description: "Event-driven nudge fired when the user demonstrates mastery of a new concept.",
+    sourceFile: "apps/extension/src/watcher/triggers.ts", status: "active" },
+  { id: "risky-edit", label: "Risky Edit", category: "Watcher trigger",
+    description: "Event-driven nudge flagging auto-inserted code that may contain risky patterns.",
+    sourceFile: "apps/extension/src/watcher/triggers.ts", status: "active" },
+  { id: "commit-risk", label: "Commit Risk", category: "Watcher trigger",
+    description: "Event-driven nudge triggered when risky patterns are detected before a git commit.",
+    sourceFile: "apps/extension/src/watcher/triggers.ts", status: "active" },
+
+  { id: "teaching-thread", label: "Teaching Thread", category: "Teaching surface",
+    description: "Coordinator that parks the cursor on a finding, plays voice narration, and surfaces Ghost Mentor actions.",
+    sourceFile: "apps/extension/src/teaching/teachingThread.ts", status: "active" },
+  { id: "teach-popup", label: "Teaching Popup", category: "Teaching surface",
+    description: "Temporary hover anchor showing explanation when a teach reply arrives, with 'Teach me more' and 'Got it' buttons.",
+    sourceFile: "apps/extension/src/teaching/teachPopup.ts", status: "active" },
+  { id: "teaching-flow", label: "Teaching Flow", category: "Teaching surface",
+    description: "Multi-step guided lesson delivering concept understanding through sequential chat messages, code highlights, and practice.",
+    sourceFile: "apps/extension/src/teaching/teachingFlow.ts", status: "active" },
+  { id: "explain-back", label: "Explain Back", category: "Teaching surface",
+    description: "Reverse teaching session where the user explains selected code and Protege grades responses in rounds.",
+    sourceFile: "apps/extension/src/teaching/explainBack.ts", status: "active" },
+  { id: "architecture-tour", label: "Architecture Tour", category: "Teaching surface",
+    description: "Guided 5-stop walk through the codebase with narration, file opens, and focal line highlights.",
+    sourceFile: "apps/extension/src/teaching/architectureTour.ts", status: "active" },
+  { id: "learning-mode", label: "Learning Mode", category: "Teaching surface",
+    description: "Interactive mode where the user sets a goal, receives a step-by-step plan, and builds each step while Protege validates progress.",
+    sourceFile: "apps/extension/src/teaching/learningMode.ts", featureFlag: "learning.enabled", status: "active" },
+  { id: "exercise-engine", label: "Exercise Engine", category: "Teaching surface",
+    description: "Practice environment with challenge description, starter code, and real-time validation feedback as the user codes.",
+    sourceFile: "apps/extension/src/teaching/exerciseEngine.ts", status: "active" },
+
+  { id: "highlight-code-tool", label: "Highlight Code Tool", category: "Auto-suggestion",
+    description: "AI tool that paints line backgrounds during chat; triggered by Claude to draw attention to specific code.",
+    sourceFile: "apps/extension/src/ai/tools.ts", status: "active" },
+  { id: "show-code-tool", label: "Show Code Tool", category: "Auto-suggestion",
+    description: "AI tool that flashes selected code regions to highlight during teaching moments.",
+    sourceFile: "apps/extension/src/ai/tools.ts", status: "active" },
+
+  { id: "status-bar-live", label: "Status Bar Live", category: "Status bar",
+    description: "Right-aligned status bar item showing the Protege shield icon and streak count; click opens a quick-pick menu.",
+    sourceFile: "apps/extension/src/review/statusBarLive.ts", featureFlag: "codeReview.statusBar", status: "active" },
+  { id: "concept-at-cursor", label: "Concept at Cursor", category: "Status bar",
+    description: "Right-aligned status bar item showing the concept on the current line and mastery percentage.",
+    sourceFile: "apps/extension/src/review/statusBarLive.ts", featureFlag: "codeReview.statusBar", status: "active" },
+  { id: "iq-gain-toast", label: "IQ Gain Toast", category: "Status bar",
+    description: "Brief ephemeral toast on file save showing '+X IQ · Concept' when IQ increases.",
+    sourceFile: "apps/extension/src/extension.ts", status: "active" },
+
+  { id: "voice-state-chip", label: "Voice State Chip", category: "Voice",
+    description: "Always-visible status bar item mirroring wake-listener state (off, idle, listening, thinking, speaking) with click to toggle.",
+    sourceFile: "apps/extension/src/voice/voiceStatusBar.ts", status: "active" },
+  { id: "wake-word-listener", label: "Wake Word Listener", category: "Voice",
+    description: "Always-on ambient listener for the 'Protege' wake word; when detected, opens voice chat mode.",
+    sourceFile: "apps/extension/src/voice/voiceCapture.ts", status: "active" },
+  { id: "voice-explain-mode", label: "Voice Explain Mode", category: "Voice",
+    description: "Text/voice/both toggle for the Ghost Mentor 'Explain' button; voice mode speaks the explanation instead of opening chat.",
+    sourceFile: "apps/extension/src/extension.ts", status: "active" },
+
+  { id: "selection-hover", label: "Selection Hover Popup", category: "Other",
+    description: "Floating popup on code selection with Explain / Teach me / Why; also triggered by Cmd+K S.",
+    sourceFile: "apps/extension/src/hints/selectionHover.ts", featureFlag: "selectionHover.enabled", status: "active" },
+  { id: "predict-and-reveal", label: "Predict and Reveal", category: "Other",
+    description: "Learning quiz mechanic where the user predicts code behavior, then reveals the answer with one-line reason.",
+    sourceFile: "apps/extension/src/detection/predict.ts", featureFlag: "predict.enabled", status: "active" },
+  { id: "inset-preview", label: "Inset Preview", category: "Other",
+    description: "Experimental webview inset card between code lines showing finding details; opt-in via command palette.",
+    sourceFile: "apps/extension/src/hints/insetExperiment.ts", status: "experimental" },
+  { id: "ownership-inviter-chip", label: "Ownership Inviter Chip", category: "Other",
+    description: "Status-bar nudge at natural breaks (post-save, post-commit, end-of-day) offering to review auto-inserted code.",
+    sourceFile: "apps/extension/src/user/ownershipInviter.ts", status: "active" },
+  { id: "smart-fix", label: "Smart Fix", category: "Other",
+    description: "Routes a 'Fix' button click through the chat pipeline; Claude reads context and applies fixes with full tool access.",
+    sourceFile: "apps/extension/src/review/smartFix.ts", featureFlag: "codeReview.smartFix", status: "active" },
+];
+
 interface Props {
   fileName: string | null;
   liveReviewOn: boolean;
@@ -167,6 +386,7 @@ export function LiveTab({
               vscode.postMessage({ type: "feature/toggle", feature: "didYouKnow", enabled: next });
             }}
           />
+          <AdvancedSurfaces />
         </div>
       </div>
 
@@ -203,6 +423,100 @@ function ControlRow({
       >
         <span className="live-toggle-thumb" />
       </button>
+    </div>
+  );
+}
+
+/* ==========================================================
+   Advanced surfaces — collapsible inventory at the bottom of
+   Editor Intelligence. Read-only catalog of every surface
+   Protege exposes in the editor. Hover the `?` for a plain-
+   English description. Toggles will land later by wiring each
+   row's `featureFlag` through the existing `gated()` helper.
+   ========================================================== */
+function AdvancedSurfaces() {
+  const [open, setOpen] = useState(false);
+
+  // Group + preserve declared order within each category.
+  const grouped = useMemo(() => {
+    const map = new Map<SurfaceCategory, AdvancedSurface[]>();
+    for (const s of ADVANCED_SURFACES) {
+      const list = map.get(s.category) ?? [];
+      list.push(s);
+      map.set(s.category, list);
+    }
+    return SURFACE_CATEGORY_ORDER
+      .filter((c) => map.has(c))
+      .map((c) => ({ category: c, surfaces: map.get(c)! }));
+  }, []);
+
+  return (
+    <div className={`live-advanced ${open ? "open" : ""}`}>
+      <button
+        className="live-advanced-toggle"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        <svg
+          className="live-advanced-chevron"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <polyline points="9 6 15 12 9 18" />
+        </svg>
+        <div className="live-advanced-summary">
+          <span>Advanced</span>
+          <span className="live-advanced-count">
+            {ADVANCED_SURFACES.length} surfaces · hover ? for details
+          </span>
+        </div>
+      </button>
+      {open && (
+        <div className="live-advanced-body">
+          {grouped.map(({ category, surfaces }) => (
+            <div key={category} className="live-advanced-group">
+              <div className="live-advanced-group-label">{category}</div>
+              {surfaces.map((s) => (
+                <SurfaceRow key={s.id} surface={s} />
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SurfaceRow({ surface }: { surface: AdvancedSurface }) {
+  return (
+    <div className="live-advanced-row">
+      <span className="live-advanced-row-label">{surface.label}</span>
+      {surface.status !== "active" && (
+        <span className={`live-advanced-status ${surface.status}`}>
+          {surface.status}
+        </span>
+      )}
+      <span
+        className="live-advanced-help"
+        tabIndex={0}
+        role="button"
+        aria-label={`What does ${surface.label} do?`}
+      >
+        ?
+        <span className="live-advanced-tooltip" role="tooltip">
+          {surface.description}
+          <span className="live-advanced-tooltip-source">
+            {surface.featureFlag
+              ? `protege.${surface.featureFlag} · ${surface.sourceFile}`
+              : surface.sourceFile}
+          </span>
+        </span>
+      </span>
     </div>
   );
 }

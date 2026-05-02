@@ -372,5 +372,16 @@ function stripLineNumberGutter(code: string): {
       gutter.push({ num: "", marked: false });
     }
   }
+  // Drop trailing empty rows (split("\n") produces a trailing "" when the
+  // input ends with "\n"; an unnumbered blank tail would render as empty
+  // gutter rows below the last real line of code).
+  while (
+    cleaned.length > 0 &&
+    cleaned[cleaned.length - 1].trim() === "" &&
+    gutter[gutter.length - 1].num === ""
+  ) {
+    cleaned.pop();
+    gutter.pop();
+  }
   return { codeForHighlight: cleaned.join("\n"), gutter };
 }

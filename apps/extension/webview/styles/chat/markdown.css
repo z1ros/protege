@@ -225,7 +225,7 @@
 }
 .md-code-gutter-row {
   display: grid;
-  grid-template-columns: 2ch 1ch;
+  grid-template-columns: max-content 1ch;
   gap: 4px;
   line-height: 1.6;
   min-height: 1.6em;
@@ -233,7 +233,12 @@
 .md-code-gutter-row.is-marked {
   color: var(--electric-soft);
 }
-.md-code-gutter-num { text-align: right; }
+.md-code-gutter-num {
+  text-align: right;
+  white-space: nowrap;
+  word-break: keep-all;
+  overflow-wrap: normal;
+}
 .md-code-gutter-arrow { text-align: left; }
 
 /* ==========================================================

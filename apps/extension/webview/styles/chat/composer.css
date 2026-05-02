@@ -323,3 +323,68 @@
   color: #f0a8a8;
   background: rgba(214, 84, 84, 0.18);
 }
+
+/* ==========================================================
+   Selection chip — "X lines selected in <file>"
+   Sits at the top of the composer card so the user can see
+   what's pinned to the next send (mirrors Cursor / Cline).
+   ========================================================== */
+.composer-selection {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 8px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: rgba(var(--electric-rgb), 0.08);
+  border: 1px solid rgba(var(--electric-rgb), 0.28);
+  border-radius: var(--radius-pill);
+  max-width: 100%;
+  min-width: 0;
+}
+.composer-selection-icon {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  color: var(--electric-soft);
+}
+.composer-selection-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.composer-selection-label strong {
+  color: var(--text);
+  font-weight: 500;
+}
+.composer-selection-range {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.composer-selection-dismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  color: var(--text-faint);
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+.composer-selection-dismiss:hover {
+  background: rgba(var(--text-rgb), 0.12);
+  color: var(--text);
+}
+.composer-selection-dismiss svg {
+  width: 11px;
+  height: 11px;
+}

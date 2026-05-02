@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { spawn } from "node:child_process";
 import type { ToolCall, ToolResult, WorkspaceContext } from "@protege/types";
-import { getActiveFileEditor } from "../workspace/activeFile.js";
+import { getActiveFileEditor, getChatSelection } from "../workspace/activeFile.js";
 import { resolveWorkspaceUri } from "./workspacePath.js";
 
 /**
@@ -113,7 +113,12 @@ class HighlightCodeLensProvider implements vscode.CodeLensProvider {
       lenses.push(
         new vscode.CodeLens(lensRange, {
           title: `${kindLensIcon(h.kind)} ${summary}`,
-          command: "editor.action.showHover",
+          // editor.action.showHover triggers at the cursor position, NOT at
+          // the lens line — so clicking the summary did nothing unless the
+          // cursor happened to already sit on the highlighted line. Route
+          // through a small bridge command that moves the cursor first.
+          command: "protege.showHighlightHover",
+          arguments: [{ path: h.meta.path, line: h.range.start.line }],
         })
       );
       if (h.fix && !isTeachingHighlight) {
@@ -1366,14 +1371,33 @@ export async function buildWorkspaceContext(): Promise<WorkspaceContext> {
   const editor = getActiveFileEditor();
   const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
+  // Resolve the selection from two sources:
+  //   1. Live editor highlight (truth-of-the-moment).
+  //   2. Host-tracked sticky pin from initSelectionTracker — survives
+  //      focus moves into the chat composer and other non-file editors.
+  // The sticky path only contributes when the pin matches the active
+  // file (cross-file pins aren't shipped through the active-file
+  // selection field — preserves the AI's "active file = selection's
+  // file" invariant). `getChatSelection()` honours the user's chip × :
+  // dismissed pins return null and stay null until a fresh selection.
+  let selectionText: string | undefined;
+  if (editor) {
+    if (!editor.selection.isEmpty) {
+      selectionText = editor.document.getText(editor.selection);
+    } else {
+      const pinned = getChatSelection();
+      if (pinned && pinned.filePath === editor.document.fileName) {
+        selectionText = pinned.preview;
+      }
+    }
+  }
+
   const activeFile = editor
     ? {
         path: vscode.workspace.asRelativePath(editor.document.uri),
         language: editor.document.languageId,
         content: editor.document.getText().slice(0, 8000),
-        selection: !editor.selection.isEmpty
-          ? editor.document.getText(editor.selection)
-          : undefined,
+        selection: selectionText,
       }
     : undefined;
 

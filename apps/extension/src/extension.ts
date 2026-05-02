@@ -13,7 +13,7 @@ import { registerDidYouKnowCodeLens, registerDidYouKnow } from "./hints/didYouKn
 import { setTipCachePersistence } from "./ai/aiExplain.js";
 import { gated } from "./settings/featureFlags.js";
 import { fetchMe, currentUserIdOrNull } from "./user/protegeClient.js";
-import { initActiveFileTracker } from "./workspace/activeFile.js";
+import { initActiveFileTracker, initSelectionTracker } from "./workspace/activeFile.js";
 import { startWatcher, type DispatchedNudge } from "./watcher/index.js";
 // Editor-surface UI modules paused — imports removed so the bundle doesn't
 // carry them while we redesign:
@@ -302,6 +302,13 @@ export async function activate(context: vscode.ExtensionContext) {
           }
         : null,
     });
+  });
+
+  // Selection → composer chip pipe. Forwards "X lines selected in <file>"
+  // snapshots so the webview can pin them onto the next chat send (same
+  // pattern as Cursor / Cline). Debounced inside the tracker.
+  initSelectionTracker(context, (selection) => {
+    broadcast({ type: "editor/selection", selection });
   });
 
   // ===== Ambient watcher — RE-ENABLED =====
@@ -826,6 +833,39 @@ export async function activate(context: vscode.ExtensionContext) {
       const { clearAllHighlights } = await import("./ai/tools.js");
       await clearAllHighlights();
     }),
+    vscode.commands.registerCommand(
+      "protege.showHighlightHover",
+      async (args: { path: string; line: number }) => {
+        // Bridge command for the highlight summary CodeLens. The native
+        // `editor.action.showHover` triggers at the *cursor* position,
+        // which usually isn't on the highlighted line — so clicking the
+        // summary used to no-op silently. Move the cursor to the line
+        // first, then fire showHover.
+        try {
+          const { resolveWorkspaceUri } = await import("./ai/workspacePath.js");
+          const uri = resolveWorkspaceUri(args.path);
+          const doc = await vscode.workspace.openTextDocument(uri);
+          const editor = await vscode.window.showTextDocument(doc, {
+            preview: false,
+            viewColumn: vscode.ViewColumn.One,
+            preserveFocus: false,
+          });
+          const lineIdx = Math.max(0, Math.min(doc.lineCount - 1, args.line));
+          const pos = new vscode.Position(lineIdx, 0);
+          editor.selection = new vscode.Selection(pos, pos);
+          editor.revealRange(
+            new vscode.Range(pos, pos),
+            vscode.TextEditorRevealType.InCenterIfOutsideViewport
+          );
+          await vscode.commands.executeCommand("editor.action.showHover");
+        } catch (err) {
+          console.warn(
+            "[protege] showHighlightHover failed:",
+            err instanceof Error ? err.message : String(err)
+          );
+        }
+      }
+    ),
     vscode.commands.registerCommand("protege.scanActiveFile", async () => {
       broadcast({ type: "scan/started" });
       try {

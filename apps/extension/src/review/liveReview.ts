@@ -1365,9 +1365,25 @@ export function registerLiveReview(
   disposables.push(
     vscode.commands.registerCommand(
       "protege.applyReviewFix",
-      async (argsJson: string) => {
+      async (rawArgs: unknown) => {
         try {
-          const { uri, line, fix } = JSON.parse(argsJson);
+          // Callers come in two shapes:
+          //   1. Markdown command links — `command:protege.applyReviewFix?<encoded JSON>`
+          //      VS Code parses the JSON before invoking, so we get an object.
+          //   2. Legacy `executeCommand("protege.applyReviewFix", JSON.stringify(...))`
+          //      from tipInset.ts — we get a string we still need to parse.
+          // Calling JSON.parse on the object form throws
+          // `"[object Object]" is not valid JSON` on Node 21+.
+          const parsed =
+            typeof rawArgs === "string" ? JSON.parse(rawArgs) : rawArgs;
+          if (!parsed || typeof parsed !== "object") {
+            throw new Error("applyReviewFix: missing payload");
+          }
+          const { uri, line, fix } = parsed as {
+            uri: string;
+            line: number;
+            fix: string;
+          };
           const docUri = vscode.Uri.parse(uri);
           const doc = await vscode.workspace.openTextDocument(docUri);
           const lineRange = doc.lineAt(line).range;

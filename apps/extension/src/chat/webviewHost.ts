@@ -10,7 +10,7 @@ import { getGitHubUser, isSignedIn, onAuthChange, signOut } from "../user/auth.j
 import { isOptedOut } from "../user/authState.js";
 import { runChat } from "./chatRunner.js";
 import { isTeachingMessage } from "../intent/teachingTrigger.js";
-import { getActiveFileEditor } from "../workspace/activeFile.js";
+import { getActiveFileEditor, getActiveSelection, dismissChatSelection } from "../workspace/activeFile.js";
 import { classifyResponse, dispatchRouterActions } from "./responseRouter.js";
 import { getHistory, appendMessage, searchHistory, clearHistory } from "./chatHistory.js";
 import { clearAllHighlights, setLessonActive } from "../ai/tools.js";
@@ -441,6 +441,15 @@ export function mountProtegeWebview(
       // tell "user was just typing" from "user is idle / using voice".
       // No reply, no broadcast — pure side-effect on lastTypedAt.
       noteUserTyping();
+      return;
+    }
+    if (msg.type === "selection/dismiss") {
+      // User clicked × on the chip. Suppress the pinned selection from
+      // the next chat turn's workspace context. The chip is already
+      // hidden client-side; this just stops the host from forwarding
+      // the highlighted code through `body.workspace.activeFile.selection`
+      // until the user makes a fresh selection.
+      dismissChatSelection();
       return;
     }
     if (msg.type === "chat/abort") {
@@ -1165,6 +1174,13 @@ async function sendInitialState(webview: vscode.Webview, userId: string | null) 
     file: editor
       ? { path: editor.document.fileName, language: editor.document.languageId }
       : null,
+  } satisfies HostToWebview);
+
+  // Restore the selection chip after a webview reload so the user doesn't
+  // need to re-highlight to recover their pinned context.
+  webview.postMessage({
+    type: "editor/selection",
+    selection: getActiveSelection(),
   } satisfies HostToWebview);
 
   // Sync the Live Review toggle so the button reflects the real backend state

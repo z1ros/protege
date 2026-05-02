@@ -73,8 +73,6 @@ function buildBody(s: Suggestion, currentLine: string, lang: string): vscode.Mar
         fix: s.fix,
       })
     );
-    // applyReviewFix expects a stringified payload — wrap in outer JSON
-    // (command URI re-stringifies args once)
     md.appendMarkdown(`  ·  [$(wand) Apply fix](command:protege.applyReviewFix?${fixArgs})`);
   }
   md.appendMarkdown(`  ·  [$(close) Dismiss](command:protege.dismissTipThread)`);

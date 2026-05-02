@@ -16,10 +16,12 @@ import type {
   LevelInfo,
   MilestoneSummary,
   Recommendation,
+  SelectionInfo,
   StreakInfo,
   SynergyResult,
   VelocityInfo,
 } from "@protege/types";
+import { basename } from "@protege/types";
 import { vscode, onHostMessage } from "./vscode.js";
 import { VoiceMode } from "./VoiceMode.js";
 import { ConceptsTab } from "./ConceptsTab.js";
@@ -556,6 +558,12 @@ export function App() {
   >([]);
 
   const [fileName, setFileName] = useState<string | null>(null);
+  /** Editor selection that should ride along with the next chat send.
+   *  Driven by `editor/selection` from the host. The user can dismiss the
+   *  chip with × — that flips `selectionDismissed` and we re-suppress until
+   *  the next selection change comes in from the host. */
+  const [selection, setSelection] = useState<SelectionInfo | null>(null);
+  const [selectionDismissed, setSelectionDismissed] = useState(false);
   const [codeIq, setCodeIq] = useState(0);
   const [maxIq, setMaxIq] = useState(1000);
   const [bonusIq, setBonusIq] = useState(0);
@@ -734,6 +742,12 @@ export function App() {
         }
       } else if (msg.type === "file/active") {
         setFileName(msg.file ? msg.file.path : null);
+      } else if (msg.type === "editor/selection") {
+        // New selection from the host always re-shows the chip. Dismissal
+        // is per-selection — once the user changes what's highlighted in
+        // the editor, that's a fresh intent and we want it pinned again.
+        setSelection(msg.selection);
+        setSelectionDismissed(false);
       } else if (msg.type === "teach/finding") {
         teachFinding(msg.finding);
       } else if (msg.type === "chat/autoSend") {
@@ -743,17 +757,33 @@ export function App() {
         // currently in — voice if the user is in voice mode, text
         // otherwise. Reading via the ref dodges the stale-closure
         // trap (this listener was set up with [] deps).
+        // attachSelection=false: these commands already embed the
+        // selected code in their constructed prompt (see
+        // explainSelection.ts / fixIt.ts / smartFix.ts / teachConceptDispatch.ts).
+        // Re-attaching via the chip would put the snippet into the
+        // message twice. We also drop the chip so the UI reflects that
+        // the operation just consumed the highlight.
         const currentInputMode = chatInputModeRef.current;
         setMode("chat");
-        sendMessage(msg.message, currentInputMode);
+        setSelectionDismissed(true);
+        // Also tell the host to drop the pin from workspace context for
+        // the upcoming send — these auto-send actions already embed the
+        // selected code in their constructed prompt; without this the
+        // backend would also receive it via activeFile.selection and the
+        // AI would see it twice.
+        vscode.postMessage({ type: "selection/dismiss" });
+        sendMessage(msg.message, currentInputMode, false);
       } else if (msg.type === "voice/primeConversation") {
         // Teaching Thread's "Ask" button. Swaps the chat into voice input
         // mode before priming so the reply streams back in voice-tuned
         // prose (short, no markdown) and the user can continue the
-        // conversation by just speaking again.
+        // conversation by just speaking again. The follow-up question is
+        // self-contained — no editor selection should ride along.
         setMode("chat");
         setChatInputMode("voice");
-        sendMessage(msg.message, "voice");
+        setSelectionDismissed(true);
+        vscode.postMessage({ type: "selection/dismiss" });
+        sendMessage(msg.message, "voice", false);
       } else if (msg.type === "voice/playExplain") {
         // Ghost Lens "Explain" fired in voice mode. The host has already
         // trimmed the text; we just fetch /tts and play. Uses a single
@@ -879,15 +909,40 @@ export function App() {
     el.style.height = `${Math.min(max, el.scrollHeight)}px`;
   }, [input]);
 
-  const sendMessage = (text: string, modeOverride?: ChatInputMode) => {
+  const sendMessage = (
+    text: string,
+    modeOverride?: ChatInputMode,
+    /** Whether the pinned editor selection should be prepended as a
+     *  fenced code block. Defaults to true (manual sends from the
+     *  composer always attach). Hover-action commands like Explain
+     *  selection / Fix it / Smart Fix / Teach concept already embed the
+     *  selected code inside their own constructed prompt — those callers
+     *  must pass false so the snippet doesn't appear in the message
+     *  twice. The chip is also cleared in those branches so the UI
+     *  reflects that the operation just consumed the highlight. */
+    attachSelection: boolean = true
+  ) => {
     const trimmed = text.trim();
     if (!trimmed || loading) return;
+    // SECURITY: never embed the selected code into the user-message
+    // channel. Workspace files containing literal ``` would break out
+    // of the markdown fence and inject prompts as if they were the
+    // user's words. The selected text already flows to the backend
+    // through `body.workspace.activeFile.selection` (assembled in
+    // ai/tools.ts → buildWorkspaceContext), where it's wrapped in
+    // `<user_selection untrusted="true">` and runs through
+    // `escapeForFence` (apps/backend/src/routes/chat.ts:1044-1066).
+    // The chip remains as a visual reminder; chip dismissal only
+    // affects whether the host emits the selection downstream.
+    const pinnedSelection =
+      attachSelection && selection && !selectionDismissed ? selection : null;
+    const composed = trimmed;
     // Hard char cap (defense-in-depth — composer should already block
     // via disabled Send, but auto-fired sendMessage paths bypass that).
     // Backend also enforces; this just stops obvious mistakes early.
-    if (trimmed.length > MAX_CHAT_CHARS) {
+    if (composed.length > MAX_CHAT_CHARS) {
       setError(
-        `Message too long: ${trimmed.length} / ${MAX_CHAT_CHARS} characters. Trim it down or split into multiple messages.`
+        `Message too long: ${composed.length} / ${MAX_CHAT_CHARS} characters. Trim the selection or your prompt.`
       );
       return;
     }
@@ -899,7 +954,7 @@ export function App() {
     const user: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
-      content: trimmed,
+      content: composed,
       createdAt: new Date().toISOString(),
       source: effectiveMode === "voice" ? "voice" : "text",
     };
@@ -920,10 +975,17 @@ export function App() {
     setLoading(true);
     vscode.postMessage({
       type: "chat/send",
-      message: trimmed,
+      message: composed,
       mode: effectiveMode,
       contextMessages,
     });
+    // Consume the pinned selection — even if the user hasn't moved their
+    // cursor, the next turn shouldn't silently re-attach the same code.
+    // The host's next selection event will repopulate it if it's still
+    // highlighted.
+    if (pinnedSelection) {
+      setSelectionDismissed(true);
+    }
   };
 
   const teachFinding = (
@@ -1592,6 +1654,69 @@ export function App() {
               row (mode toggle + hint + send) stays consistent so the
               user always has one-click access to switch back. */}
           <footer className={`composer composer-mode-${chatInputMode}`}>
+            {/* Selection chip — pinned editor highlight that rides along
+                on the next send. Mirrors Cursor / Cline: highlight in the
+                editor, see "X lines selected in <file>" near the send
+                button, and either send (selection prepends as a code
+                block) or × to drop it for this turn. The chip persists
+                across mode toggles so a user prepping voice input can
+                still attach the highlighted snippet. */}
+            {selection && !selectionDismissed && (
+              <div className="composer-selection" role="status">
+                <svg
+                  className="composer-selection-icon"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                </svg>
+                <span
+                  className="composer-selection-label"
+                  title={`${selection.filePath}:${selection.startLine}-${selection.endLine}`}
+                >
+                  {selection.lineCount}{" "}
+                  {selection.lineCount === 1 ? "line" : "lines"} selected in{" "}
+                  <strong>{basename(selection.filePath)}</strong>
+                  <span className="composer-selection-range">
+                    {" "}· L{selection.startLine}
+                    {selection.lineCount > 1 ? `–${selection.endLine}` : ""}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  className="composer-selection-dismiss"
+                  onClick={() => {
+                    setSelectionDismissed(true);
+                    // Tell the host to suppress this pin from the next
+                    // chat turn's workspace context. Without this the
+                    // backend would still receive the highlight via
+                    // buildWorkspaceContext → activeFile.selection.
+                    vscode.postMessage({ type: "selection/dismiss" });
+                  }}
+                  title="Drop selection from next message"
+                  aria-label="Drop selection"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                  </svg>
+                </button>
+              </div>
+            )}
             {chatInputMode === "voice" ? (
               <VoiceMode
                 inline
