@@ -160,6 +160,9 @@ function seedRow(patch: Record<string, unknown>, userId: string = VERIFIED_USER)
     voice_minutes: 0,
     chat_minutes: 0,
     total_usd_estimate: 0,
+    prompt_tokens: 0,
+    completion_tokens: 0,
+    total_tokens: 0,
     ...(fakeRows.get(key) ?? {}),
     ...patch,
   });
@@ -280,12 +283,13 @@ describe("/analyze — happy path under cap", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Cap-tripped — pre-populated at >= DAILY_USD_HARD_CAP.
+// Cap-tripped — pre-populated at >= DAILY_TOKEN_DISPLAY_LIMIT.
+// (Migrated 2026-05-02 from $-cap to token-cap — single budget signal.)
 // ---------------------------------------------------------------------------
 describe("/analyze — cap already tripped", () => {
-  it("returns 429 BEFORE invoking the LLM when total_usd_estimate >= DAILY_USD_HARD_CAP", async () => {
-    const { DAILY_USD_HARD_CAP } = await import("../quotas.js");
-    seedRow({ total_usd_estimate: DAILY_USD_HARD_CAP });
+  it("returns 429 BEFORE invoking the LLM when total_tokens >= DAILY_TOKEN_DISPLAY_LIMIT", async () => {
+    const { DAILY_TOKEN_DISPLAY_LIMIT } = await import("../quotas.js");
+    seedRow({ total_tokens: DAILY_TOKEN_DISPLAY_LIMIT });
 
     const app = await buildApp();
     const res = await app.request("/analyze", {
@@ -303,12 +307,13 @@ describe("/analyze — cap already tripped", () => {
 
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.error).toBe("daily quota exceeded");
-    expect(body.reason).toBe("dollar-cap");
+    expect(body.reason).toBe("token-cap");
+    expect(body.kind).toBe("tokens");
   });
 
-  it("returns 429 even when total_usd_estimate is just over the cap", async () => {
-    const { DAILY_USD_HARD_CAP } = await import("../quotas.js");
-    seedRow({ total_usd_estimate: DAILY_USD_HARD_CAP + 0.01 });
+  it("returns 429 even when total_tokens is just over the cap", async () => {
+    const { DAILY_TOKEN_DISPLAY_LIMIT } = await import("../quotas.js");
+    seedRow({ total_tokens: DAILY_TOKEN_DISPLAY_LIMIT + 1000 });
 
     const app = await buildApp();
     const res = await app.request("/analyze", {

@@ -200,12 +200,18 @@ export function ProfilePage({
  *  back from `GET /me/quota` these get overwritten with live values.
  *  Kept in sync with `USER_FACING_LIMITS` in apps/backend/src/quotas.ts. */
 const DEFAULT_USAGE = {
+  // Per-route fields kept for backwards compat with the engagement
+  // chart (voice vs chat split below). Limits no longer surfaced.
   chatMessagesUsed: 0,
   chatMessagesLimit: 100,
   toolCallsUsed: 0,
   toolCallsLimit: 25,
   voiceMinutesUsed: 0,
   voiceMinutesLimit: 25,
+  // Single user-facing budget (2026-05-02). 2M tokens/day calibrated
+  // against ~$3 of gpt-5 traffic.
+  tokensUsed: 0,
+  tokensLimit: 2_000_000,
 };
 
 /**
@@ -244,6 +250,8 @@ function PlanSection() {
         voiceMinutesUsed: quota.usage.voice_minutes.used,
         voiceMinutesLimit: quota.usage.voice_minutes.limit,
         chatMinutesUsed: quota.usage.chat_minutes?.used ?? 0,
+        tokensUsed: quota.usage.tokens?.used ?? 0,
+        tokensLimit: quota.usage.tokens?.limit ?? 2_000_000,
       }
     : { ...DEFAULT_USAGE, chatMinutesUsed: 0 };
 
@@ -275,20 +283,14 @@ function PlanSection() {
         </div>
 
         <div className="plan-card-usage">
+          {/* All per-route rows (chat messages / voice minutes / tool
+              calls) retired 2026-05-02 in favor of one unified Tokens
+              row. Single budget, single enforcement signal. */}
           <PlanUsage
-            label="Chat messages"
-            used={u.chatMessagesUsed}
-            limit={u.chatMessagesLimit}
-          />
-          {/* "Tool calls" row removed 2026-05-02 — no longer a per-day
-              cap. The token budget covers cost; tool calls are a side
-              effect of chat, not a separate user action to ration. */}
-          <PlanUsage
-            label="Voice minutes"
-            used={u.voiceMinutesUsed}
-            limit={u.voiceMinutesLimit}
-            unit="min"
-            decimals={1}
+            label="Tokens used"
+            used={u.tokensUsed}
+            limit={u.tokensLimit}
+            compact
           />
         </div>
 
@@ -335,6 +337,7 @@ function PlanUsage({
   limit,
   unit,
   decimals,
+  compact,
 }: {
   label: string;
   used: number;
@@ -344,18 +347,35 @@ function PlanUsage({
   /** When set, the `used` value renders with this many decimals.
    *  Default: integer rendering. Use 1 for fractional minutes. */
   decimals?: number;
+  /** When true, format used + limit as compact "1.2k / 2M" — for the
+   *  Tokens row where raw integers (1,234,567) are unreadable. */
+  compact?: boolean;
 }) {
-  const pct = limit > 0 ? Math.max(0, Math.min(100, (used / limit) * 100)) : 0;
-  const usedDisplay =
-    typeof decimals === "number"
-      ? used.toFixed(decimals)
-      : Math.floor(used).toString();
+  const safeUsed =
+    typeof used !== "number" || !Number.isFinite(used) || used < 0 ? 0 : used;
+  const safeLimit =
+    typeof limit !== "number" || !Number.isFinite(limit) || limit < 0
+      ? 0
+      : limit;
+  const pct =
+    safeLimit > 0 ? Math.max(0, Math.min(100, (safeUsed / safeLimit) * 100)) : 0;
+  const fmt = (n: number): string => {
+    if (compact) {
+      if (n < 1000) return Math.floor(n).toString();
+      if (n < 1_000_000)
+        return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
+      return `${(n / 1_000_000).toFixed(n < 10_000_000 ? 1 : 0)}M`;
+    }
+    return typeof decimals === "number"
+      ? n.toFixed(decimals)
+      : Math.floor(n).toString();
+  };
   return (
     <div className="profile-plan-usage">
       <div className="profile-plan-usage-head">
         <span className="profile-plan-usage-label">{label}</span>
         <span className="profile-plan-usage-count">
-          {usedDisplay} / {limit}
+          {fmt(safeUsed)} / {fmt(safeLimit)}
           {unit ? ` ${unit}` : ""}
         </span>
       </div>

@@ -13,13 +13,16 @@ import { MENTOR_SYSTEM_PROMPT } from "../aiTools.js";
 import { sanitizeLanguage } from "./echo.js";
 import { callChat, getProvider } from "../llm.js";
 import { githubAuth, resolveUserId } from "../middleware/auth.js";
-import { enforceQuotaInline, enforceCostCapOnly } from "../middleware/quota.js";
+// enforceQuotaInline / enforceCostCapOnly retired 2026-05-02 — token
+// cap is the sole gate now (see checkTokenLimit below).
+import { getAuthenticatedUserId } from "../middleware/auth.js";
 import { trimAndSummarize } from "../chat/historyTrim.js";
 import {
   addCostUsd,
   addChatMinutes,
   addToolCalls,
   estimateCallCostUsd,
+  checkTokenLimit,
 } from "../quotas.js";
 import { buildSystemPrompt, buildLearnerBlock } from "../prompts/persona.js";
 import {
@@ -658,28 +661,37 @@ chatRoute.post("/", async (c) => {
   const openaiModel = resolveOpenAIModel(tier);
   const maxTokens = maxTokensForMode(mode);
 
-  // Quota gate. Tier maps directly: "cheap" → "scan" (Live Review
-  // auto-fired calls), "premium" → "teach" (chat / Compare / Fix it).
-  // The 429 short-circuits the request before any model is called, so
-  // a user past their daily limit never burns more tokens.
+  // Token-cap gate (sole enforcement, 2026-05-02). chat_messages and
+  // voice_minutes per-day caps were removed — the user's single budget
+  // is total tokens used vs DAILY_TOKEN_DISPLAY_LIMIT (2M). One number
+  // to track in UI, one number to gate on, no per-route ceilings.
   //
-  // Honest accounting: a single user turn can produce multiple `/chat`
-  // round-trips when the LLM uses tools (read_file, search, …). Only
-  // the FIRST round of each user turn (the one carrying
-  // `body.newUserMessage` with no `body.toolResults`) bumps the
-  // route counter — tool re-fires only re-check the $ cap. Without
-  // this split, 3 user-typed messages with multi-tool reasoning could
-  // land as "9 / 100" in the Profile panel, which is what users see
-  // and (correctly) call out as wrong.
+  // Fires for both fresh user turns AND tool re-fires — both burn
+  // tokens, both should respect the same daily ceiling. Returns 429
+  // with `kind: "tokens"` so the webview's quota-error banner can show
+  // the same number the panel shows ("you've used 2M / 2M").
   const quotaKind = tier === "cheap" ? "scan" : "teach";
-  const isFirstRoundOfUserTurn =
-    typeof body.newUserMessage === "string" &&
-    body.newUserMessage.length > 0 &&
-    (!body.toolResults || body.toolResults.length === 0);
-  const blocked = isFirstRoundOfUserTurn
-    ? await enforceQuotaInline(c, quotaKind)
-    : await enforceCostCapOnly(c);
-  if (blocked) return blocked;
+  // Still call addToolCalls / addChatMinutes / addVoiceMinutes from the
+  // route's success path for analytics — just no per-route gate. The
+  // unused quotaKind ref kept for the analytics counters below.
+  void quotaKind;
+  const userIdForGate = getAuthenticatedUserId(c);
+  if (userIdForGate) {
+    const tokenGate = await checkTokenLimit(userIdForGate);
+    if (!tokenGate.allowed) {
+      return c.json(
+        {
+          error: "daily quota exceeded",
+          kind: tokenGate.kind,
+          reason: tokenGate.reason,
+          used: tokenGate.used,
+          limit: tokenGate.limit,
+          resetAt: tokenGate.resetAt,
+        },
+        429
+      );
+    }
+  }
 
   // Tool-call ceiling REMOVED 2026-05-02 (user request): "remove
   // limit for tools, just chat messages from our side and minutes

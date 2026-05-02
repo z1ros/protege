@@ -1564,7 +1564,9 @@ export function App() {
                       Daily limit reached
                     </div>
                     <div className="quota-error-detail">
-                      You've used {quotaError.used} of {quotaError.limit}{" "}
+                      You've used{" "}
+                      {formatQuotaCount(quotaError.used, quotaError.kind)} of{" "}
+                      {formatQuotaCount(quotaError.limit, quotaError.kind)}{" "}
                       {humanizeQuotaKind(quotaError.kind)} for today.
                       <br />
                       Resets in {formatResetCountdown(quotaError.resetAt)}{" "}
@@ -1868,6 +1870,11 @@ function parseAssistantExtras(content: string): {
  *  of the raw kind if we don't recognize it. */
 function humanizeQuotaKind(kind: string): string {
   switch (kind) {
+    // Single user-facing kind 2026-05-02. All chat/voice/tool 429s
+    // route through the token cap now — the panel shows ONE row, the
+    // error message references that ONE row.
+    case "tokens":
+      return "tokens";
     case "chat_messages":
     case "teach":
       return "chat messages";
@@ -1886,6 +1893,20 @@ function humanizeQuotaKind(kind: string): string {
     default:
       return kind.replace(/_/g, " ");
   }
+}
+
+/** Compact format for quota numbers in the limit-reached banner. Tokens
+ *  are large (1M, 2M) and look ugly as raw integers — format them as
+ *  "1.2M". Other kinds (chat messages, voice minutes) stay as integers
+ *  since their numbers are small. */
+function formatQuotaCount(n: number, kind: string): string {
+  if (typeof n !== "number" || !Number.isFinite(n) || n < 0) return "0";
+  if (kind === "tokens") {
+    if (n < 1000) return Math.floor(n).toString();
+    if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
+    return `${(n / 1_000_000).toFixed(n < 10_000_000 ? 1 : 0)}M`;
+  }
+  return Math.floor(n).toString();
 }
 
 /** Format ms-until-reset as a friendly "Xh Ym" / "Ym" / "in <1m" string. */

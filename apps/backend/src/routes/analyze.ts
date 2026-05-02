@@ -1,19 +1,34 @@
 import { Hono } from "hono";
 import type { AnalyzeRequest, AnalyzeResponse, Finding } from "@protege/types";
 import { callOneShot } from "../llm.js";
-import { githubAuth, resolveUserId } from "../middleware/auth.js";
-import { enforceCostCapOnly } from "../middleware/quota.js";
-import { addCostUsd, estimateCallCostUsd } from "../quotas.js";
+import { githubAuth, resolveUserId, getAuthenticatedUserId } from "../middleware/auth.js";
+import { addCostUsd, estimateCallCostUsd, checkTokenLimit } from "../quotas.js";
 
 export const analyzeRoute = new Hono();
 
 analyzeRoute.use("*", githubAuth());
-// Daily $ cap. /analyze fires on every save (1.5s-debounced) and ships
-// full file content to the LLM — without this, a typo-loop on save
-// could blow through DAILY_USD_HARD_CAP even though /chat is gated.
+// Daily token cap. /analyze fires on every save (1.5s-debounced) and
+// ships full file content to the LLM — same gate as /chat (one budget,
+// one number, no per-route ceilings). Replaces the old $-cap check.
 analyzeRoute.use("*", async (c, next) => {
-  const blocked = await enforceCostCapOnly(c);
-  return blocked ?? next();
+  const userId = getAuthenticatedUserId(c);
+  if (userId) {
+    const tokenGate = await checkTokenLimit(userId);
+    if (!tokenGate.allowed) {
+      return c.json(
+        {
+          error: "daily quota exceeded",
+          kind: tokenGate.kind,
+          reason: tokenGate.reason,
+          used: tokenGate.used,
+          limit: tokenGate.limit,
+          resetAt: tokenGate.resetAt,
+        },
+        429
+      );
+    }
+  }
+  return next();
 });
 
 const MAX_CONTENT_BYTES = 200_000;
