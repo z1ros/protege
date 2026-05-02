@@ -55,6 +55,15 @@ export const USER_FACING_LIMITS = {
   voice_minutes: 25, // tts text-derived + stt audio-derived
 } as const;
 
+/** Daily token ceiling for user-facing display. Calibrated against the
+ *  $3 USD/day cap on gpt-5 (avg 80/20 input/output mix):
+ *    $3 ÷ ($1.25/M × 0.8 + $10/M × 0.2) = $3 ÷ $3/M ≈ 1M tokens
+ *  Rounded to 2,000,000 to give headroom — the $ cap trips first if
+ *  pricing shifts; tokens are a display-only signal that "you've used
+ *  ~half your daily budget."
+ */
+export const DAILY_TOKEN_DISPLAY_LIMIT = 2_000_000;
+
 // Daily $ ceiling per user. Trips before per-route caps in unusual
 // usage patterns (e.g. heavy voice + heavy chat in the same day);
 // otherwise route caps trip first.
@@ -227,6 +236,13 @@ interface QuotaRow {
    *  engaged in conversation" without inflating idle/away time. */
   chat_minutes: number;
   total_usd_estimate: number;
+  /** Per-day token totals (added by migration 005). prompt = input
+   *  cost basis ($1.25/M on gpt-5), completion = output ($10/M on
+   *  gpt-5). total = prompt+completion convenience field, denormalized
+   *  to avoid client-side math. BIGINT in DB, number in TS. */
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
 }
 
 const EMPTY_ROW = (userId: string): QuotaRow => ({
@@ -242,6 +258,9 @@ const EMPTY_ROW = (userId: string): QuotaRow => ({
   voice_minutes: 0,
   chat_minutes: 0,
   total_usd_estimate: 0,
+  prompt_tokens: 0,
+  completion_tokens: 0,
+  total_tokens: 0,
 });
 
 /**
@@ -417,9 +436,10 @@ export async function checkDollarCapOnly(
  */
 export async function addCostUsd(
   userId: string,
-  deltaUsd: number
+  deltaUsd: number,
+  tokens?: { prompt: number; completion: number }
 ): Promise<void> {
-  if (deltaUsd <= 0) return;
+  if (deltaUsd <= 0 && (!tokens || (tokens.prompt + tokens.completion) === 0)) return;
   if (!isQuotaSchemaReady()) return;
   const sb = getSupabase();
   if (!sb) return;
@@ -431,9 +451,14 @@ export async function addCostUsd(
   // observable in the panel for telemetry. Concurrent calls can race
   // here, but $ accuracy is a budget signal not a billing source of
   // truth — close-enough is fine.
+  //
+  // Token columns ride along in the SAME upsert — zero extra DB round-
+  // trips vs. the cost-only path. Migration 005 added the three
+  // BIGINT columns. Callers that don't pass tokens still work (we
+  // skip the token columns in the write).
   const { data, error } = await sb
     .from("user_quotas")
-    .select("total_usd_estimate")
+    .select("total_usd_estimate, prompt_tokens, completion_tokens, total_tokens")
     .eq("user_id", userId)
     .eq("day", day)
     .maybeSingle();
@@ -441,15 +466,23 @@ export async function addCostUsd(
     console.warn("[quotas] addCostUsd read failed:", error.message);
     return;
   }
-  const current = (data?.total_usd_estimate as number | undefined) ?? 0;
-  const { error: writeErr } = await sb.from("user_quotas").upsert(
-    {
-      user_id: userId,
-      day,
-      total_usd_estimate: current + deltaUsd,
-    },
-    { onConflict: "user_id,day" }
-  );
+  const currentUsd = (data?.total_usd_estimate as number | undefined) ?? 0;
+  const currentPrompt = Number((data?.prompt_tokens as number | undefined) ?? 0);
+  const currentCompletion = Number((data?.completion_tokens as number | undefined) ?? 0);
+  const currentTotal = Number((data?.total_tokens as number | undefined) ?? 0);
+  const row: Record<string, unknown> = {
+    user_id: userId,
+    day,
+    total_usd_estimate: currentUsd + deltaUsd,
+  };
+  if (tokens) {
+    row.prompt_tokens = currentPrompt + tokens.prompt;
+    row.completion_tokens = currentCompletion + tokens.completion;
+    row.total_tokens = currentTotal + tokens.prompt + tokens.completion;
+  }
+  const { error: writeErr } = await sb
+    .from("user_quotas")
+    .upsert(row, { onConflict: "user_id,day" });
   if (writeErr) {
     console.warn("[quotas] addCostUsd write failed:", writeErr.message);
   }
@@ -503,6 +536,17 @@ export interface QuotaSnapshot {
     chat_minutes: { used: number };
     /** Daily $ ceiling — token-derived best-effort estimate. */
     cost: { used: number; limitUsd: number };
+    /** Token totals for today. `used` is total = prompt+completion;
+     *  prompt and completion are provided separately for the UI's
+     *  optional "input vs output" breakdown. `limit` is a display
+     *  ceiling (DAILY_TOKEN_DISPLAY_LIMIT) calibrated against the
+     *  USD cap — not enforced as a separate gate. */
+    tokens: {
+      used: number;
+      prompt: number;
+      completion: number;
+      limit: number;
+    };
   };
   /** Subsystem health — populated from the startup probe + current
    *  enforcement flag. Surfaced in the panel as a small status dot so
@@ -543,6 +587,12 @@ export function snapshotFromRow(
         used: Math.round(r.chat_minutes * 10) / 10,
       },
       cost: { used: r.total_usd_estimate, limitUsd: DAILY_USD_HARD_CAP },
+      tokens: {
+        used: r.total_tokens,
+        prompt: r.prompt_tokens,
+        completion: r.completion_tokens,
+        limit: DAILY_TOKEN_DISPLAY_LIMIT,
+      },
     },
     meta: {
       enforced: quotasEnforced(),

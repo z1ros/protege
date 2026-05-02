@@ -11,11 +11,14 @@ const OUT_RATE: u32 = 16_000;
 const OUT_CHANNELS: u16 = 1;
 
 /// VAD thresholds
-/// 1400ms silence — forgiving conversational pace. Natural mid-sentence
-/// pauses while thinking ("so, um, like…") can easily blow past 700ms and
-/// get cut off mid-thought; 1400ms covers those without making the tail
-/// feel sluggish. Still faster than Siri's ~2s. The "filler ack" plays
-/// right after VAD fires, so perceived latency = silence + filler.
+/// 2200ms silence — forgiving conversational pace. Natural mid-sentence
+/// pauses while thinking ("so, um, like…", longer "honestly, I would be
+/// just down if you can… tell me… why") routinely cross 1400ms in
+/// real-world testing 2026-05-02 — user reported "I was speaking didn't
+/// even finish but it sent already". 2200ms covers slow thoughtful
+/// speech without feeling sluggish on quick replies (still well under
+/// Siri's ~2.5s). The "filler ack" plays right after VAD fires, so
+/// perceived latency = silence + filler.
 ///
 /// SPEECH_RMS bumped 2026-04-23 from 0.015 → 0.022. At 0.015, laptop-fan
 /// hum, keyboard clicks, and background HVAC kept tripping the threshold
@@ -24,7 +27,7 @@ const OUT_CHANNELS: u16 = 1;
 /// because recording never auto-stopped. 0.022 clears typical room tone
 /// while still catching normal speech (conversational RMS runs 0.05+).
 const SPEECH_RMS: f32 = 0.022;
-const SILENCE_TIMEOUT_MS: u64 = 1400;
+const SILENCE_TIMEOUT_MS: u64 = 2200;
 const SPEECH_MIN_MS: u64 = 300;
 
 /// OpenWakeWord pipeline constants

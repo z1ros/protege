@@ -157,25 +157,54 @@ class GhostLensProvider implements vscode.CodeLensProvider {
     // highest-priority one (warn > perf > info; then kind watch-out >
     // concept > praise). Dismiss on the shown one lets the next
     // suggestion for that line pop to the top on re-render.
+    //
+    // Iterate `filtered`, NOT `allSuggestions`. Earlier code looped
+    // over the unfiltered set, which let a finding suppressed by the
+    // native-diagnostic/gate filters still "claim" the line and crowd
+    // out a valid finding — surfaced as stray "extra text after
+    // Dismiss" / lens row pollution.
     const SEV_WEIGHT = { warn: 0, perf: 1, info: 2 } as const;
     const KIND_WEIGHT = { "watch-out": 0, concept: 1, praise: 2 } as const;
-    const topByLine = new Map<number, typeof allSuggestions[number]>();
-    for (const s of allSuggestions) {
+    const scoreOf = (x: typeof filtered[number]): number =>
+      SEV_WEIGHT[x.severity] * 10 +
+      (KIND_WEIGHT[x.kind as keyof typeof KIND_WEIGHT] ?? 1);
+    const topByLine = new Map<number, typeof filtered[number]>();
+    for (const s of filtered) {
       const ln = Math.max(0, Math.min(doc.lineCount - 1, s.range.start.line));
       const prev = topByLine.get(ln);
       if (!prev) {
         topByLine.set(ln, s);
         continue;
       }
-      const prevScore =
-        SEV_WEIGHT[prev.severity] * 10 +
-        (KIND_WEIGHT[prev.kind as keyof typeof KIND_WEIGHT] ?? 1);
-      const nextScore =
-        SEV_WEIGHT[s.severity] * 10 +
-        (KIND_WEIGHT[s.kind as keyof typeof KIND_WEIGHT] ?? 1);
-      if (nextScore < prevScore) topByLine.set(ln, s);
+      if (scoreOf(s) < scoreOf(prev)) topByLine.set(ln, s);
     }
-    const suggestions = [...topByLine.values()];
+    const candidates = [...topByLine.values()];
+
+    // Range-overlap dedup. After per-start-line dedup, two findings can
+    // still compete for the same logical region — e.g. a block-scope
+    // finding spanning lines 6-8 and an atom-scope finding on line 8.
+    // Both would render their own CodeLens row, and the second one
+    // appears mid-block as "stray extra text". Sort by priority, accept
+    // in order, drop any candidate whose range overlaps an
+    // already-claimed range. Overlap test is bidirectional
+    // (a.start ≤ b.end && b.start ≤ a.end) so a high-priority atom
+    // claiming [7,7] also blocks a later block at [6,8] from rendering.
+    // End result: one lens row per region.
+    candidates.sort((a, b) => scoreOf(a) - scoreOf(b));
+    const suggestions: typeof candidates = [];
+    const claimed: Array<{ start: number; end: number }> = [];
+    const clampLine = (n: number): number =>
+      Math.max(0, Math.min(doc.lineCount - 1, n));
+    for (const c of candidates) {
+      const cStart = clampLine(c.range.start.line);
+      const cEnd = clampLine(Math.max(c.range.start.line, c.range.end.line));
+      const overlaps = claimed.some(
+        (r) => cStart <= r.end && r.start <= cEnd
+      );
+      if (overlaps) continue;
+      suggestions.push(c);
+      claimed.push({ start: cStart, end: cEnd });
+    }
 
     // Stash the set of lines that survived the filter so the line-wash
     // decoration can paint them. We record here (inside provideCodeLenses)
@@ -183,11 +212,34 @@ class GhostLensProvider implements vscode.CodeLensProvider {
     // the "what gets a lens" and "what gets highlighted" logic exactly
     // in sync. Repaint fires on the next tick to avoid mutating
     // decorations inside the CodeLens provider callback.
+    //
+    // For block/flow scopes, paint the FULL range (start..end) so the
+    // wash visually anchors the whole construct the finding is about
+    // — e.g. a useEffect block highlights its 3-4 lines, not just the
+    // line with `useEffect(`. Atom-scope findings stay one-line. Cap
+    // the per-finding span at MAX_HIGHLIGHT_LINES so a runaway model
+    // output (entire-function "block") doesn't wash half the editor.
+    const MAX_HIGHLIGHT_LINES = 12;
     const lineSet = new Set<number>();
     for (const s of suggestions) {
-      lineSet.add(
-        Math.max(0, Math.min(doc.lineCount - 1, s.range.start.line))
+      const startLine = Math.max(
+        0,
+        Math.min(doc.lineCount - 1, s.range.start.line)
       );
+      const isMultiLine = s.scope === "block" || s.scope === "flow";
+      if (isMultiLine) {
+        const endLine = Math.max(
+          startLine,
+          Math.min(
+            doc.lineCount - 1,
+            s.range.end.line,
+            startLine + MAX_HIGHLIGHT_LINES - 1
+          )
+        );
+        for (let ln = startLine; ln <= endLine; ln++) lineSet.add(ln);
+      } else {
+        lineSet.add(startLine);
+      }
     }
     renderedLinesPerUri.set(uri, lineSet);
     queueMicrotask(() => {
@@ -755,15 +807,24 @@ function setContext(value: boolean): void {
 // ---- Headline formatting ----
 
 function buildHeadline(s: Suggestion): string {
-  // Title-only headline (no message). User feedback: the prior
-  // "Title — Long message text… | Apply fix | Teach | Dismiss" row was
-  // wider than most editors. The full message is one hover away (click
-  // the title → showHover) so we can drop it from the always-visible
-  // strip and recover ~70% of the row width.
-  const clean = s.ruleId.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  // Tight inline label. Prefer the model's `label` field (3-5 word tag,
+  // exactly what we want here); fall back to a prettified ruleId only
+  // when label is missing. Hard-cap at MAX_HEADLINE so a verbose model
+  // output never overflows the row — the full message stays one click
+  // away via showHover (protege.ghostHeadlinePeek). User feedback: the
+  // headline kept getting truncated at the right edge ("…") and made
+  // the row look broken; capping ourselves with a clean ellipsis is
+  // better than VS Code clipping mid-character.
+  const MAX_HEADLINE = 32;
+  const raw = (s.label && s.label.trim())
+    ? s.label.trim()
+    : s.ruleId.replace(/[-_]/g, " ");
+  const truncated = raw.length > MAX_HEADLINE
+    ? `${raw.slice(0, MAX_HEADLINE - 1).trimEnd()}…`
+    : raw;
   const scopeBadge =
     s.scope === "flow" ? " (flow)" : s.scope === "block" ? " (block)" : "";
-  return `${clean}${scopeBadge}`;
+  return `${truncated}${scopeBadge}`;
 }
 
 function shortName(uri: vscode.Uri): string {

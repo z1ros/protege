@@ -37,7 +37,7 @@ import {
   setWakeEnabled,
 } from "../voice/wakeWordCalibration.js";
 import { setVoiceState, flashVoiceError, getVoiceGender } from "../voice/voiceStatusBar.js";
-import { trimForVoice } from "../teaching/explainMode.js";
+import { trimForVoice, trimForText } from "../teaching/explainMode.js";
 import { shapeTask, buildShapeContext, verifyUnderstanding } from "../intent/index.js";
 import { devPortMapping, isDevMode, renderDevHtml } from "../devMode.js";
 import {
@@ -310,13 +310,37 @@ function findLastAssistantReply(): string | null {
 }
 
 /** Detect when Whisper's transcript is really the bot's last reply
- *  echoing back through the speakers. Uses Jaccard similarity on
- *  normalized word sets — self-echo lands around 0.8–1.0, real
- *  follow-ups like "yes, do it" sit well under 0.2. Short transcripts
- *  (<20 chars) bypass the check so quick "yes"/"no"/"stop" commands
- *  always get through even when their few words happen to appear in
- *  the bot's reply. */
+ *  echoing back through the speakers OR a context-steered hallucination
+ *  that continues the bot's topic. Uses Jaccard similarity on normalized
+ *  word sets — self-echo lands 0.8–1.0, lesson-context hallucinations
+ *  ("Exactly that is why JavaScript…" after the bot just talked about
+ *  JavaScript) overlap ~0.3-0.5 with the assistant text, real
+ *  follow-ups like "yes, do it" sit well under 0.2.
+ *
+ *  Threshold 0.3 (was 0.5 — bumped down 2026-05-02 after real test
+ *  caught a lesson-context hallucination at jaccard ≈ 0.4 that the
+ *  old threshold let through and the bot replied to as if real).
+ *
+ *  Short transcripts (<20 chars) bypass so quick "yes"/"no"/"stop"
+ *  commands always get through. Continuation-word starters
+ *  ("exactly", "yes that's why", "and also") are caught even on short
+ *  transcripts because those are the highest-likelihood phantom shapes
+ *  in lesson context. */
 function looksLikeEcho(transcript: string, lastAssistant: string): boolean {
+  // Continuation-starter guard — these are the shapes that fire when
+  // Whisper hallucinates content that "agrees with" the bot's last
+  // reply. Drops phantom turns regardless of similarity.
+  const trimmed = transcript.trim().toLowerCase();
+  const continuationStarters = [
+    /^exactly\b/,
+    /^yes,?\s*(that('?s| is)?\s+why|exactly)/,
+    /^that('?s| is)?\s+(right|why|exactly|correct)/,
+    /^right,?\s+(and|so|that|because)/,
+    /^and\s+(also|that|so)/,
+    /^so\s+(that|yeah|right)/,
+  ];
+  if (continuationStarters.some((re) => re.test(trimmed))) return true;
+
   if (transcript.length < 20) return false;
   const norm = (s: string) =>
     s
@@ -332,7 +356,7 @@ function looksLikeEcho(transcript: string, lastAssistant: string): boolean {
   for (const w of t) if (a.has(w)) inter++;
   const union = t.size + a.size - inter;
   const jaccard = inter / union;
-  return jaccard >= 0.5;
+  return jaccard >= 0.3;
 }
 
 export function mountProtegeWebview(
@@ -1049,7 +1073,12 @@ export function mountProtegeWebview(
       // Bot starts speaking → fully suspend the wake listener. No wake
       // events, no recordings. Bot voice bleeding back through the mic
       // cannot self-trigger the loop ("Oh yeah you brought the book…").
-      // Bot finishes → wait 500ms for speaker decay, then un-suspend.
+      // Bot finishes → wait 1500ms for speaker decay, then un-suspend.
+      // Bumped from 500ms 2026-05-02: real test caught a self-loop
+      // where the bot's own TTS tail re-triggered wake at the 500ms
+      // mark, recorded the user's silence, transcribed bot bleed, and
+      // queued a phantom user turn. 1500ms gives speaker reverb +
+      // mic gain settle time enough to die out before wake re-arms.
       //
       // Deadman timer: if the :true arrives but :false never does
       // (webview crash, audio element stuck, handler race), the wake
@@ -1088,7 +1117,7 @@ export function mountProtegeWebview(
             const ok = triggerFollowUp();
             console.log(`[protege] voice follow-up triggered ok=${ok}`);
           }
-        }, 500);
+        }, 1500);
       }
     } else if (msg.type === "wake/toggle") {
       const id = requireUserIdOrToast();
@@ -1763,12 +1792,18 @@ async function handleChat(
         { text: understanding.clarifier, voice: getVoiceGender() },
         {
           onEnd: () => {
-            setStrictWakeMode(false);
+            // Strict mode stays ON for 5s post-TTS — see chat-reply
+            // onEnd above for full reasoning. Same window so the
+            // clarifier path doesn't have a different self-loop bug
+            // than the main reply path.
+            setTimeout(() => setStrictWakeMode(false), 5000);
             setVoiceState(isWakeWordListening() ? "idle" : "off");
-            // 500ms decay + conversational follow-up trigger — same
+            // 1500ms decay + conversational follow-up trigger — same
             // sequence the chat-reply path uses. The clarifier set
             // pendingFollowUpMode = "voice-dialogue" above; consume
             // it now so the mic auto-opens for the user's answer.
+            // Decay bumped from 500ms 2026-05-02 to kill a self-loop
+            // where TTS tail tripped wake before speaker reverb died.
             setTimeout(() => {
               setWakeSuspended(false);
               if (shouldTriggerFollowUp()) {
@@ -1777,7 +1812,7 @@ async function handleChat(
                   `[protege] voice follow-up triggered (clarifier path) ok=${ok}`
                 );
               }
-            }, 500);
+            }, 1500);
           },
           // Barge-in fires when the user starts speaking over the
           // clarifier. armBargeIn already killed afplay, flipped the
@@ -1841,11 +1876,19 @@ async function handleChat(
   let ttsKickedOff = false;
 
   try {
+    // Track whether teach_step was called this turn. teach_step plays
+    // its own TTS narration per step — if it fired, the terminal reply
+    // should NOT also be spoken or the user hears two voices stacked
+    // ("here's what useState does" → terminal reply repeats). User
+    // feedback 2026-05-02: "for instance here it started speaking like
+    // 2 times, I mean I heard 2 voices."
+    let teachStepWasCalled = false;
     const reply = await runChat(
       userId,
       message,
       {
         onTool: (call, status) => {
+          if (call.name === "teach_step") teachStepWasCalled = true;
           post(webview, {
             type: "chat/tool",
             name: call.name,
@@ -1875,16 +1918,21 @@ async function handleChat(
     // voice mode and thinks the bot is broken.
     const voiceChannel = isVoiceTurn || isWakeWordListening();
     const replyHasText = reply.trim().length > 0;
+    // If teach_step was called, suppress the terminal-reply TTS in
+    // voice/teaching modes — each teach_step already played its own
+    // narration. Without this gate, the user hears the per-step
+    // narrations AND a redundant final-reply TTS stacked on top.
     const shouldSpeak =
-      effectiveMode === "voice" ||
-      effectiveMode === "voice-dialogue" ||
-      (effectiveMode === "teaching" && voiceChannel && replyHasText) ||
-      // teaching-text turns also speak when the voice channel is
-      // open (wake word listening or current turn was voice). The
-      // user typed via keyboard but has voice on — they still expect
-      // the bot to speak the response. Without this, voice users in
-      // a lesson hear silence after every typed message.
-      (effectiveMode === "teaching-text" && voiceChannel && replyHasText);
+      !teachStepWasCalled &&
+      (effectiveMode === "voice" ||
+        effectiveMode === "voice-dialogue" ||
+        (effectiveMode === "teaching" && voiceChannel && replyHasText) ||
+        // teaching-text turns also speak when the voice channel is
+        // open (wake word listening or current turn was voice). The
+        // user typed via keyboard but has voice on — they still expect
+        // the bot to speak the response. Without this, voice users in
+        // a lesson hear silence after every typed message.
+        (effectiveMode === "teaching-text" && voiceChannel && replyHasText));
     // Learning-fork reconciliation: keep the LLM honest.
     //   - If the user's message had build/teach intent AND the reply has
     //     NO <learningFork> tag AND gate conditions pass, inject one
@@ -1986,18 +2034,39 @@ async function handleChat(
     } else if (forkAllowed && !userHasBuildIntent && replyHasFork) {
       finalReply = finalReply.replace(FORK_TAG_RE, "").trimEnd();
     }
-    // Display rule (revised 2026-04-30): show finalReply verbatim, no
-    // line-drop pass. The previous implementation called
-    // `stripCodeForVoice(finalReply)` for voice turns to scrub inline
-    // code out of the chat bubble. Problem: it operated line-by-line
-    // and dropped any line containing `;`, `++`, `=>`, or `x = y`.
-    // When the model packed multiple sentences into one paragraph
-    // ("While repeats while its condition is true; i++ is the progress.
-    // Refresh—see three lines…"), the `;` matched the structural-code
-    // pattern and the entire reply got wiped — bubble showed empty.
-    // The TTS path still uses `trimForVoice` below to keep audio clean,
-    // so removing the display-side strip only affects what we render.
-    const displayReply = finalReply;
+    // Display rule (revised 2026-05-02): for voice modes, trim the chat-
+    // displayed text to ~35 words at a sentence boundary so it matches
+    // what the user HEARS via TTS. Without this, gpt-5 routinely
+    // produces 60-200 word voice replies despite the persona's HARD
+    // 50-word cap. Soft prompts can't enforce length; a deterministic
+    // trim can.
+    //
+    // Cap was 50; tightened to 35 — the persona's stated TARGET is
+    // 30 words. 35 leaves breathing room so trimForVoice can land on
+    // a sentence boundary instead of trailing off mid-sentence. Real
+    // sim 2026-05-02: at 50, ~14/30 voice replies were 31-50 words.
+    // At 35, those land at 25-35 — closer to the 30-word goal.
+    //
+    // Text mode: still trim, just at a much higher ceiling. The model
+    // overshoots even the persona's "60-120 word default" — one real
+    // case 2026-05-02 had a 600+ word reply with 6 sections and 20
+    // bullets on a vanilla "explain in general" question. The persona
+    // says HARD CEILING 200 words; this enforces it. If the model
+    // genuinely fits under 200 words, this is a no-op.
+    //
+    // Voice-shape determination — KEY RULE: respect the input channel,
+    // not whether wake is listening. The user reported (2026-05-02)
+    // typing "Teach me about X" while wake was on and getting back a
+    // 30-word voice-trimmed reply with markdown stripped. They typed
+    // it; they want to read it. Wake-listening is "I might say Protege
+    // later", not "speak everything I type". Use ONLY isVoiceTurn (a
+    // boolean derived from the actual `mode` arg passed by the caller
+    // — wake binary path = "voice", typed-while-wake-on path stays
+    // "text" since 2026-04-30).
+    const isVoiceShape = isVoiceTurn;
+    const displayReply = isVoiceShape
+      ? trimForVoice(finalReply, 35)
+      : trimForText(finalReply, 200);
     const assistant: ChatMessage = {
       id: crypto.randomUUID(),
       role: "assistant",
@@ -2037,7 +2106,9 @@ async function handleChat(
       // 80-word lectures despite the 30-word target. trimForVoice clips
       // to the last sentence boundary at-or-before the cap, so the user
       // hears clean stops (~2 sentences) instead of 25-second monologues.
-      const spoken = trimForVoice(finalReply, 50);
+      // Match the chat-display cap (35) so spoken and visible match.
+      // Mismatched caps led to "I see more text than I heard" confusion.
+      const spoken = trimForVoice(finalReply, 35);
       // Pre-suspend wake BEFORE the broadcast. Otherwise the chain is
       // broadcast → webview → fetch /tts → onplaying → post :true → host
       // suspend — that's 100–300ms of latency during which the bot's
@@ -2076,15 +2147,26 @@ async function handleChat(
               // true so the composer's "stop" button remained visible
               // and clickable. Now switch back to "send" mode.
               broadcast({ type: "chat/loading", loading: false });
-              setStrictWakeMode(false);
+              // Keep STRICT mode on for 5s after TTS ends — only a clearly
+              // spoken "Protege" (avg ≥ STRICT_AVG_THRESHOLD = 0.55) can
+              // re-trigger wake during this window. Bot speaker reverb,
+              // ambient noise, and false-positive prob spikes all fail
+              // that bar. Bumped from "clear immediately" 2026-05-02
+              // because the user reported "self-loop" — bot's own voice
+              // tail kept tripping wake right after suspension lifted.
+              // 5s was chosen as: speaker reverb usually dies in ~500ms,
+              // headphone+room echoes can last 1-2s, leave 3s margin.
+              setTimeout(() => setStrictWakeMode(false), 5000);
               // Chip restoration ("idle"|"off") is owned by hostAudio.ts
               // now — see playHostAudioStreaming cleanup. Calling
               // setVoiceState("idle") here used to clobber the correct
               // "off" state when wake was disabled (text-mode TTS).
-              // 500ms decay before unsuspending wake — same delay the
+              // 1500ms decay before unsuspending wake — same delay the
               // old voice/speaking:false handler used. Lets speaker
               // reverb die down so the bot's last syllable doesn't
-              // re-trigger wake through the mic.
+              // re-trigger wake through the mic. Bumped from 500ms
+              // 2026-05-02 after a confirmed self-loop where bot TTS
+              // tail re-triggered wake on the 500ms boundary.
               setTimeout(() => {
                 setWakeSuspended(false);
                 // Conversational follow-up: if this was a voice or
@@ -2100,7 +2182,7 @@ async function handleChat(
                     `[protege] voice follow-up triggered (host audio path) ok=${ok}`
                   );
                 }
-              }, 500);
+              }, 1500);
               if (reason === "error") {
                 console.warn(
                   `[protege] host audio: chat reply playback errored (effectiveMode=${effectiveMode})`

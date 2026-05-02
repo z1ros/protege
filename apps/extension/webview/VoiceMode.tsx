@@ -207,6 +207,14 @@ export function VoiceMode({
     try {
       localStorage.setItem("protege:voice", v);
     } catch {}
+    // Sync to the HOST'S VS Code config — without this, host-side TTS
+    // (Ghost Lens explain, teaching narrations, ALL host-broadcast
+    // playback paths) keeps reading the old value because they call
+    // getVoiceGender() which reads protege.voice.gender from settings,
+    // NOT this webview localStorage. User feedback 2026-05-02: switched
+    // Bella → Michael, mic still spoke Bella because the host config
+    // never got the update.
+    vscode.postMessage({ type: "voice/setGender", gender: v });
   };
   const [phase, setPhase] = useState<Phase>("idle");
   const [ttsStatus, setTtsStatus] = useState<TtsStatus>("unknown");
@@ -673,7 +681,21 @@ export function VoiceMode({
   // > thinking > idle. Passive wake-on (status=listening, no recording)
   // is treated as IDLE — the user explicitly didn't want the chip to
   // shout "Listening" when nothing was being captured.
-  const isActivelyRecording = wakeWordStatus === "recording";
+  //
+  // Two paths produce "actively recording": (1) wake binary fires
+  // RECORDING mode after detecting "Protege", and (2) user taps the
+  // orb which sends voice/start. The orb-tap path uses a separate
+  // recording mechanism, so wakeWordStatus stays "listening". Without
+  // including the orb-tap signal here, tapping the orb showed
+  // "Conversation" instead of "Listening" — user couldn't tell if
+  // their tap actually opened the mic. (Real feedback 2026-05-02:
+  // "when i click the circle it looks like it didn't work".)
+  // `conversation && phase === "listening"` is the orb-tap signal:
+  // startConversation() flips both, audio.onended flips phase off
+  // when bot starts speaking.
+  const isActivelyRecording =
+    wakeWordStatus === "recording" ||
+    (conversation && phase === "listening");
   const chipPhase: string =
     ttsStatus === "warming" || ttsStatus === "unknown"
       ? "warming"

@@ -17,6 +17,22 @@ let onAutoStop: (() => void) | null = null;
 
 // Wake word listener
 let wakeProcess: ChildProcess | null = null;
+
+/** Auto-restart state for the wake binary. The Rust mic process can
+ *  crash mid-session ("mutex lock failed: Invalid argument" was seen
+ *  in real testing 2026-05-02). Without a restart loop, every exit
+ *  silently kills voice for the rest of the session. We remember the
+ *  original start params so we can re-spawn, and gate the restart on
+ *  whether the host explicitly asked us to stop. */
+let intentionalStop = false;
+let restartAttempts = 0;
+const MAX_RESTART_ATTEMPTS = 3;
+let savedStartArgs: {
+  extensionPath: string;
+  callbacks: Parameters<typeof startWakeWordListener>[1];
+  thresholdOverride?: number;
+} | null = null;
+let lastSpawnAt = 0;
 let wakeAudioChunks: Buffer[] = [];
 let onWakeDetected: (() => void) | null = null;
 let onWakeRecordingStopped: (() => void) | null = null;
@@ -307,6 +323,15 @@ export async function startWakeWordListener(
 ): Promise<void> {
   if (wakeProcess) return;
 
+  // Reset the intentional-stop flag every time the host explicitly
+  // starts the listener — clears any prior "we asked it to die" state
+  // so the auto-restart loop is armed.
+  intentionalStop = false;
+  // Remember args so the exit handler can re-spawn without the host
+  // having to re-call startWakeWordListener.
+  savedStartArgs = { extensionPath, callbacks, thresholdOverride };
+  lastSpawnAt = Date.now();
+
   await ensureVoiceEngine(extensionPath);
   const binPath = getBinaryPath(extensionPath);
   const modelPath = getModelPath(extensionPath);
@@ -457,13 +482,65 @@ export async function startWakeWordListener(
 
   wakeProcess.on("exit", (code) => {
     pipeLog("protege-wake", `exited with code ${code}`);
+    const lifetimeMs = Date.now() - lastSpawnAt;
     wakeProcess = null;
+
+    // Reset the failure counter on long-running sessions — if the
+    // binary lived ≥60s before exiting, that's a new failure event,
+    // not part of a tight crash loop. Without this, a few rapid
+    // crashes would permanently disable voice for the session even
+    // if the binary later starts working again.
+    if (lifetimeMs > 60_000) {
+      restartAttempts = 0;
+    }
+
+    // Don't restart when the host asked us to stop (window reload,
+    // user toggled wake off via the chip, extension deactivated).
+    if (intentionalStop) return;
+    // Cap restart attempts so a persistently-broken binary doesn't
+    // burn CPU in a respawn loop. After the cap, surface the error
+    // and let the user toggle wake off/on to manually retry.
+    if (restartAttempts >= MAX_RESTART_ATTEMPTS) {
+      pipeLog(
+        "protege-wake",
+        `restart cap reached (${MAX_RESTART_ATTEMPTS} consecutive crashes) — giving up. Toggle wake off/on to retry.`
+      );
+      savedStartArgs?.callbacks.onError(
+        `Wake binary crashed ${MAX_RESTART_ATTEMPTS}× in a row. Click the status-bar chip to retry.`
+      );
+      return;
+    }
+    if (!savedStartArgs) return;
+
+    restartAttempts++;
+    // Linear backoff: 1s, 2s, 3s. Quick enough that the user barely
+    // notices a recovery, slow enough to dodge a hot crash loop.
+    const delayMs = restartAttempts * 1000;
+    pipeLog(
+      "protege-wake",
+      `auto-restart in ${delayMs}ms (attempt ${restartAttempts}/${MAX_RESTART_ATTEMPTS}) — last lifetime ${lifetimeMs}ms`
+    );
+    const args = savedStartArgs;
+    setTimeout(() => {
+      // The process may have already been re-started by the host
+      // calling startWakeWordListener directly during the backoff.
+      if (wakeProcess) return;
+      void startWakeWordListener(
+        args.extensionPath,
+        args.callbacks,
+        args.thresholdOverride
+      );
+    }, delayMs);
   });
 
   pipeLog("protege-wake", `listener started (bin=${binPath})`);
 }
 
 export function stopWakeWordListener(): void {
+  // Tell the exit handler we asked for this — don't auto-restart.
+  intentionalStop = true;
+  savedStartArgs = null;
+  restartAttempts = 0;
   if (!wakeProcess) return;
   wakeProcess.stdin?.end();
   wakeProcess.kill("SIGTERM");
@@ -660,12 +737,27 @@ function dedupRepetitiveTranscript(text: string): { keep: string } {
 
 export async function transcribe(wavBuffer: Buffer): Promise<string> {
   // Defensive pre-check: skip Whisper entirely when the audio is mostly
-  // silent. 0.012 is just below our Rust VAD speech threshold (0.015) —
-  // if the overall energy is below this, the brief speech burst that
-  // tripped VAD was too short to transcribe cleanly, and sending it to
-  // Whisper produces hallucinations like "Thanks for watching".
+  // silent. The RMS here averages over the WHOLE recording — including
+  // the silence pad before/after the user's actual words — so even
+  // clear speech lands well below the Rust VAD's 0.022 instantaneous
+  // threshold.
+  //
+  // Threshold is 0.008, the user's-side floor: their lowest observed
+  // real-speech recording was 0.0111 (real test 2026-05-02), so 0.008
+  // gives a 30% safety margin below that. Pure room tone runs ~0.002-
+  // 0.005, so the gap is wide enough to still drop true silence.
+  //
+  // Tuning history:
+  //   0.012 (orig) — dropped 0.0111 RMS real speech ("words went
+  //                  nowhere")
+  //   0.018 (try)  — dropped 0.011-0.013 real speech, also rejected
+  //   0.008 (now)  — explicitly looser per user: "better to be
+  //                  slightly more sensitive than drop it at all"
+  //
+  // Bot-tail bleed is handled separately by the 5s strict-mode buffer
+  // + 1500ms decay post-TTS, not by this filter.
   const rms = computeWavRms(wavBuffer);
-  if (rms < 0.012) {
+  if (rms < 0.008) {
     pipeLog("protege-stt", `dropped low-signal audio (rms=${rms.toFixed(4)})`);
     return "";
   }

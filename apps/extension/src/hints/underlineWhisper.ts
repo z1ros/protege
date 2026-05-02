@@ -403,15 +403,25 @@ export function buildActionHover(
   // Cleaner: rule name, then a one-line explanation, then actions.
   md.appendMarkdown(`**${title}**\n\n`);
 
-  // Use the LESSON field when present — it's the model's 2-sentence
-  // "what's wrong + why it matters here" explanation, exactly the
-  // depth the user asked for ("explain more, like one or two
-  // paragraphs why"). Falls back to teaser, then message, when the
-  // lesson wasn't generated (older scans).
-  const explanation = (s.lesson && s.lesson.trim())
-    ? s.lesson.trim()
-    : compactMessage(s.teaser || s.message);
-  md.appendMarkdown(`${explanation}\n\n`);
+  // Tight popup body — one sentence, ~2× the headline length, no more.
+  // Prefer teaser (≤100 chars, one-line "why this matters" by spec),
+  // fall back to a compacted message, fall back to lesson's first
+  // sentence as last resort. The full multi-sentence `lesson` is
+  // reserved for the Teach surface (chat / voice), not the popup —
+  // the user wants the popup to stay punchy. Click ✿ Teach me for the
+  // full explanation.
+  const firstSentence = (text: string): string => {
+    const m = text.trim().match(/^[^.!?]+[.!?]/);
+    return (m ? m[0] : text.trim()).trim();
+  };
+  const explanation = (s.teaser && s.teaser.trim())
+    ? compactMessage(s.teaser)
+    : (s.message && s.message.trim())
+      ? compactMessage(s.message)
+      : (s.lesson && s.lesson.trim())
+        ? compactMessage(firstSentence(s.lesson))
+        : "";
+  if (explanation) md.appendMarkdown(`${explanation}\n\n`);
 
   // Compact fix block when we have one — max 2 lines, longer fixes are
   // truncated with an ellipsis so the hover never scrolls.

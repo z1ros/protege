@@ -72,9 +72,12 @@ analyzeRoute.post("/", async (c) => {
   // block on the rollup write. Without this bump, enforceCostCapOnly
   // never trips on /analyze traffic alone.
   if (usage.inputTokens > 0 || usage.outputTokens > 0) {
+    // Tokens ride in the same UPSERT — see addCostUsd. Migration 005
+    // added prompt_tokens / completion_tokens / total_tokens columns.
     void addCostUsd(
       userId,
-      estimateCallCostUsd("cheap", usage.inputTokens, usage.outputTokens)
+      estimateCallCostUsd("cheap", usage.inputTokens, usage.outputTokens),
+      { prompt: usage.inputTokens, completion: usage.outputTokens }
     );
   }
 

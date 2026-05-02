@@ -324,6 +324,7 @@ export class LauncherProvider implements vscode.WebviewViewProvider {
     letter-spacing: -0.012em;
     line-height: 1.1;
     margin: 0;
+    overflow-wrap: anywhere;
   }
   .desc {
     color: var(--text-dim);
@@ -457,6 +458,46 @@ export class LauncherProvider implements vscode.WebviewViewProvider {
   /* GitHub mark inside the sign-in button matches the in-panel gate
      (App.tsx auth-gate), so both surfaces feel like the same flow. */
   .btn-signin svg { flex-shrink: 0; }
+
+  /* ---- Responsive shrink ----
+     The activity-bar sidebar can be dragged to ~150px wide. The default
+     hero (42px logo + 23px italic title + 16px padding) overflows below
+     ~230px, and the 2-col stats grid clips "6 days" by ~200px. These
+     breakpoints rescale the whole launcher so it stays legible all the
+     way down to a single icon-column width. */
+  @media (max-width: 240px) {
+    body { padding: 10px 8px; font-size: 11.5px; }
+    .hero { padding: 14px 12px 12px; border-radius: 12px; margin-bottom: 10px; }
+    .hero-top { gap: 9px; margin-bottom: 11px; }
+    .mark { width: 36px; height: 36px; border-radius: 10px; }
+    .mark img { width: 26px; height: 26px; }
+    .title { font-size: 19px; }
+    .desc { font-size: 11px; margin-bottom: 12px; }
+    .btn { padding: 9px 12px; font-size: 11.5px; }
+    .stat { padding: 10px 10px 9px; }
+    .stat-value { font-size: 19px; }
+    .stat-value-unit { font-size: 10.5px; }
+  }
+  @media (max-width: 200px) {
+    body { padding: 8px 6px; }
+    .hero { padding: 12px 10px 11px; }
+    .hero-top { gap: 8px; margin-bottom: 9px; }
+    .mark { width: 32px; height: 32px; border-radius: 9px; }
+    .mark img { width: 22px; height: 22px; }
+    .microcaps { font-size: 8.5px; letter-spacing: 0.14em; }
+    .title { font-size: 17px; }
+    .desc { font-size: 10.5px; line-height: 1.5; }
+    .btn { padding: 8px 10px; font-size: 11px; letter-spacing: 0.02em; }
+    /* Stack the two stats vertically — 2-col grid would clip the
+       "6 days" unit suffix at this width. */
+    .stats-row { grid-template-columns: 1fr; gap: 6px; }
+    .stat { padding: 9px 10px 8px; }
+    .stat-value { font-size: 18px; }
+  }
+  @media (max-width: 160px) {
+    .hero-top { flex-direction: column; align-items: flex-start; gap: 8px; }
+    .hint { font-size: 8.5px; letter-spacing: 0.12em; }
+  }
 </style>
 </head>
 <body>

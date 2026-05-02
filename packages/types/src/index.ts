@@ -149,6 +149,17 @@ export interface QuotaSnapshot {
     chat_minutes?: { used: number };
     /** Running $ estimate vs the daily $ ceiling. */
     cost: { used: number; limitUsd: number };
+    /** Daily token totals (added 2026-05-02 — migration 005).
+     *  `used` = prompt + completion. Optional so older backends
+     *  without the column return undefined and the webview falls
+     *  back gracefully. `limit` is a display ceiling calibrated
+     *  against the $ cap; not enforced as a separate gate. */
+    tokens?: {
+      used: number;
+      prompt: number;
+      completion: number;
+      limit: number;
+    };
   };
   /** Subsystem health — let the panel paint a "● connected /
    *  ○ not configured" indicator and a tooltip with the precise reason

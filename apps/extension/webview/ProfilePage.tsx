@@ -280,11 +280,9 @@ function PlanSection() {
             used={u.chatMessagesUsed}
             limit={u.chatMessagesLimit}
           />
-          <PlanUsage
-            label="Tool calls"
-            used={u.toolCallsUsed}
-            limit={u.toolCallsLimit}
-          />
+          {/* "Tool calls" row removed 2026-05-02 — no longer a per-day
+              cap. The token budget covers cost; tool calls are a side
+              effect of chat, not a separate user action to ration. */}
           <PlanUsage
             label="Voice minutes"
             used={u.voiceMinutesUsed}

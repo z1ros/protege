@@ -250,6 +250,15 @@ interface QuotaPanelProps {
   now: number;
 }
 
+/** Compact format for big token counts. 1234 → "1.2k", 1234567 → "1.2M".
+ *  Used by the Tokens row in the usage panel — raw numbers like
+ *  "1,234,567 / 2,000,000" are unreadable; "1.2M / 2M" is glanceable. */
+function formatTokens(n: number): string {
+  if (n < 1000) return Math.floor(n).toString();
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
+  return `${(n / 1_000_000).toFixed(n < 10_000_000 ? 1 : 0)}M`;
+}
+
 const QUOTA_ROW_LABELS: Array<{
   key: keyof QuotaSnapshot["usage"];
   label: string;
@@ -261,11 +270,11 @@ const QUOTA_ROW_LABELS: Array<{
     label: "Chat messages",
     hint: "Premium /chat turns — counts each message you send to Protege.",
   },
-  {
-    key: "tool_calls",
-    label: "Tool calls",
-    hint: "Each time the model uses a tool (read_file, edit_file, grep…) inside chat.",
-  },
+  // tool_calls row removed 2026-05-02 — no longer enforced as a daily
+  // cap (the DAILY_USD_HARD_CAP / token budget covers cost). Still
+  // tracked in the DB for analytics; just not user-visible since the
+  // user can't act on it (tool calls happen as a side effect of chat,
+  // not directly).
   {
     key: "voice_minutes",
     label: "Voice minutes",
@@ -328,6 +337,35 @@ function QuotaPanel({ quota, now }: QuotaPanelProps) {
             </div>
           );
         })}
+        {/* Token row — added 2026-05-02. Display-only, the $ cap is the
+            real enforcement. Compact format (k/M) since the numbers are
+            big. Older backends without migration 005 return undefined
+            for `tokens` — we just don't render the row. */}
+        {quota?.usage.tokens && (() => {
+          const t = quota.usage.tokens;
+          const pct = t.limit > 0 ? Math.min(100, (t.used / t.limit) * 100) : 0;
+          const isFull = t.limit > 0 && t.used >= t.limit;
+          const isWarn = !isFull && pct >= 80;
+          const cls = `quota-row${isFull ? " quota-row-full" : isWarn ? " quota-row-warn" : ""}`;
+          return (
+            <div
+              className={cls}
+              title={`Total LLM tokens consumed today across all calls. Input: ${formatTokens(t.prompt)} · Output: ${formatTokens(t.completion)}. Display-only — the $ cap is what actually enforces.`}
+            >
+              <div className="quota-row-head">
+                <span className="quota-row-label">Tokens used</span>
+                <span className="quota-row-counts">
+                  {formatTokens(t.used)}
+                  <span className="quota-row-counts-sep"> / </span>
+                  {formatTokens(t.limit)}
+                </span>
+              </div>
+              <div className="quota-row-bar-track">
+                <div className="quota-row-bar-fill" style={{ width: `${pct}%` }} />
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {cost && (

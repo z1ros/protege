@@ -1111,11 +1111,28 @@ export async function activate(context: vscode.ExtensionContext) {
   }
   // Re-fire after a successful sign-in so the status bar/launcher hydrate
   // without requiring the user to manually invoke `Refresh IQ`.
+  // Also start the wake listener if wake is enabled — without this, users
+  // who activate the extension BEFORE signing in get no wake word at all
+  // until they manually toggle it. The activation-time block below only
+  // fires when isSignedIn() is true at activate(), so a delayed sign-in
+  // misses the auto-start. User feedback 2026-05-02: "by default wake
+  // should be on, and it should remember the latest on/off."
   context.subscriptions.push(
     new vscode.Disposable(
       onAuthChange((snap) => {
         if (snap.state !== "signed-in") return;
         void vscode.commands.executeCommand("protege.refreshIQ");
+        if (getWakeEnabledFor(context)) {
+          const wakeId = currentUserIdOrNull();
+          if (wakeId) {
+            void import("./chat/webviewHost.js").then((mod) => {
+              // startGlobalWakeListener is idempotent — bails early if
+              // the listener is already running, so this is safe even
+              // if the activation-time start already fired.
+              void mod.startGlobalWakeListener(context, wakeId);
+            });
+          }
+        }
       })
     )
   );

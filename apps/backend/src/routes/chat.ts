@@ -20,7 +20,6 @@ import {
   addChatMinutes,
   addToolCalls,
   estimateCallCostUsd,
-  checkToolCallLimit,
 } from "../quotas.js";
 import { buildSystemPrompt, buildLearnerBlock } from "../prompts/persona.js";
 import {
@@ -682,27 +681,17 @@ chatRoute.post("/", async (c) => {
     : await enforceCostCapOnly(c);
   if (blocked) return blocked;
 
-  // Tool-call ceiling — separate from the chat-message ceiling.
-  // A user could have chat messages left but be out of tool calls;
-  // we'd rather 429 here than have the model fire tools that won't
-  // count cleanly. Only checks when the request might use tools
-  // (premium tier with tools=on); cheap-tier scans never use tools.
-  if (tier === "premium") {
-    const toolGate = await checkToolCallLimit(userId, 1);
-    if (!toolGate.allowed) {
-      return c.json(
-        {
-          error: "daily quota exceeded",
-          kind: "tool_calls",
-          reason: "route-cap",
-          used: toolGate.used,
-          limit: toolGate.limit,
-          resetAt: toolGate.resetAt,
-        },
-        429
-      );
-    }
-  }
+  // Tool-call ceiling REMOVED 2026-05-02 (user request): "remove
+  // limit for tools, just chat messages from our side and minutes
+  // which is also chat message". Tool calls are a derivative of
+  // chat — they happen as a natural consequence of the model using
+  // tools to answer chat turns. Capping them separately blocks
+  // legitimate usage when the user has chat budget left.
+  //
+  // The DAILY_USD_HARD_CAP ($3/day, see quotas.ts) is the real cost
+  // safety net — it counts all token spend including tool rounds.
+  // We still TRACK tool_calls in the user_quotas table for analytics,
+  // just don't enforce a per-day cap on them anymore.
 
   let messages: OAITurn[] = body.messages ?? [];
 
@@ -1240,7 +1229,15 @@ chatRoute.post("/", async (c) => {
     usage?.completion_tokens ?? usage?.output_tokens ?? 0
   );
   if (inTok > 0 || outTok > 0) {
-    void addCostUsd(userId, estimateCallCostUsd(tier, inTok, outTok));
+    // Pass tokens alongside cost so they ride in the same UPSERT —
+    // single DB write per turn, zero extra round-trip vs. cost-only.
+    // Persists to prompt_tokens / completion_tokens / total_tokens
+    // columns added by migration 005 for analytics + audits.
+    void addCostUsd(
+      userId,
+      estimateCallCostUsd(tier, inTok, outTok),
+      { prompt: inTok, completion: outTok }
+    );
   }
   // Record tool-call usage. Fires whenever the model called any tools
   // in this turn — counts against the daily 25-tool-call ceiling.
