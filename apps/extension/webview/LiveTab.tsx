@@ -252,36 +252,30 @@ interface QuotaPanelProps {
 
 /** Compact format for big token counts. 1234 → "1.2k", 1234567 → "1.2M".
  *  Used by the Tokens row in the usage panel — raw numbers like
- *  "1,234,567 / 2,000,000" are unreadable; "1.2M / 2M" is glanceable. */
+ *  "1,234,567 / 2,000,000" are unreadable; "1.2M / 2M" is glanceable.
+ *
+ *  Defensive: coerces non-finite inputs (undefined, NaN, null) to 0.
+ *  Without this guard a stale backend that didn't run migration 005
+ *  could send `tokens.used = undefined` and the UI would render
+ *  "NaNM / 2M" — exactly what happened on first deploy 2026-05-02. */
 function formatTokens(n: number): string {
+  if (typeof n !== "number" || !Number.isFinite(n) || n < 0) return "0";
   if (n < 1000) return Math.floor(n).toString();
   if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
   return `${(n / 1_000_000).toFixed(n < 10_000_000 ? 1 : 0)}M`;
 }
 
+// All per-route quota rows (chat_messages, voice_minutes, tool_calls)
+// removed 2026-05-02 in favor of one unified Tokens row. The token
+// budget is the single user-facing limit — same number drives display
+// AND enforcement. Server still tracks chat_messages / voice_minutes /
+// tool_calls / total_usd_estimate in user_quotas for analytics.
 const QUOTA_ROW_LABELS: Array<{
   key: keyof QuotaSnapshot["usage"];
   label: string;
   hint: string;
   unit?: string;
-}> = [
-  {
-    key: "chat_messages",
-    label: "Chat messages",
-    hint: "Premium /chat turns — counts each message you send to Protege.",
-  },
-  // tool_calls row removed 2026-05-02 — no longer enforced as a daily
-  // cap (the DAILY_USD_HARD_CAP / token budget covers cost). Still
-  // tracked in the DB for analytics; just not user-visible since the
-  // user can't act on it (tool calls happen as a side effect of chat,
-  // not directly).
-  {
-    key: "voice_minutes",
-    label: "Voice minutes",
-    hint: "Combined text-to-speech + speech-to-text time.",
-    unit: "min",
-  },
-];
+}> = [];
 
 function QuotaPanel({ quota, now }: QuotaPanelProps) {
   const resetIn = useMemo(() => {
@@ -294,8 +288,9 @@ function QuotaPanel({ quota, now }: QuotaPanelProps) {
     return `${mins}m`;
   }, [quota, now]);
 
-  const cost = quota?.usage.cost;
-  const costPct = cost && cost.limitUsd > 0 ? Math.min(100, (cost.used / cost.limitUsd) * 100) : 0;
+  // cost / costPct removed 2026-05-02 — the $ row was replaced by the
+  // Tokens row, calibrated to the same $3/day budget. Backend keeps
+  // total_usd_estimate for analytics; not user-facing anymore.
 
   return (
     <div className="live-section">
@@ -337,10 +332,12 @@ function QuotaPanel({ quota, now }: QuotaPanelProps) {
             </div>
           );
         })}
-        {/* Token row — added 2026-05-02. Display-only, the $ cap is the
-            real enforcement. Compact format (k/M) since the numbers are
-            big. Older backends without migration 005 return undefined
-            for `tokens` — we just don't render the row. */}
+        {/* Token row — added 2026-05-02. The user-facing daily budget,
+            replacing the old "Estimated $ today" row. Limit is
+            calibrated against the backend's $/day cap so when the bar
+            fills, you've used your daily allotment. Compact format
+            (k/M) since the numbers are big. Older backends without
+            migration 005 return undefined — we just don't render. */}
         {quota?.usage.tokens && (() => {
           const t = quota.usage.tokens;
           const pct = t.limit > 0 ? Math.min(100, (t.used / t.limit) * 100) : 0;
@@ -350,7 +347,7 @@ function QuotaPanel({ quota, now }: QuotaPanelProps) {
           return (
             <div
               className={cls}
-              title={`Total LLM tokens consumed today across all calls. Input: ${formatTokens(t.prompt)} · Output: ${formatTokens(t.completion)}. Display-only — the $ cap is what actually enforces.`}
+              title={`Daily token budget across all LLM calls. Resets at 00:00 UTC. Input: ${formatTokens(t.prompt)} · Output: ${formatTokens(t.completion)}.`}
             >
               <div className="quota-row-head">
                 <span className="quota-row-label">Tokens used</span>
@@ -368,21 +365,10 @@ function QuotaPanel({ quota, now }: QuotaPanelProps) {
         })()}
       </div>
 
-      {cost && (
-        <div
-          className={`quota-cost-row${cost.used >= cost.limitUsd ? " quota-cost-row-full" : ""}`}
-          title="Estimated $ spent today (token-derived). Soft signal, not a billing source of truth."
-        >
-          <span className="quota-cost-label microcaps">Estimated $ today</span>
-          <span className="quota-cost-pill">
-            ${cost.used.toFixed(3)}
-            <span className="quota-cost-pill-sep"> / </span>${cost.limitUsd.toFixed(2)}
-          </span>
-          <div className="quota-cost-bar-track">
-            <div className="quota-cost-bar-fill" style={{ width: `${costPct}%` }} />
-          </div>
-        </div>
-      )}
+      {/* "Estimated $ today" row removed 2026-05-02 — replaced by the
+          Tokens row above (limit calibrated to ~$3/day). Backend still
+          tracks total_usd_estimate in Supabase for analytics, just not
+          surfaced to users (tokens are the user-facing budget). */}
     </div>
   );
 }

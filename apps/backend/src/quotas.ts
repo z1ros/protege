@@ -429,6 +429,57 @@ export async function checkDollarCapOnly(
 }
 
 /**
+ * Token-based daily cap check. The single user-facing limit (2026-05-02
+ * onward) — chat_messages, voice_minutes, and tool_calls caps were
+ * removed in favor of one unified token budget. When the user crosses
+ * DAILY_TOKEN_DISPLAY_LIMIT, every /chat call short-circuits with 429
+ * until UTC midnight.
+ *
+ * Why tokens instead of $: the same number presentable to the user
+ * ("you used 1.2M / 2M") works regardless of which model fired, and
+ * matches what the panel shows. The $ estimate still gets tracked
+ * server-side in total_usd_estimate for analytics — just not surfaced
+ * or enforced.
+ */
+export async function checkTokenLimit(
+  userId: string
+): Promise<
+  | { allowed: true }
+  | {
+      allowed: false;
+      reason: "token-cap";
+      kind: "tokens";
+      used: number;
+      limit: number;
+      resetAt: number;
+    }
+> {
+  if (!isQuotaSchemaReady()) return { allowed: true };
+  const sb = getSupabase();
+  if (!sb) return { allowed: true };
+  const day = utcDay();
+  const { data, error } = await sb
+    .from("user_quotas")
+    .select("total_tokens")
+    .eq("user_id", userId)
+    .eq("day", day)
+    .maybeSingle();
+  if (error || !data) return { allowed: true };
+  const used = Number((data as { total_tokens: number | null }).total_tokens) || 0;
+  if (used >= DAILY_TOKEN_DISPLAY_LIMIT) {
+    return {
+      allowed: false,
+      reason: "token-cap",
+      kind: "tokens",
+      used,
+      limit: DAILY_TOKEN_DISPLAY_LIMIT,
+      resetAt: nextResetMs(),
+    };
+  }
+  return { allowed: true };
+}
+
+/**
  * Add a $ delta to today's running estimate. Called from the route
  * handler AFTER it knows the actual token usage of the call.
  *
@@ -588,9 +639,14 @@ export function snapshotFromRow(
       },
       cost: { used: r.total_usd_estimate, limitUsd: DAILY_USD_HARD_CAP },
       tokens: {
-        used: r.total_tokens,
-        prompt: r.prompt_tokens,
-        completion: r.completion_tokens,
+        // `Number(... ) || 0` defends against pre-migration-005 rows
+        // where these columns don't exist yet — the DB returns
+        // undefined, raw arithmetic produces NaN, and the UI's
+        // formatTokens shows "NaNM". Coercing to 0 here renders
+        // "0 / 2M" cleanly until the migration runs.
+        used: Number(r.total_tokens) || 0,
+        prompt: Number(r.prompt_tokens) || 0,
+        completion: Number(r.completion_tokens) || 0,
         limit: DAILY_TOKEN_DISPLAY_LIMIT,
       },
     },
