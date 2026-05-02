@@ -202,8 +202,6 @@ export function ProfilePage({
 const DEFAULT_USAGE = {
   chatMessagesUsed: 0,
   chatMessagesLimit: 100,
-  toolCallsUsed: 0,
-  toolCallsLimit: 25,
   voiceMinutesUsed: 0,
   voiceMinutesLimit: 25,
 };
@@ -239,8 +237,6 @@ function PlanSection() {
     ? {
         chatMessagesUsed: quota.usage.chat_messages.used,
         chatMessagesLimit: quota.usage.chat_messages.limit,
-        toolCallsUsed: quota.usage.tool_calls.used,
-        toolCallsLimit: quota.usage.tool_calls.limit,
         voiceMinutesUsed: quota.usage.voice_minutes.used,
         voiceMinutesLimit: quota.usage.voice_minutes.limit,
         chatMinutesUsed: quota.usage.chat_minutes?.used ?? 0,

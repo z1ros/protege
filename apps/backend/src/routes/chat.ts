@@ -50,6 +50,15 @@ import {
 // reads, grep output, etc.) and are *untrusted*. We always wrap them in
 // the `<tool_result_content untrusted="true">` fence below, but the cap
 // limits both the cost and the room an attacker has to pack instructions.
+// Per-request cost ceiling. Caps how much a single /chat HTTP request
+// can spend across all internal callChat invocations (initial round +
+// server-tool recursion). The DAILY_USD_HARD_CAP enforces budget across
+// requests; this ceiling protects against a runaway tool-loop within a
+// single request when the model gets stuck (replaces the removed
+// per-day tool_calls cap from 2026-05-02). $0.50 covers any reasonable
+// single turn — gpt-5 input+output for ~50k tokens.
+const MAX_PER_REQUEST_COST_USD = 0.5;
+
 const TOOL_RESULT_MAX_CHARS = 8000;
 const TOOL_RESULT_TRUNCATED_NOTE =
   "\n…[truncated by server: tool result exceeded byte cap]";
@@ -1228,21 +1237,23 @@ chatRoute.post("/", async (c) => {
   const outTok = Number(
     usage?.completion_tokens ?? usage?.output_tokens ?? 0
   );
+  // Per-request cost accumulator. Sums the in-process cost of every
+  // callChat invocation in this handler so the per-request ceiling
+  // (MAX_PER_REQUEST_COST_USD) can short-circuit a runaway tool-loop
+  // before the second callChat fires.
+  let requestCostUsd = 0;
   if (inTok > 0 || outTok > 0) {
+    const round1Cost = estimateCallCostUsd(tier, inTok, outTok);
+    requestCostUsd += round1Cost;
     // Pass tokens alongside cost so they ride in the same UPSERT —
     // single DB write per turn, zero extra round-trip vs. cost-only.
     // Persists to prompt_tokens / completion_tokens / total_tokens
     // columns added by migration 005 for analytics + audits.
-    void addCostUsd(
-      userId,
-      estimateCallCostUsd(tier, inTok, outTok),
-      { prompt: inTok, completion: outTok }
-    );
+    void addCostUsd(userId, round1Cost, { prompt: inTok, completion: outTok });
   }
-  // Record tool-call usage. Fires whenever the model called any tools
-  // in this turn — counts against the daily 25-tool-call ceiling.
-  // Note: a single /chat turn can include multiple tool uses (e.g. the
-  // model reads two files). Each one counts.
+  // Record tool-call usage for analytics only — the per-day cap was
+  // removed 2026-05-02 (see the longer comment near enforceCostCapOnly
+  // above). The $ cap covers cost; this counter is now telemetry.
   if (result.toolUses && result.toolUses.length > 0) {
     void addToolCalls(userId, result.toolUses.length);
   }
@@ -1341,6 +1352,27 @@ chatRoute.post("/", async (c) => {
     // Pure server-tool round — synthesize a continuation by calling the LLM
     // again with the tool results appended. This keeps the UX instant
     // (no extra client roundtrip) when the model is just updating memory.
+    //
+    // Per-request cost-cap guard: if round 1 already spent MAX_PER_REQUEST_
+    // COST_USD, refuse to fire result2 — a runaway tool-loop or pathological
+    // long-context request can't be allowed to double-spend in one HTTP
+    // call. Caller sees the round-1 reply (often just memory-updated, no
+    // visible text) and the next user turn re-checks the daily $ cap.
+    if (requestCostUsd >= MAX_PER_REQUEST_COST_USD) {
+      console.warn(
+        `[protege] /chat aborting result2 — request already spent $${requestCostUsd.toFixed(3)} (cap $${MAX_PER_REQUEST_COST_USD})`
+      );
+      // Fall-through reply: prefer round-1 text; otherwise an empty
+      // string. Empty rather than a placeholder string so the webview's
+      // `replyHasText` gate skips TTS in voice mode (a TTS'd "continuing
+      // on next message" is bad UX). The chat panel still scrolls and
+      // the next user turn re-enters the route which re-checks the
+      // daily $ cap.
+      return c.json<ChatRunResponse>({
+        reply: assistantText || "",
+        messages,
+      });
+    }
     const { systemStable: ss2, systemDynamic: sd2Base, anthropicMessages: am2 } =
       toAnthropic(messages);
     // Carry the same summary note (when historyTrim produced one) into
@@ -1362,6 +1394,19 @@ chatRoute.post("/", async (c) => {
     });
     const text2 = result2.text;
     const toolUses2 = result2.toolUses;
+
+    // Bill round 2 against the same daily quota + per-request accumulator
+    // (was previously dropped — only round 1 hit addCostUsd). Same fire-
+    // and-forget pattern as round 1 so the response path doesn't block
+    // on the rollup write.
+    const usage2 = result2.usage as Record<string, unknown> | undefined;
+    const inTok2 = Number(usage2?.prompt_tokens ?? usage2?.input_tokens ?? 0);
+    const outTok2 = Number(usage2?.completion_tokens ?? usage2?.output_tokens ?? 0);
+    if (inTok2 > 0 || outTok2 > 0) {
+      const round2Cost = estimateCallCostUsd(tier, inTok2, outTok2);
+      requestCostUsd += round2Cost;
+      void addCostUsd(userId, round2Cost, { prompt: inTok2, completion: outTok2 });
+    }
 
     messages.push({
       role: "assistant",

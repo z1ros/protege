@@ -682,53 +682,89 @@ function computeWavRms(wav: Buffer): number {
   return Math.sqrt(sumSq / sampleCount);
 }
 
-/** Detect Whisper's "repeat-phrase" hallucination AND extract just the
- *  trailing real content if any. Real speech rarely has the exact same
- *  4+ word phrase twice; when Whisper is confused by noise it
- *  regurgitates something like "Can you hear me? Can you hear me?".
+/** Detect Whisper's "repeat-phrase" hallucination AND extract whichever
+ *  side of the repetition zone holds the real content.
  *
- *  But sometimes Whisper repeats AT THE START and then transcribes a
- *  REAL question after — e.g. "Can you hear me? Can you hear me? Like,
- *  explain the weather today." Dropping the whole transcript was too
- *  aggressive (real test case 2026-05-02 — user's first voice question
- *  after the new fetcher landed got eaten by this filter).
+ *  Real speech rarely has the exact same 4+ word phrase twice; when
+ *  Whisper is confused by noise it regurgitates something like "Can
+ *  you hear me? Can you hear me?". The hallucination can sit at the
+ *  START (real content trails after) or at the END (real content sits
+ *  before the loop). We pick whichever side has more tokens.
+ *
+ *  Examples:
+ *    A. "Can you hear me? Can you hear me? Like, explain the weather
+ *       today." → keep tail "Like, explain the weather today."
+ *    B. "Explain me the weather today. The weather today, the weather
+ *       today." → keep head "Explain me the weather today."
+ *    C. "What is what is what is what." → drop entirely
  *
  *  Returns:
  *    - { keep: text }       → no repetition detected, use as-is
- *    - { keep: trimmed }    → repetition was a prefix; trimmed content is real
- *    - { keep: "" }         → entire transcript was repetition junk; drop */
-function dedupRepetitiveTranscript(text: string): { keep: string } {
+ *    - { keep: head/tail }  → repetition at one end; non-repeated side returned
+ *    - { keep: "" }         → both sides too short, whole transcript was junk */
+export function dedupRepetitiveTranscript(text: string): { keep: string } {
   const tokens = text
     .toLowerCase()
     .replace(/[.!?,]/g, "")
     .split(/\s+/)
     .filter(Boolean);
-  if (tokens.length < 8) return { keep: text };
+  // Floor lowered 6 → catches short stutters like "yes please yes
+  // please yes please" (6 tokens, 4-gram repeat). The previous 8-floor
+  // let pure-repetition junk reach the chat route via the < 4 word
+  // filter at line ~906.
+  if (tokens.length < 6) return { keep: text };
 
   const phraseLen = 4;
   const seen = new Map<string, number>();
   for (let i = 0; i + phraseLen <= tokens.length; i++) {
     const phrase = tokens.slice(i, i + phraseLen).join(" ");
     if (seen.has(phrase)) {
-      // Found a repeat. Walk to the LAST occurrence of this phrase to
-      // find where the echo finishes. Real content (if any) starts at
-      // the word index immediately after that last occurrence.
-      let lastEnd = seen.get(phrase)! + phraseLen;
+      // Found a repeat. Walk to the LAST occurrence of this phrase so
+      // we know the full extent of the repetition zone.
+      const firstStart = seen.get(phrase)!;
+      let lastEnd = firstStart + phraseLen;
       for (let j = i; j + phraseLen <= tokens.length; j++) {
         const p2 = tokens.slice(j, j + phraseLen).join(" ");
         if (p2 === phrase) lastEnd = j + phraseLen;
       }
-      const tailWords = tokens.length - lastEnd;
-      if (tailWords < 3) return { keep: "" }; // entirely junk
-
-      // Reconstruct the trailing real content from the ORIGINAL text
-      // (preserving capitalization + punctuation). We re-tokenize the
-      // original by whitespace and slice to match the post-repetition
-      // tail. Best-effort: punctuation might align imperfectly across
-      // the boundary, but the real sentence comes through readable.
+      // Two candidate slices:
+      //   - HEAD = [0, firstStart + phraseLen): everything up to + including
+      //     the first instance of the phrase. Captures the legit prose
+      //     before a suffix-repetition (case B).
+      //   - TAIL = [lastEnd, end): everything after the final repetition.
+      //     Captures the legit prose after a prefix-repetition (case A).
+      const headEnd = firstStart + phraseLen;
+      const tailStart = lastEnd;
+      const headWords = headEnd;
+      const tailWords = tokens.length - tailStart;
       const origTokens = text.split(/\s+/).filter(Boolean);
-      const trimmed = origTokens.slice(lastEnd).join(" ").trim();
-      return { keep: trimmed };
+
+      // Each candidate side is "legit" only if it contains at least one
+      // token NOT in the repeated phrase. Without this guard, fully-
+      // repetitive transcripts like "yes yes yes yes yes yes yes yes"
+      // (firstStart=0, headWords=4) leak the first phrase as if it were
+      // real content. The min-words filter downstream is `< 4`, so a
+      // 4-token phrase passes through and reaches /chat as junk.
+      const phraseTokenSet = new Set(tokens.slice(firstStart, headEnd));
+      const headHasNonPhraseToken = tokens
+        .slice(0, firstStart)
+        .some((t) => !phraseTokenSet.has(t));
+      const tailHasNonPhraseToken = tokens
+        .slice(tailStart)
+        .some((t) => !phraseTokenSet.has(t));
+
+      // Pick whichever side has (a) more tokens, (b) at least 3 words,
+      // (c) at least one non-repetition token. If neither side qualifies,
+      // the whole transcript was repetition junk → drop.
+      const tailQualifies = tailWords >= 3 && tailHasNonPhraseToken;
+      const headQualifies = headWords >= 3 && headHasNonPhraseToken;
+      if (tailQualifies && (!headQualifies || tailWords >= headWords)) {
+        return { keep: origTokens.slice(tailStart).join(" ").trim() };
+      }
+      if (headQualifies) {
+        return { keep: origTokens.slice(0, headEnd).join(" ").trim() };
+      }
+      return { keep: "" };
     }
     seen.set(phrase, i);
   }

@@ -138,8 +138,10 @@ export interface QuotaSnapshot {
     /** /chat premium-tier turns. Default beta limit: 100/day. */
     chat_messages: { used: number; limit: number };
     /** Tool invocations the model made inside chat (read_file, edit,
-     *  grep, etc.). Default beta limit: 25/day. */
-    tool_calls: { used: number; limit: number };
+     *  grep, etc.). Tracked for analytics; no per-day cap is enforced
+     *  (the daily $ cap covers cost). Optional so future backends can
+     *  drop the field without breaking older clients. */
+    tool_calls?: { used: number; limit: number };
     /** Combined TTS + STT minutes today. Default beta limit: 20/day. */
     voice_minutes: { used: number; limit: number };
     /** Cumulative chat engagement in minutes today — sum of capped
