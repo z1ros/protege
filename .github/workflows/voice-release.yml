@@ -130,9 +130,14 @@ jobs:
 
       - name: Package tarball
         shell: bash
-        run: bash apps/extension/scripts/package-voice-assets.sh \
-                  --platform ${{ matrix.platform }} \
-                  --arch ${{ matrix.arch }}
+        # Literal block scalar (`run: |`) preserves newlines; the prior
+        # plain-scalar form folded `\<newline>` into literal escape-space,
+        # so bash saw a leading space on `--platform` and rejected it as
+        # an unknown flag.
+        run: |
+          bash apps/extension/scripts/package-voice-assets.sh \
+            --platform ${{ matrix.platform }} \
+            --arch ${{ matrix.arch }}
 
       - name: Upload tarball as workflow artifact
         uses: actions/upload-artifact@v4
