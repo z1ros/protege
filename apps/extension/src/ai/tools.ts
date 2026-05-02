@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { spawn } from "node:child_process";
 import type { ToolCall, ToolResult, WorkspaceContext } from "@protege/types";
 import { getActiveFileEditor } from "../workspace/activeFile.js";
+import { resolveWorkspaceUri } from "./workspacePath.js";
 
 /**
  * Tool executors run inside the extension host — only it has workspace FS access.
@@ -380,15 +381,11 @@ async function dispatch(call: ToolCall): Promise<string> {
   }
 }
 
-function resolveUri(pathLike: string): vscode.Uri {
-  if (!pathLike) throw new Error("path is required");
-  if (pathLike.startsWith("/") || /^[A-Za-z]:[\\/]/.test(pathLike)) {
-    return vscode.Uri.file(pathLike);
-  }
-  const root = vscode.workspace.workspaceFolders?.[0];
-  if (!root) throw new Error("no workspace open");
-  return vscode.Uri.joinPath(root.uri, pathLike);
-}
+// Thin alias kept so the existing call sites don't all need touching.
+// All workspace-bounded path resolution flows through `resolveWorkspaceUri`,
+// which throws if the resolved Uri lands outside every open workspace
+// folder — see ai/workspacePath.ts.
+const resolveUri = resolveWorkspaceUri;
 
 /* ========== read / list / grep ========== */
 

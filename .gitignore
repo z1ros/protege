@@ -10,10 +10,18 @@ out
 .turbo
 coverage
 
-# Voice / wake-word native binaries (compiled per-host; rebuilt on demand)
+# Voice / wake-word ONNX models — pulled at runtime by fetchAssets.ts.
 apps/extension/models/
-apps/extension/native/
+# Compiled wake binaries — built per-platform in CI, fetched at runtime.
 apps/extension/bin/
+# Tarballs produced by scripts/package-voice-assets.sh, ready for GitHub Releases.
+apps/extension/release-artifacts/
+# Native source IS tracked (Rust crate at apps/extension/native/mic/).
+# Ignore its build artifacts only.
+apps/extension/native/**/target/
+apps/extension/native/**/*.rs.bk
+# Tmp dir fetchAssets.ts uses during install.
+apps/extension/.voice-tmp/
 
 # Wake-word training artifacts (23 GB: generated clips, features, checkpoints, ACAV100M)
 voice/training/output/

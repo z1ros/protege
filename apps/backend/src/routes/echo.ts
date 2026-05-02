@@ -646,7 +646,21 @@ echoRoute.get("/sync/stats", (c) => {
   return c.json(getShadowSyncStats());
 });
 
+// Diagnostic endpoint — dumps raw rows changed since `since=<ms>` across
+// 7+ user-scoped tables. Useful for local debugging of the Echo pipeline,
+// but it leaks more raw data than any production endpoint should expose.
+// Locked behind a non-production gate: only enabled when NODE_ENV !==
+// "production" OR when PROTEGE_DEBUG_ENDPOINTS=1 is explicitly set in the
+// Railway dashboard. Keep both legs — the env override is for short-lived
+// production debugging windows where you flip the flag, fetch, flip it
+// back, without redeploying.
 echoRoute.get("/debug/recent", async (c) => {
+  const debugAllowed =
+    process.env.NODE_ENV !== "production" ||
+    process.env.PROTEGE_DEBUG_ENDPOINTS === "1";
+  if (!debugAllowed) {
+    return c.json({ error: "not_found" }, 404);
+  }
   const userId = resolveUserId(c, undefined);
   await ensureUser(userId);
   const rawSince = c.req.query("since");

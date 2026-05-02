@@ -630,6 +630,24 @@ export type WebviewToHost =
   | { type: "voice/stop" }
   | { type: "voice/speaking"; active: boolean }
   | {
+      /** Webview → host: synthesise speech for `text`. Host runs the
+       *  authenticated POST to /tts on the user's behalf and replies via
+       *  `voice/ttsResponse` with base64 WAV bytes (or an error). The
+       *  webview never has the GitHub token, so it cannot call /tts
+       *  directly once the route is auth-gated. */
+      type: "voice/ttsRequest";
+      requestId: string;
+      text: string;
+      voice?: "female" | "male";
+    }
+  | {
+      /** Webview → host: ask for the current Kokoro warmup status. Host
+       *  forwards (authenticated) to /tts/status and replies via
+       *  `voice/ttsStatusResponse`. */
+      type: "voice/ttsStatusRequest";
+      requestId: string;
+    }
+  | {
       /**
        * Webview → host: the TTS clip started via `voice/playExplain` has
        * finished playing (or errored). Host uses this to swap the
@@ -814,6 +832,29 @@ export type HostToWebview =
   | { type: "watcher/dismiss"; id: string }
   | { type: "voice/recording"; active: boolean }
   | { type: "voice/transcript"; text: string }
+  | {
+      /** Host → webview: response to `voice/ttsRequest`. Either
+       *  `audioBase64` is set (success) or `error` is set (failure).
+       *  `requestId` mirrors the request so the webview can pair up
+       *  concurrent calls (cached filler + main reply, etc.). */
+      type: "voice/ttsResponse";
+      requestId: string;
+      audioBase64?: string;
+      error?: string;
+    }
+  | {
+      /** Host → webview: response to `voice/ttsStatusRequest`. Same
+       *  fields as the /tts/status JSON, plus `requestId` for pairing. */
+      type: "voice/ttsStatusResponse";
+      requestId: string;
+      ready: boolean;
+      warmupError: string | null;
+      stage?: "idle" | "downloading" | "loading" | "ready" | "error";
+      progress?: number;
+      loadedBytes?: number;
+      totalBytes?: number;
+      networkError?: string;
+    }
   | {
       /** Host → webview: play a short pre-cached filler clip ("Mm-hmm.",
        *  etc.) right after the user stops speaking so they hear an instant

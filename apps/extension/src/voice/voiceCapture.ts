@@ -1,8 +1,13 @@
 import { spawn, ChildProcess } from "node:child_process";
 import * as path from "node:path";
-import * as fs from "node:fs";
-
-const BACKEND_URL = "http://localhost:8787";
+import * as vscode from "vscode";
+import { BACKEND_URL } from "../user/protegeClient.js";
+import { authHeaders, isSignedIn } from "../user/auth.js";
+import {
+  checkAssets,
+  fetchVoiceAssets,
+  type DownloadProgress,
+} from "./fetchAssets.js";
 
 let micProcess: ChildProcess | null = null;
 let audioChunks: Buffer[] = [];
@@ -103,9 +108,13 @@ export function isWakeSuspended(): boolean {
 
 function pipeLog(tag: string, msg: string): void {
   console.log(`[${tag}]`, msg);
+  // Fire-and-forget. Skip the network leg pre-auth — `/log` is gated
+  // server-side, and we don't want to spam 401s on every wake/STT log
+  // line for a signed-out user. Console line above still lands.
+  if (!isSignedIn()) return;
   fetch(`${BACKEND_URL}/log`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: authHeaders(),
     body: JSON.stringify({ tag, msg }),
   }).catch(() => {});
 }
@@ -120,6 +129,80 @@ function getBinaryPath(extensionPath: string): string {
 
 function getModelPath(extensionPath: string): string {
   return path.join(extensionPath, "models", "protege-oww.onnx");
+}
+
+/**
+ * Guard for every entry point that spawns the binary. Fetches the
+ * platform-specific voice-engine tarball from GitHub Releases when
+ * the binary or models are missing on disk, surfacing progress via a
+ * native VS Code notification.
+ *
+ * Returns when assets are confirmed in place. Throws when:
+ *   - download fails (no network, release not uploaded yet, 404 for
+ *     this platform/arch — the user's platform isn't supported)
+ *   - extraction fails (no `tar` in PATH)
+ *
+ * Idempotent — when the assets are already present and the version
+ * stamp matches, returns immediately without showing UI.
+ */
+let inflightInstall: Promise<void> | null = null;
+async function ensureVoiceEngine(extensionPath: string): Promise<void> {
+  const check = checkAssets(extensionPath);
+  if (check.missing.length === 0 && check.versionMatch) return;
+
+  // Coalesce concurrent calls so two voice-mode entry points don't both
+  // kick off downloads racing into the same files.
+  if (inflightInstall) return inflightInstall;
+
+  inflightInstall = Promise.resolve(
+    vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: "Installing Protege voice engine",
+        cancellable: false,
+      },
+      async (report) => {
+        let lastPct = 0;
+        const onProgress = (p: DownloadProgress) => {
+          if (p.phase === "fetching" && p.total > 0) {
+            const pct = Math.round((p.loaded / p.total) * 100);
+            const mb = (p.loaded / 1_048_576).toFixed(1);
+            const mbTotal = (p.total / 1_048_576).toFixed(1);
+            report.report({
+              message: `Downloading ${mb} / ${mbTotal} MB`,
+              increment: pct - lastPct,
+            });
+            lastPct = pct;
+          } else if (p.phase === "extracting") {
+            report.report({ message: "Extracting…" });
+          } else if (p.phase === "installing") {
+            report.report({ message: "Installing files…" });
+          } else if (p.phase === "done") {
+            report.report({ message: "Done", increment: 100 - lastPct });
+          }
+        };
+        await fetchVoiceAssets(extensionPath, onProgress);
+      }
+    )
+  ).then(() => undefined);
+
+  try {
+    await inflightInstall;
+  } finally {
+    inflightInstall = null;
+  }
+
+  // Final sanity check — if the fetcher claimed success but files still
+  // aren't where they should be, surface a clear error rather than
+  // letting a downstream spawn fail with a confusing message.
+  const final = checkAssets(extensionPath);
+  if (final.missing.length > 0) {
+    throw new Error(
+      `Voice engine install incomplete — still missing: ${final.missing.join(
+        ", "
+      )}`
+    );
+  }
 }
 
 export function isRecording(): boolean {
@@ -137,13 +220,8 @@ export function isWakeWordListening(): boolean {
 export async function startRecording(extensionPath: string, autoStopCallback?: () => void): Promise<void> {
   if (micProcess) return;
 
+  await ensureVoiceEngine(extensionPath);
   const binPath = getBinaryPath(extensionPath);
-  if (!fs.existsSync(binPath)) {
-    throw new Error(
-      `Voice binary not found: ${binPath}. ` +
-        `Your platform (${process.platform}-${process.arch}) may not be supported yet.`
-    );
-  }
 
   audioChunks = [];
   stderrLog = "";
@@ -229,15 +307,9 @@ export async function startWakeWordListener(
 ): Promise<void> {
   if (wakeProcess) return;
 
+  await ensureVoiceEngine(extensionPath);
   const binPath = getBinaryPath(extensionPath);
   const modelPath = getModelPath(extensionPath);
-
-  if (!fs.existsSync(binPath)) {
-    throw new Error(`Voice binary not found: ${binPath}`);
-  }
-  if (!fs.existsSync(modelPath)) {
-    throw new Error(`Wake word model not found: ${modelPath}`);
-  }
 
   wakeAudioChunks = [];
   onWakeDetected = callbacks.onWake;
@@ -435,8 +507,8 @@ export function collectWakeAudio(): Buffer {
 /** Record one utterance using the binary's built-in VAD auto-stop. Returns a
  *  WAV buffer (16kHz mono 16-bit PCM). Throws if no speech is detected. */
 export async function recordSingleUtterance(extensionPath: string, timeoutMs = 8000): Promise<Buffer> {
+  await ensureVoiceEngine(extensionPath);
   const binPath = getBinaryPath(extensionPath);
-  if (!fs.existsSync(binPath)) throw new Error(`Voice binary not found: ${binPath}`);
 
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -468,10 +540,9 @@ export async function recordSingleUtterance(extensionPath: string, timeoutMs = 8
 /** Run the wake-word pipeline on a WAV file. Returns the peak probability
  *  (0–1) reported by the binary via `CALIBRATE_PEAK=<f32>` on stdout. */
 export async function scoreWavAgainstWakeModel(extensionPath: string, wavPath: string): Promise<number> {
+  await ensureVoiceEngine(extensionPath);
   const binPath = getBinaryPath(extensionPath);
   const modelPath = getModelPath(extensionPath);
-  if (!fs.existsSync(binPath)) throw new Error(`Voice binary not found: ${binPath}`);
-  if (!fs.existsSync(modelPath)) throw new Error(`Model not found: ${modelPath}`);
 
   return new Promise((resolve, reject) => {
     let stdout = "";
@@ -564,6 +635,9 @@ export async function transcribe(wavBuffer: Buffer): Promise<string> {
     return "";
   }
 
+  if (!isSignedIn()) {
+    throw new Error("STT requires sign-in");
+  }
   const arrayBuf = wavBuffer.buffer.slice(
     wavBuffer.byteOffset,
     wavBuffer.byteOffset + wavBuffer.byteLength
@@ -572,8 +646,15 @@ export async function transcribe(wavBuffer: Buffer): Promise<string> {
   const form = new FormData();
   form.append("file", blob, "recording.wav");
 
+  // FormData sets its own multipart Content-Type with boundary, so we
+  // strip the JSON default that authHeaders bakes in. Authorization +
+  // x-github-login still ride through.
+  const headers = authHeaders();
+  delete headers["content-type"];
+
   const res = await fetch(`${BACKEND_URL}/stt`, {
     method: "POST",
+    headers,
     body: form,
   });
 

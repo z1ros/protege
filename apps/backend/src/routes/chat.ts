@@ -1,13 +1,16 @@
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import Anthropic from "@anthropic-ai/sdk";
 import type {
   ChatRunRequest,
   ChatRunResponse,
   ChatTier,
+  LessonStateSnapshot,
   OAITurn,
   ToolCall,
 } from "@protege/types";
 import { MENTOR_SYSTEM_PROMPT } from "../aiTools.js";
+import { sanitizeLanguage } from "./echo.js";
 import { callChat, getProvider } from "../llm.js";
 import { githubAuth, resolveUserId } from "../middleware/auth.js";
 import { enforceQuotaInline, enforceCostCapOnly } from "../middleware/quota.js";
@@ -43,6 +46,55 @@ import {
   type LessonSession,
 } from "../lessons.js";
 
+// Hard cap on each tool-result body before it's stitched back into the
+// model conversation. Tool results come from the user's machine (file
+// reads, grep output, etc.) and are *untrusted*. We always wrap them in
+// the `<tool_result_content untrusted="true">` fence below, but the cap
+// limits both the cost and the room an attacker has to pack instructions.
+const TOOL_RESULT_MAX_CHARS = 8000;
+const TOOL_RESULT_TRUNCATED_NOTE =
+  "\n…[truncated by server: tool result exceeded byte cap]";
+
+/**
+ * Neutralise any occurrence of an XML closing tag that would let
+ * adversarial content escape its fence. The replacement isn't reversible
+ * — the goal is to keep the content visually similar to the user's file
+ * while making the literal `</foo>` sequence impossible to reproduce.
+ * Used by every fence helper below; centralising it keeps the fence-name
+ * list and the escape rule in one place.
+ */
+const FENCED_TAGS = [
+  "tool_result_content",
+  "file_content",
+  "user_selection",
+  "file_tree",
+] as const;
+
+function escapeForFence(raw: string): string {
+  let out = raw;
+  for (const tag of FENCED_TAGS) {
+    // Match `</tag>` and `</tag …>` (whitespace, attrs) to be safe.
+    out = out.replace(
+      new RegExp(`</${tag}(\\s[^>]*)?>`, "gi"),
+      `</${tag}_REDACTED$1>`
+    );
+  }
+  return out;
+}
+
+/**
+ * Wrap untrusted tool-result content so the model treats it as data, not
+ * instructions. The fence + the system-prompt note in MENTOR_SYSTEM_PROMPT
+ * block prompt-injection from a hostile file or grep hit.
+ */
+function fenceToolResult(raw: string): string {
+  const truncated =
+    raw.length > TOOL_RESULT_MAX_CHARS
+      ? raw.slice(0, TOOL_RESULT_MAX_CHARS) + TOOL_RESULT_TRUNCATED_NOTE
+      : raw;
+  return `<tool_result_content untrusted="true">\n${escapeForFence(truncated)}\n</tool_result_content>`;
+}
+
 /**
  * Loose concept-equality check. Lesson concepts are user-typed strings
  * ("useEffect" vs "use effect" vs "useEffect cleanup"), so we normalize
@@ -57,11 +109,17 @@ function sameConcept(a: string, b: string): boolean {
   if (!na || !nb) return false;
   return na === nb || na.includes(nb) || nb.includes(na);
 }
-import type { LessonStateSnapshot } from "@protege/types";
 
 export const chatRoute = new Hono();
 
 chatRoute.use("*", githubAuth());
+// /chat carries workspace context (file content + file tree + selection),
+// chat history, and per-round tool_results. Each tool_result is capped at
+// TOOL_RESULT_MAX_CHARS (~8 KB) AFTER parsing, but the body must be parsed
+// first — so we cap the inbound body separately. 8 MB covers a long teach
+// session with ~50 tool rounds plus a 200-path workspace tree without
+// rejecting legitimate traffic, while still bounding worst-case memory.
+chatRoute.use("*", bodyLimit({ maxSize: 8 * 1024 * 1024 }));
 
 /**
  * Tool-enabled chat. Production provider is OpenAI (GPT-5 / GPT-5-nano);
@@ -952,19 +1010,61 @@ chatRoute.post("/", async (c) => {
     // cursor constantly, so keeping selection in the cached prefix
     // would invalidate the cache on every click. Split it into the
     // dynamic tail instead.
+    // Sanitize any value the client controls before it lands in the cached
+    // system prompt. Untrusted strings here can break out of the markdown
+    // code-fence context and inject new instructions into a block that
+    // every subsequent turn re-uses (and that Anthropic prompt-caches),
+    // so the poisoning would persist across the whole session.
+    const safePath = body.workspace?.activeFile?.path
+      ? String(body.workspace.activeFile.path)
+          .replace(/[\r\n`]/g, " ")
+          .slice(0, 500)
+      : "";
+    const safeLang =
+      sanitizeLanguage(body.workspace?.activeFile?.language) ?? "";
+    const safeRoot = body.workspace?.root
+      ? String(body.workspace.root).replace(/[\r\n`]/g, " ").slice(0, 500)
+      : "(unknown)";
+    const safeFileTree =
+      body.workspace?.fileTree
+        ?.slice(0, 200)
+        .map((p) => String(p).replace(/[\r\n`]/g, " ").slice(0, 500))
+        .join("\n") ?? "";
+    const safeSelection = body.workspace?.activeFile?.selection
+      ? String(body.workspace.activeFile.selection).slice(0, 2000)
+      : "";
+
+    // File content + selection wrap in XML fences (not triple-backtick)
+    // so a code file containing literal ` ``` ` can't break out of the
+    // markdown fence and inject instructions into the cached system
+    // prompt. Each fenced body runs through `escapeForFence` to defang
+    // the closing-tag sequence too. Pair this with the
+    // UNTRUSTED_INPUT_GUARD block in persona.ts.
+    const safeContent = body.workspace?.activeFile?.content
+      ? escapeForFence(body.workspace.activeFile.content.slice(0, 4000))
+      : "";
+    const safeSelectionFenced = safeSelection
+      ? escapeForFence(safeSelection)
+      : "";
+    const safeFileTreeFenced = safeFileTree
+      ? escapeForFence(safeFileTree)
+      : "";
+
     const wsBlock = body.workspace
-      ? `\n\n## Current workspace\nRoot: ${body.workspace.root ?? "(unknown)"}\n${
+      ? `\n\n## Current workspace\nRoot: ${safeRoot}\n${
           body.workspace.activeFile
-            ? `Active file: ${body.workspace.activeFile.path} (${body.workspace.activeFile.language})\n\`\`\`${body.workspace.activeFile.language}\n${body.workspace.activeFile.content.slice(0, 4000)}\n\`\`\``
+            ? `Active file: ${safePath} (${safeLang})\n<file_content language="${safeLang}" untrusted="true">\n${safeContent}\n</file_content>`
             : "No active file."
-        }\n${
-          body.workspace.fileTree && body.workspace.fileTree.length > 0
-            ? `\nFile tree (first ${body.workspace.fileTree.length} files):\n${body.workspace.fileTree.join("\n")}`
+        }${
+          safeFileTreeFenced
+            ? `\nFile tree (first ${
+                body.workspace.fileTree?.length ?? 0
+              } files):\n<file_tree untrusted="true">\n${safeFileTreeFenced}\n</file_tree>`
             : ""
         }`
       : "";
-    const wsSelectionBlock = body.workspace?.activeFile?.selection
-      ? `\n\n## User selection (current cursor highlight)\n\`\`\`\n${body.workspace.activeFile.selection}\n\`\`\``
+    const wsSelectionBlock = safeSelectionFenced
+      ? `\n\n## User selection (current cursor highlight)\n<user_selection untrusted="true">\n${safeSelectionFenced}\n</user_selection>`
       : "";
 
     // Track the active file in the session (for next-day continuity)
@@ -1013,7 +1113,9 @@ chatRoute.post("/", async (c) => {
         role: "tool",
         tool_call_id: tr.id,
         name: tr.name,
-        content: tr.error ? `ERROR: ${tr.error}` : tr.content,
+        content: tr.error
+          ? `ERROR: ${String(tr.error).slice(0, 1000)}`
+          : fenceToolResult(String(tr.content ?? "")),
       });
     }
   } else if (body.newUserMessage) {

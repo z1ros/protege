@@ -1,0 +1,19 @@
+[package]
+name = "protege-mic"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cpal = "0.15"
+tract-onnx = "0.22"
+tract-core = "0.22"
+
+[[bin]]
+name = "protege-mic"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+codegen-units = 1

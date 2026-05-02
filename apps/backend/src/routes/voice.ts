@@ -13,8 +13,21 @@ export const voiceRoute = new Hono();
  *
  * This first version is an echo test: mic → /stt → show transcript → /tts
  * → play audio back. Proves the full roundtrip works outside the webview.
+ *
+ * Security: gated to non-production. The page calls /stt and /tts from a
+ * plain browser context, which can't attach the GitHub Bearer token —
+ * those endpoints are auth-gated, so the page would 401 in prod anyway.
+ * Returning 404 in production also keeps the userId from being reflected
+ * into rendered HTML for any anonymous caller. Set
+ * PROTEGE_DEBUG_ENDPOINTS=1 to temporarily enable in production.
  */
 voiceRoute.get("/", (c) => {
+  const debugAllowed =
+    process.env.NODE_ENV !== "production" ||
+    process.env.PROTEGE_DEBUG_ENDPOINTS === "1";
+  if (!debugAllowed) {
+    return c.json({ error: "not_found" }, 404);
+  }
   const userId = c.req.query("userId") ?? "local-dev";
   const html = renderVoicePage(userId);
   return c.html(html);

@@ -855,9 +855,12 @@ export async function activate(context: vscode.ExtensionContext) {
       async (args: { path: string; startLine: number; endLine: number; fix: string }) => {
         try {
           const { clearAllHighlights } = await import("./ai/tools.js");
-          const uri = args.path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(args.path)
-            ? vscode.Uri.file(args.path)
-            : vscode.Uri.joinPath(vscode.workspace.workspaceFolders![0].uri, args.path);
+          const { resolveWorkspaceUri } = await import("./ai/workspacePath.js");
+          // resolveWorkspaceUri throws if `args.path` lands outside every
+          // open workspace folder. Stops a markdown link rendered from a
+          // poisoned tool result (or a chat reply that breaks past the
+          // C2 fence) from coercing the editor into writing /etc/anything.
+          const uri = resolveWorkspaceUri(args.path);
           const doc = await vscode.workspace.openTextDocument(uri);
           const editor = await vscode.window.showTextDocument(doc);
           const startIdx = Math.max(0, args.startLine - 1);
@@ -990,6 +993,27 @@ export async function activate(context: vscode.ExtensionContext) {
       if (process.platform !== "darwin") {
         vscode.window.showInformationMessage(
           "Mic permission reset is macOS-only. On other platforms, revoke + re-grant mic access to Cursor in your system privacy settings."
+        );
+        return;
+      }
+      // Developer-mode gate. `tccutil reset Microphone` wipes mic access
+      // for EVERY app on the Mac, not just this one. End users who think
+      // "reset Protege's mic permission" should never trigger it. Funnel
+      // them to the safe per-app Settings deeplink instead. Internal
+      // testers who genuinely need the nuclear option flip
+      // `protege.developerMode: true` in user settings (or set
+      // PROTEGE_DEV=1 in the environment) — same pattern as the backend
+      // switcher.
+      const isDev =
+        process.env.PROTEGE_DEV === "1" ||
+        process.env.PROTEGE_DEV === "true" ||
+        vscode.workspace
+          .getConfiguration("protege")
+          .get<boolean>("developerMode") === true;
+      if (!isDev) {
+        await vscode.commands.executeCommand("protege.openMicSettings");
+        vscode.window.showInformationMessage(
+          "Toggle Cursor's mic access off then on in System Settings → Privacy → Microphone. (System-wide reset is restricted to developer mode.)"
         );
         return;
       }

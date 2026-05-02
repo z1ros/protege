@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import {
   kokoroTts,
   isKokoroReady,
@@ -9,17 +10,15 @@ import {
 import { sanitizeForVoice } from "../voicePostProcess.js";
 import { quotaMiddleware } from "../middleware/quota.js";
 import { addVoiceMinutes } from "../quotas.js";
-import { getAuthenticatedUserId } from "../middleware/auth.js";
+import { getAuthenticatedUserId, githubAuth } from "../middleware/auth.js";
 
 export const ttsRoute = new Hono();
-// Quota gate. KNOWN LIMITATION (2026-04-29): /tts is currently called
-// from the webview via plain `fetch()` without GitHub auth headers,
-// because the webview can't reach the host's authState directly. With
-// no `authenticatedUserId` on the context, this middleware no-ops via
-// the `if (!userId) return next()` branch — so the tts quota panel
-// stays at 0/limit even with PROTEGE_QUOTAS=on. The cap doesn't yet
-// enforce. Wiring the webview through the host (so /tts goes via
-// `authedFetch`) is the next step; tracked in the beta-quotas plan.
+// Auth gate FIRST so quota middleware sees `authenticatedUserId` and
+// stops short-circuiting on the no-userId branch. Voice mode now goes
+// through the webview→host bridge (host runs `authedFetch`), so the
+// Bearer token rides along on every TTS call.
+ttsRoute.use("*", githubAuth());
+ttsRoute.post("*", bodyLimit({ maxSize: 64 * 1024 }));
 ttsRoute.post("*", quotaMiddleware("tts"));
 
 // Minimal valid WAV (44-byte RIFF header + 0 samples). Returned when the
@@ -152,9 +151,12 @@ ttsRoute.post("/", async (c) => {
    ========================================================== */
 
 export const sttRoute = new Hono();
-// Same KNOWN LIMITATION as /tts — voiceCapture posts to /stt without
-// auth headers, so the middleware no-ops until /stt is moved through
-// the authed host proxy. See ttsRoute comment above + beta-quotas plan.
+// Auth gate matches /tts. STT cap is generous (10 MB) — Whisper accepts
+// up to 25 MB, but typical voice-mode utterances are under a megabyte;
+// 10 MB stops a multi-gigabyte upload from buffering before we even
+// see it.
+sttRoute.use("*", githubAuth());
+sttRoute.post("*", bodyLimit({ maxSize: 10 * 1024 * 1024 }));
 sttRoute.post("*", quotaMiddleware("stt"));
 
 sttRoute.post("/", async (c) => {

@@ -1,6 +1,8 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { bodyLimit } from "hono/body-limit";
+import { githubAuth } from "./middleware/auth.js";
 import { chatRoute } from "./routes/chat.js";
 import { analyzeRoute } from "./routes/analyze.js";
 import { conceptRoute } from "./routes/concept.js";
@@ -21,10 +23,20 @@ import { chatHistoryRoute } from "./routes/chatHistory.js";
 
 const app = new Hono();
 
-// CORS allowlist via env (comma-separated). Empty/unset = allow all
-// origins, which is fine because every protected route is gated by the
-// GitHub Bearer auth middleware. Set PROTEGE_CORS_ORIGINS in production
-// to lock the browser-callable surface to known origins.
+// CORS allowlist via env (comma-separated). Optional.
+//
+// Why optional: every authenticated route requires a valid GitHub Bearer
+// token. The VS Code extension is a Node process and ignores CORS
+// entirely, so its own calls work either way. The only unauthenticated
+// routes are `GET /` (banner JSON) and `GET /healthz` (Railway probe) —
+// neither leaks anything. So a wildcard `Access-Control-Allow-Origin`
+// here doesn't grant a malicious page meaningful access; the auth gate
+// is the real boundary.
+//
+// If a browser-side caller is ever added (marketing site, dashboard,
+// etc.), set `PROTEGE_CORS_ORIGINS=https://foo.com,https://bar.com` in
+// the Railway dashboard to lock the wildcard down to those origins. Add
+// new unauthenticated routes only after thinking through this stance.
 const corsOrigins = process.env.PROTEGE_CORS_ORIGINS
   ?.split(",")
   .map((s) => s.trim())
@@ -40,6 +52,17 @@ app.use(
   })
 );
 
+// Defensive backstop body cap. Per-route caps tighten this down where the
+// real ceiling is smaller (e.g. /log at 32 KB, /tts at 64 KB). Sized to
+// match Whisper's 25 MB upload ceiling so /stt audio uploads pass
+// through; smaller caps on /stt + /chat enforce the actual limits.
+//
+// Hono runs app-level middleware before route-level, so this MUST stay
+// >= the largest legitimate per-route cap (currently /stt at 10 MB).
+// Setting it lower than a per-route cap silently shadows the route's
+// override and 413s legitimate traffic.
+app.use("*", bodyLimit({ maxSize: 25 * 1024 * 1024 }));
+
 app.onError((err, c) => {
   console.error("[protege] error:", err);
   const message =
@@ -50,11 +73,23 @@ app.onError((err, c) => {
 app.get("/", (c) => c.json({ name: "protege-backend", status: "ok" }));
 app.get("/healthz", (c) => c.json({ status: "ok" }));
 
-app.post("/log", async (c) => {
-  const { tag, msg } = (await c.req.json()) as { tag?: string; msg?: string };
-  console.log(`[${tag ?? "ext"}] ${msg ?? ""}`);
-  return c.json({ ok: true });
-});
+// Client log shipping — gated behind auth so anonymous callers can't
+// flood our log stream or forge entries that look like real user
+// activity. The handler stays small on purpose; everything else lives
+// in the route-specific files.
+app.post(
+  "/log",
+  bodyLimit({ maxSize: 32 * 1024 }),
+  githubAuth(),
+  async (c) => {
+    const { tag, msg } = (await c.req.json()) as {
+      tag?: string;
+      msg?: string;
+    };
+    console.log(`[${tag ?? "ext"}] ${msg ?? ""}`);
+    return c.json({ ok: true });
+  }
+);
 
 app.route("/test", testRoute);
 app.route("/chat", chatRoute);

@@ -197,6 +197,17 @@ export function installChangeOriginDetector(): vscode.Disposable {
   const openSub = vscode.workspace.onDidOpenTextDocument((doc) => {
     if (doc.uri.scheme === "file") refreshSnapshot(doc);
   });
+  // Tab-switch self-heal: when an editor becomes active, ensure its
+  // document has a snapshot. Covers the case where SNAPSHOT_CAP=100 LRU
+  // evicted the snapshot for a long-untouched file, and the user
+  // returns to it (tab-switches don't fire onDidOpenTextDocument).
+  // refreshSnapshot is idempotent and cheap (one getText + Map.set), so
+  // re-seeding on every tab switch is a no-op when the snapshot exists
+  // and a corrective action when it doesn't.
+  const editorSub = vscode.window.onDidChangeActiveTextEditor((editor) => {
+    if (!editor) return;
+    if (editor.document.uri.scheme === "file") refreshSnapshot(editor.document);
+  });
   // Closed files can drop their snapshots to save memory.
   const closeSub = vscode.workspace.onDidCloseTextDocument((doc) => {
     const key = doc.uri.toString();
@@ -235,6 +246,7 @@ export function installChangeOriginDetector(): vscode.Disposable {
     dispose() {
       sub.dispose();
       openSub.dispose();
+      editorSub.dispose();
       closeSub.dispose();
       willSaveSub.dispose();
       textSnapshots.clear();
@@ -272,6 +284,81 @@ function looksLikeReformat(
   // shuffled punctuation.
   const tokens = (s: string) => s.match(/[A-Za-z0-9_$]+/g)?.join("") ?? "";
   return tokens(a) === tokens(b);
+}
+
+/** True when the event looks like a `cmd+/` line-comment toggle (or an
+ *  uncomment toggle, or a block-comment wrap). VS Code emits these as
+ *  either many small contentChanges (one per line, each just a comment
+ *  marker) or a single replacement covering the whole selection where
+ *  pre/post text differs only by line-leading comment markers. We don't
+ *  want either shape to be classified as "auto-inserted" — the user
+ *  toggling comments on their own code is the loudest false positive
+ *  the AI-block lens has, and each false positive costs a premium-tier
+ *  LLM call to summarize.
+ *
+ *  Coverage (line-comment markers):
+ *    - `//`  JS/TS/Java/Go/Rust/C/C++/Swift/Kotlin/Scala
+ *    - `#`   Python/Ruby/Shell/YAML/Perl/R/Toml/Makefile
+ *    - `--`  SQL/Lua/Haskell/Ada
+ *    - `;`   Lisp/Clojure/Scheme/asm
+ *    - `%`   Erlang/MATLAB/Prolog/LaTeX
+ *  Plus block-comment open/close fragments (`/*`, `*` + `/`) for the
+ *  multi-change case where VS Code wraps `/* ... *` + `/` around lines.
+ *  HTML/XML (`<!-- -->`) wraps the whole selection in a single change
+ *  with markers at both ends — currently uncovered (falls through to
+ *  the existing classifier; same as pre-fix behavior, no regression). */
+function looksLikeCommentToggle(
+  contentChanges: readonly vscode.TextDocumentContentChangeEvent[],
+  prevSnapshot: string | undefined
+): boolean {
+  if (contentChanges.length === 0) return false;
+
+  // Multi-change: every change is a small comment-marker insertion at
+  // line start.
+  if (contentChanges.length > 1) {
+    return contentChanges.every((c) =>
+      /^\s*(\/\/|#|--|;|%|\/\*|\*\/)\s*$/.test(c.text)
+    );
+  }
+
+  // Single-change replacement: replaced and inserted text differ only
+  // by line-leading comment markers. Strip them on both sides and
+  // compare. If the underlying lines are identical, this is a toggle.
+  // Trailing whitespace after the marker uses `\s*` (not `\s?`) so
+  // configs that emit `//  foo` (two spaces) or `//foo` (no space)
+  // both reduce to the same code body as the unprefixed line.
+  // Strip is applied in a loop until stable so a wrapped line like
+  // `// ;(function …)` reduces past BOTH the `// ` and the leading
+  // `;`, matching the unwrapped `;(function …)` after its own `;` is
+  // stripped. Without the loop, `;`-prefixed JS (legacy IIFE pattern)
+  // would mis-detect because the wrapped side keeps the `;` while the
+  // unwrapped side loses it.
+  if (contentChanges.length === 1 && prevSnapshot !== undefined) {
+    const c0 = contentChanges[0];
+    const start = c0.rangeOffset;
+    const end = start + c0.rangeLength;
+    if (start < 0 || end > prevSnapshot.length) return false;
+    const replaced = prevSnapshot.slice(start, end);
+    if (replaced.length === 0) return false;
+    const markerRe = /^\s*(\/\/|#|--|;|%)\s*/;
+    const stripMarkers = (s: string) =>
+      s
+        .split("\n")
+        .map((line) => {
+          // Loop until no further marker can be peeled. Each iteration
+          // consumes ≥1 marker char so the loop terminates.
+          let prev: string;
+          do {
+            prev = line;
+            line = line.replace(markerRe, "");
+          } while (line !== prev);
+          return line;
+        })
+        .join("\n");
+    return stripMarkers(replaced) === stripMarkers(c0.text);
+  }
+
+  return false;
 }
 
 function refreshSnapshot(doc: vscode.TextDocument): void {
@@ -382,6 +469,10 @@ function handleDocChange(evt: vscode.TextDocumentChangeEvent): void {
   const isReformat =
     singleChange &&
     looksLikeReformat(replacedText, evt.contentChanges[0].text);
+  const isCommentToggle = looksLikeCommentToggle(
+    evt.contentChanges,
+    prevSnapshot
+  );
 
   let origin: ChangeOrigin;
   let needsGreyClassify = false;
@@ -401,6 +492,12 @@ function handleDocChange(evt: vscode.TextDocumentChangeEvent): void {
     // had. Mark as typed so ownership still tracks lines as known.
     origin = "typed";
   } else if (isReformat) {
+    origin = "typed";
+  } else if (isCommentToggle) {
+    // cmd+/ toggle — user commenting/uncommenting their own code is not
+    // an AI block. Skip the burst + grey-zone paths so the AI-block lens
+    // never lights up and we never spend a premium-tier summary call on
+    // a toggle.
     origin = "typed";
   } else if (sawBurst) {
     origin = "auto-inserted";

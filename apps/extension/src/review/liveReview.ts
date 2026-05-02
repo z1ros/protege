@@ -1117,7 +1117,6 @@ async function runReview(
       editor.document,
       cancelSignal,
       activeLine,
-      opts.forceBackend,
       opts.candidates
     );
   } catch (err) {

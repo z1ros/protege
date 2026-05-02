@@ -7,7 +7,6 @@ import {
   fetchMe,
   currentUserIdOrNull,
 } from "../user/protegeClient.js";
-import { detectConcepts } from "../concepts/detector.js";
 import { detectHybrid } from "../concepts/hybridDetector.js";
 
 const SUPPORTED_LANGS = new Set([
@@ -87,7 +86,7 @@ export function registerAnalyzer(
       contextScores[c.name] = c.contextScore;
     }
     log.appendLine(
-      `[protege] save ${doc.fileName} — ${detection.sources.total} concepts (AST:${detection.sources.ast} + regex:${detection.sources.regex} + AI:${detection.sources.ai}) in ${detection.durationMs}ms`
+      `[protege] save ${doc.fileName} — ${detection.sources.total} concepts (AST:${detection.sources.ast} + regex:${detection.sources.regex}) in ${detection.durationMs}ms`
     );
 
     // 2. Kick off analyzer first so we know hasErrors before recording concepts.
@@ -148,42 +147,9 @@ export function registerAnalyzer(
     debouncers.set(key, timer);
   });
 
-  // ===== REAL-TIME ANALYSIS: on every keystroke (debounced 1.5s) =====
-  // This is the LIGHT path: local concept detection + AI inline analysis.
-  // No network calls — just detect what the user is writing and feed it
-  // to the live review + inline errors + status bar. The user gets
-  // feedback WHILE they type, not after they save.
-  const realtimeDebounce = new Map<string, ReturnType<typeof setTimeout>>();
-
-  const changeSub = vscode.workspace.onDidChangeTextDocument((e) => {
-    const doc = e.document;
-    if (!SUPPORTED_LANGS.has(doc.languageId)) return;
-    if (doc.uri.scheme !== "file") return;
-
-    const key = doc.uri.toString();
-    const existing = realtimeDebounce.get(key);
-    if (existing) clearTimeout(existing);
-
-    const timer = setTimeout(() => {
-      realtimeDebounce.delete(key);
-      try {
-        // Light analysis — local only, no network. Inline-error handling
-        // and the status-bar concept feed live in their own listeners
-        // (inlineErrors.ts, statusBarLive.ts); nothing further to do here
-        // until we have a real per-keystroke task that warrants the wake.
-        detectConcepts(doc.languageId, doc.getText());
-      } catch (err) {
-        log.appendLine(`[protege] realtime analysis err: ${err}`);
-      }
-    }, 1500);
-
-    realtimeDebounce.set(key, timer);
-  });
-
   const closeSub = vscode.workspace.onDidCloseTextDocument((doc) => {
     diagnostics.delete(doc.uri);
     findingsByUri.delete(doc.uri.toString());
-    realtimeDebounce.delete(doc.uri.toString());
   });
 
   /**
@@ -205,7 +171,7 @@ export function registerAnalyzer(
   };
 
   return {
-    disposable: vscode.Disposable.from(saveSub, changeSub, closeSub),
+    disposable: vscode.Disposable.from(saveSub, closeSub),
     scanActive,
   };
 }
