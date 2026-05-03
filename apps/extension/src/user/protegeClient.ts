@@ -3,19 +3,27 @@ import type { AnalyzeResponse, Finding, MeResponse } from "@protege/types";
 import { authHeaders, getCachedGitHubUser, getGitHubUser, clearCachedUser } from "./auth.js";
 
 // ╔════════════════════════════════════════════════════════════════════╗
-// ║  TEAM SWITCH — change this ONE line to flip backend, then reload.  ║
+// ║  TEAM SWITCH — gitignored override file, inlined at build time.    ║
 // ║                                                                    ║
-// ║    "local" → http://localhost:8787  (you must run `pnpm dev`)     ║
+// ║  Engineers: copy `teamOverride.local.ts.example` next to this file ║
+// ║  to `teamOverride.local.ts` and edit. The .local file is in        ║
+// ║  .gitignore — tsup.config.ts reads it at build time and inlines    ║
+// ║  the value as `__TEAM_OVERRIDE__`. Save → tsup --watch rebuilds →  ║
+// ║  reload the extension dev host (Cmd+R). ~5 seconds to switch.      ║
+// ║                                                                    ║
+// ║    "local" → http://localhost:8787 (run `pnpm dev` in apps/backend)║
 // ║    "prod"  → Railway production                                    ║
-// ║    null    → use default (local in dev build, prod in .vsix)       ║
+// ║    null    → default (local in dev build, prod in .vsix)           ║
 // ║                                                                    ║
-// ║  Wins over env var + VS Code setting. After editing, save the      ║
-// ║  file → tsup --watch rebuilds → press Cmd+R in the extension dev   ║
-// ║  host window. ~5 seconds to switch.                                ║
+// ║  Why this layer exists: it wins over env var + VS Code setting,    ║
+// ║  giving engineers a one-file flip without modifying tracked        ║
+// ║  source. The build itself refuses to produce a production bundle   ║
+// ║  while the override is non-null (see tsup.config.ts) — defense-   ║
+// ║  in-depth against the foot-gun that broke marketplace 0.1.4.       ║
 // ╚════════════════════════════════════════════════════════════════════╝
-// "local" → http://localhost:8787  (must be running `pnpm dev` in apps/backend)
-// "prod"  → https://protege-backend-production.up.railway.app
-const TEAM_OVERRIDE: "local" | "prod" | null = null;
+declare const __TEAM_OVERRIDE__: "local" | "prod" | null;
+const TEAM_OVERRIDE: "local" | "prod" | null =
+  typeof __TEAM_OVERRIDE__ !== "undefined" ? __TEAM_OVERRIDE__ : null;
 
 /** Canonical production backend URL — Railway-hosted Hono server. */
 export const PROD_BACKEND_URL = "https://protege-backend-production.up.railway.app";
