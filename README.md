@@ -32,7 +32,9 @@ voice/         Wake-word training config (openWakeWord)
 ```bash
 # 1. Install. The workspace `postinstall` hook also pre-downloads the
 #    Kokoro TTS model (~160 MB) into the transformers.js cache so the
-#    backend doesn't hit a known CDN bug on first boot. Safe to re-run.
+#    backend doesn't hit a known CDN bug on first boot, AND installs
+#    the repo's pre-commit hooks into .git/hooks (idempotent).
+#    Re-run this after every `git pull` to keep hooks in sync.
 pnpm install
 
 # 2. Backend env
@@ -60,6 +62,34 @@ Then in VS Code:
 If F5 opens a "find a Markdown extension" prompt, you're focused on a
 Markdown file without a debug config selected — use the Run and Debug
 panel and pick `Run Extension` explicitly.
+
+## Pointing the dev host at the local backend
+
+`pnpm dev:extension` already defaults to `http://localhost:8787`, so 99%
+of the time you don't need to do anything — just run `pnpm dev:backend`
+and F5.
+
+If you need to **force** the backend (e.g. running a `.vsix` build but
+want it to talk to local, or repro a prod-only bug from your dev host),
+copy the template:
+
+```bash
+cp apps/extension/src/user/teamOverride.local.ts.example \
+   apps/extension/src/user/teamOverride.local.ts
+# Edit it: set TEAM_OVERRIDE to "local" or "prod" instead of null.
+```
+
+The `.local.ts` file is gitignored. When you're done, delete it:
+
+```bash
+rm apps/extension/src/user/teamOverride.local.ts
+```
+
+**Don't run `pnpm build` while it's set** — tsup will refuse with a clear
+error. That's intentional: it stops a `vsce package` from accidentally
+shipping your override to the marketplace (this is what broke 0.1.4).
+The pre-commit hook also blocks staging the file. Both guards are
+installed automatically by `pnpm install`.
 
 ## Troubleshooting
 

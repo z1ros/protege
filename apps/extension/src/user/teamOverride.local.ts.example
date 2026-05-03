@@ -1,0 +1,27 @@
+/**
+ * Local team-switch override — DEV ONLY.
+ *
+ * COPY this file to `teamOverride.local.ts` and edit the value. The
+ * `.local.ts` file is gitignored — your override never reaches the
+ * marketplace `.vsix`. This `.example` stays tracked as the template.
+ *
+ *   "local" → http://localhost:8787 (you must be running `pnpm dev` in apps/backend)
+ *   "prod"  → Railway production
+ *   null    → default resolution (local in dev build, prod in .vsix)
+ *
+ * Read at BUILD TIME by `apps/extension/tsup.config.ts`. The build
+ * substitutes `__TEAM_OVERRIDE__` with this value; protegeClient.ts
+ * uses the substituted constant. Save → tsup --watch rebuilds → reload
+ * the extension dev host (Cmd+R) → new value takes effect.
+ *
+ * Safety nets:
+ *   - The `.local.ts` file is in .gitignore; it can't be tracked.
+ *   - tsup.config.ts refuses to build a non-dev bundle when this is
+ *     non-null (NODE_ENV !== "development" → throw).
+ *   - The pre-commit hook scripts/check-team-override.sh blocks
+ *     accidental staging of `teamOverride.local.ts`.
+ *
+ * If you don't create the .local file, TEAM_OVERRIDE is null and the
+ * extension falls through to env var → VS Code setting → default.
+ */
+export const TEAM_OVERRIDE: "local" | "prod" | null = null;

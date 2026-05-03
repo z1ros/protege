@@ -55,6 +55,13 @@ voice/elevanlabs/
 .claude/vibe-brief-redesign/
 .claude/vibe-brief-redesign-prompt.md
 
+# Per-developer team-switch override. Read at build time by tsup.config.ts
+# to flip the extension's backend without changing tracked source. The
+# `.example` file is tracked as the template; the real `.local.ts` must
+# never be committed (would force every marketplace user onto the local
+# backend — exactly the foot-gun that broke 0.1.4 in the marketplace).
+apps/extension/src/user/teamOverride.local.ts
+
 # Per-developer editor settings.
 .vscode/
 
