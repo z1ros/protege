@@ -521,7 +521,11 @@ function renderEchoHtml(
     vscode.Uri.joinPath(base, "echo", "echo.css")
   );
   const nonce = getNonce();
-  const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} data:; font-src ${webview.cspSource}; connect-src ${webview.cspSource} http://localhost:8787 http://127.0.0.1:8787;`;
+  // connect-src includes both localhost (dev) and the production backend
+  // origin (marketplace builds). Mirrors the rationale at
+  // apps/extension/src/chat/webviewHost.ts ~ line 2318.
+  const PROD_BACKEND_ORIGIN = "https://protege-backend-production.up.railway.app";
+  const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} data:; font-src ${webview.cspSource}; connect-src ${webview.cspSource} http://localhost:8787 http://127.0.0.1:8787 ${PROD_BACKEND_ORIGIN};`;
 
   return `<!DOCTYPE html>
 <html lang="en">
