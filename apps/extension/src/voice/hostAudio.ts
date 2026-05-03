@@ -12,6 +12,7 @@ import {
   isWakeWordListening,
 } from "./voiceCapture.js";
 import { setVoiceState } from "./voiceStatusBar.js";
+import { isTeachingStepActive } from "../teaching/teachingStep.js";
 
 /**
  * Host-side audio playback — bypasses the webview entirely.
@@ -270,9 +271,15 @@ export async function playHostAudio(
       // Pair with the onStart "speaking" flip — restore chip to its
       // resting state. Skip if barge-in fired (it already flipped to
       // idle/off in armBargeIn) or if a new playback preempted us
-      // (its own setVoiceState("speaking") owns the chip now).
+      // (its own setVoiceState("speaking") owns the chip now). Mirror
+      // the streaming path: hold on "thinking" while a teach_step
+      // chain is active so the chip doesn't bounce between beats.
       if (isCurrent() && !arm.fired()) {
-        setVoiceState(isWakeWordListening() ? "idle" : "off");
+        if (isTeachingStepActive()) {
+          setVoiceState("thinking");
+        } else {
+          setVoiceState(isWakeWordListening() ? "idle" : "off");
+        }
       }
       if (!arm.fired()) hooks.onEnd?.(reason);
       resolve(reason);
@@ -580,8 +587,19 @@ export async function playHostAudioStreaming(
   // resting state when streaming finishes. Skip when barge-in fired
   // (it already flipped the chip in armBargeIn) or when a new playback
   // preempted us (its own start flip owns the chip now).
+  //
+  // Inside an active teach_step lesson chain, hold on "thinking"
+  // instead of dropping to "idle"/"off" — the next teach_step is
+  // probably ~200-500ms away and during that gap the bot is genuinely
+  // mid-lesson, not idle. Bouncing through "idle" between every beat
+  // produced the "chip says idle while bot is still teaching" mismatch
+  // the user reported.
   if (isCurrent() && !arm.fired() && startedFlag) {
-    setVoiceState(isWakeWordListening() ? "idle" : "off");
+    if (isTeachingStepActive()) {
+      setVoiceState("thinking");
+    } else {
+      setVoiceState(isWakeWordListening() ? "idle" : "off");
+    }
   }
   // Skip onEnd when barge-in handled the turn already — onBargeIn ran
   // in its place and the caller's state is clean.

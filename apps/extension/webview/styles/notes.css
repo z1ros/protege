@@ -371,6 +371,7 @@
    BlockNote renders `<pre><code>` for codeBlocks; the wrapper class
    `[data-content-type="codeBlock"]` is on the BN block container. */
 .notes-bn-host [data-content-type="codeBlock"] {
+  position: relative;
   margin: 6px 0;
   border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: 10px;
@@ -383,7 +384,9 @@
 }
 .notes-bn-host [data-content-type="codeBlock"] pre {
   margin: 0;
-  padding: 12px 14px;
+  /* Left padding leaves room for the line-number gutter, top stays
+     12px to vertically align gutter numbers with the first code line. */
+  padding: 12px 14px 12px 44px;
   background: transparent;
   border: none;
   border-radius: 0;
@@ -393,6 +396,72 @@
   line-height: 1.6;
   color: #cbd5ea;
   scrollbar-width: thin;
+}
+
+/* Line-number gutter, injected by NotesEditor's chrome effect.
+   Anchored to the codeBlock (not the <pre>) so horizontal scroll
+   in the code doesn't drag the numbers out of view. line-height /
+   font-size / top padding mirror the <pre> exactly so each number
+   sits on its line. */
+.notes-bn-host [data-content-type="codeBlock"] > .notes-code-gutter {
+  position: absolute;
+  top: 12px;
+  left: 10px;
+  width: 24px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: rgba(203, 213, 234, 0.32);
+  white-space: pre;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* Copy button — hidden by default, fades in on block hover or
+   keyboard focus. Sits over the top-right corner; padding-right on
+   <pre> isn't bumped because the button overlays the existing space
+   above the first code line cleanly. */
+.notes-bn-host [data-content-type="codeBlock"] > .notes-code-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: #cbd5ea;
+  font-family: var(--font-sans, inherit);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 120ms ease,
+    background 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
+}
+.notes-bn-host [data-content-type="codeBlock"]:hover > .notes-code-copy,
+.notes-bn-host [data-content-type="codeBlock"] > .notes-code-copy:focus-visible {
+  opacity: 1;
+}
+.notes-bn-host [data-content-type="codeBlock"] > .notes-code-copy:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+.notes-bn-host [data-content-type="codeBlock"] > .notes-code-copy.is-copied {
+  background: rgba(126, 231, 135, 0.16);
+  border-color: rgba(126, 231, 135, 0.32);
+  color: #b6f0c0;
+  opacity: 1;
+}
+.notes-bn-host [data-content-type="codeBlock"] > .notes-code-copy svg {
+  flex-shrink: 0;
 }
 .notes-bn-host [data-content-type="codeBlock"] code {
   /* Inside the codeBlock, the inner `<code>` is just the content

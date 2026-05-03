@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { findSuggestionAtLine } from "../review/liveReview.js";
 import type { Suggestion } from "../review/reviewEngine.js";
+import { isWakeWordListening } from "../voice/voiceCapture.js";
 import { log } from "../log.js";
 
 /**
@@ -102,24 +103,71 @@ async function renderSurfaces(uri: string, s: Suggestion): Promise<void> {
   // The big inline `/* PROTEGE · ... */` lesson comment was deliberately
   // dropped (2026-04-18) — too much chrome stacked on top of the line.
   // The user's preferred surface for the WRITTEN lesson is the popup
-  // hover, which we now show programmatically on Teach. The Ghost Lens
-  // CodeLens above the cursor-parked line carries the action buttons,
-  // and voice plays the narrative. Three light surfaces, no fat block.
+  // hover, which we now show programmatically on Teach.
 
   // Show the hover popup (the rich card with title · line N · teaser
   // · suggested fix · actions). VS Code's `showHover` shows it at the
   // cursor — we already parked the cursor on the finding line above,
-  // so the popup anchors there.
+  // so the popup anchors there. Always shown — useful as ambient visual
+  // reference whether the teach routes to voice or chat below.
   void vscode.commands.executeCommand("editor.action.showHover");
 
-  // Voice narration — fire-and-forget. Hover popup stays open even if
-  // voice fails (TTS down, autoplay blocked); voice plays even if the
-  // hover renders elsewhere.
+  // Route the SECOND surface (voice TTS vs. chat panel) based on the
+  // user's current voice state — same signal the rest of the extension
+  // uses (`isWakeWordListening()`).
+  //
+  //   wake ON  → speak the lesson via TTS (current "Teach" behavior).
+  //   wake OFF → drop the lesson into the chat panel as a primed turn
+  //              so the AI replies in long-form text. No TTS — talking
+  //              at a user who has explicitly disabled voice is loud
+  //              and surprising.
+  //
+  // The user can flip wake on/off at any time before clicking Teach,
+  // so this branch always reflects their current intent.
+  if (isWakeWordListening()) {
+    try {
+      const { runVoiceExplanation } = await import("../hints/ghostMentor.js");
+      void runVoiceExplanation(s);
+    } catch (err) {
+      log("teachingThread", `voice FAIL — ${(err as Error).message}`);
+    }
+  } else {
+    void primeChatLesson(uri, s);
+  }
+}
+
+/**
+ * Open the Protege panel and prime a chat turn that asks the AI to
+ * teach this finding. Mirrors the voice "primeConversation" flow used
+ * by `protege.threadAsk`, but routes through `chat/autoSend` so the
+ * reply lands in text mode (long-form, markdown) instead of voice
+ * brevity. Fires only when wake-word listening is OFF.
+ */
+async function primeChatLesson(uri: string, s: Suggestion): Promise<void> {
   try {
-    const { runVoiceExplanation } = await import("../hints/ghostMentor.js");
-    void runVoiceExplanation(s);
+    const { broadcast, mountedWebviewCount } = await import(
+      "../chat/webviewHost.js"
+    );
+    if (mountedWebviewCount() === 0) {
+      await vscode.commands.executeCommand("protege.toggle");
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    const fileHint = uri.split("/").pop() ?? "the file";
+    const lineNum = s.range.start.line + 1;
+    const codeFix = s.fix
+      ? `\nSuggested fix:\n\`\`\`\n${s.fix.trim()}\n\`\`\`\n`
+      : "";
+    const message =
+      `Teach me this finding from my editor.\n\n` +
+      `**Rule:** ${s.ruleId} (at ${fileHint}:${lineNum})\n` +
+      `**What the note said:** ${s.lesson}\n` +
+      codeFix +
+      `\nWalk me through it: what's actually wrong (or right) here, why it ` +
+      `matters, and how the fix changes things. Then ask me one probing ` +
+      `question so I can check I really get it.`;
+    broadcast({ type: "chat/autoSend", message });
   } catch (err) {
-    log("teachingThread", `voice FAIL — ${(err as Error).message}`);
+    log("teachingThread", `chat prime FAIL — ${(err as Error).message}`);
   }
 }
 

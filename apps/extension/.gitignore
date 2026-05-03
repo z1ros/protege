@@ -6,3 +6,8 @@ out/
 # Editor / OS
 .DS_Store
 .vscode-test/
+
+# Cursor extensions symlink artifact — copied from the installed VSIX
+# when symlinking ~/.cursor/extensions/protege-ai.protege-* → this dir
+# for live-reload dev. Not part of the source.
+.vsixmanifest

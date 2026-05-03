@@ -118,7 +118,17 @@ export class LauncherProvider implements vscode.WebviewViewProvider {
     });
 
     view.webview.onDidReceiveMessage(async (msg: { type: string }) => {
-      if (msg.type === "open") openProtegePanel(this.ctx);
+      if (msg.type === "open") {
+        console.log("[protege] launcher: 'open' click received");
+        try {
+          await openProtegePanel(this.ctx);
+        } catch (err) {
+          console.error("[protege] launcher: openProtegePanel rejected:", err);
+          void vscode.window.showErrorMessage(
+            `Couldn't open Protege panel: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
       if (msg.type === "auth/login") {
         // Pop the GitHub OAuth dialog ONLY if we don't already have a
         // signed-in session. When the user is already signed in, calling
@@ -137,12 +147,30 @@ export class LauncherProvider implements vscode.WebviewViewProvider {
     // point — otherwise denying the OAuth dialog and re-focusing the
     // sidebar would loop the user through the main panel's auth gate
     // every time the view regains visibility.
-    const openIfSignedIn = () => {
+    //
+    // Awaited + try/catch so any rejection from openProtegePanel surfaces
+    // to the dev console instead of vanishing into a fire-and-forget
+    // promise (the previous shape silently swallowed group-creation
+    // failures, which is exactly the "auto-open didn't fire" symptom).
+    const openIfSignedIn = async () => {
       if (!view.visible) return;
-      if (lastAuth?.user) openProtegePanel(this.ctx);
+      if (!lastAuth?.user) {
+        console.log(
+          `[protege] launcher: skip auto-open — not signed in (lastAuth=${lastAuth ? "present-no-user" : "null"})`
+        );
+        return;
+      }
+      console.log("[protege] launcher: auto-open firing");
+      try {
+        await openProtegePanel(this.ctx);
+      } catch (err) {
+        console.error("[protege] launcher: auto-open failed:", err);
+      }
     };
-    openIfSignedIn();
-    view.onDidChangeVisibility(openIfSignedIn);
+    void openIfSignedIn();
+    view.onDidChangeVisibility(() => {
+      void openIfSignedIn();
+    });
 
     view.onDidDispose(() => {
       if (currentView === view) currentView = null;

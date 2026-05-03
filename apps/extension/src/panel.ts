@@ -18,41 +18,69 @@ export async function openProtegePanel(context: vscode.ExtensionContext) {
     // applied at first-create persists with the group, so we don't
     // need to relock here (and re-running lockEditorGroup would
     // toggle the lock OFF, which is the opposite of what we want).
-    current.reveal(current.viewColumn ?? vscode.ViewColumn.Beside, false);
-    return current;
+    //
+    // Defensive: closing the entire editor GROUP (vs. just the tab)
+    // doesn't always fire `onDidDispose`, so `current` can outlive the
+    // real panel. Touching `.webview.cspSource` on a disposed panel
+    // throws — catch it, clear the stale ref, and fall through to a
+    // fresh create. Without this, clicks land on a dead panel and the
+    // user sees nothing.
+    try {
+      void current.webview.cspSource;
+      current.reveal(current.viewColumn ?? vscode.ViewColumn.Beside, false);
+      return current;
+    } catch {
+      console.log("[protege] panel: stale current ref, rebuilding");
+      current = undefined;
+    }
   }
   if (opening) return opening;
 
   opening = (async () => {
     try {
+      console.log("[protege] panel: opening — picking target column");
       // Reuse an existing empty editor group if one's lying around — Cursor
       // restores empty groups across sessions (close Protege → group stays
       // empty → next launch we'd add YET ANOTHER group beside it). Scanning
       // tabGroups.all for a zero-tab group and dropping Protege there keeps
       // the layout clean across reopen cycles. If there's no empty group,
       // fall through to newGroupRight so we still always get our own column.
-      const emptyGroup = vscode.window.tabGroups.all.find(
-        (g) => g.tabs.length === 0
-      );
       let targetColumn: vscode.ViewColumn;
-      if (emptyGroup) {
-        targetColumn = emptyGroup.viewColumn;
-      } else {
-        // Force a brand-new editor group to the right of the active one
-        // and make it active. Without this, ViewColumn.Beside is unreliable:
-        // if an editor group already exists to the right (common when the
-        // user has split panes for source files), VS Code reuses that
-        // group and drops Protege into it — sharing a tab strip with the
-        // user's code, which the user explicitly flagged ("Protege should
-        // always open as a NEW window — if there are 5 already, it's the
-        // 6th"). workbench.action.newGroupRight is a built-in command
-        // available in both VS Code and Cursor.
-        await vscode.commands.executeCommand("workbench.action.newGroupRight");
-        // ViewColumn.Active = the now-empty group we just created, since
-        // newGroupRight focused it.
-        targetColumn = vscode.ViewColumn.Active;
+      try {
+        const emptyGroup = vscode.window.tabGroups.all.find(
+          (g) => g.tabs.length === 0
+        );
+        if (emptyGroup && emptyGroup.viewColumn !== undefined) {
+          targetColumn = emptyGroup.viewColumn;
+          console.log(`[protege] panel: reusing empty group at column ${targetColumn}`);
+        } else {
+          // Force a brand-new editor group to the right of the active one
+          // and make it active. Without this, ViewColumn.Beside is unreliable:
+          // if an editor group already exists to the right (common when the
+          // user has split panes for source files), VS Code reuses that
+          // group and drops Protege into it — sharing a tab strip with the
+          // user's code, which the user explicitly flagged ("Protege should
+          // always open as a NEW window — if there are 5 already, it's the
+          // 6th"). workbench.action.newGroupRight is a built-in command
+          // available in both VS Code and Cursor.
+          await vscode.commands.executeCommand("workbench.action.newGroupRight");
+          // ViewColumn.Active = the now-empty group we just created, since
+          // newGroupRight focused it.
+          targetColumn = vscode.ViewColumn.Active;
+          console.log("[protege] panel: created new group right");
+        }
+      } catch (err) {
+        // Group selection failed (newGroupRight rejected, tabGroups api
+        // misbehaved, etc.) — fall back to ViewColumn.Beside which is
+        // built into createWebviewPanel itself. Worse layout, but the
+        // panel WILL appear, which is the priority.
+        console.warn(
+          `[protege] panel: column selection failed (${err instanceof Error ? err.message : String(err)}), falling back to ViewColumn.Beside`
+        );
+        targetColumn = vscode.ViewColumn.Beside;
       }
 
+      console.log(`[protege] panel: createWebviewPanel column=${targetColumn}`);
       const panel = vscode.window.createWebviewPanel(
         "protege.panel",
         "Protege",
@@ -67,6 +95,7 @@ export async function openProtegePanel(context: vscode.ExtensionContext) {
         }
       );
       current = panel;
+      console.log("[protege] panel: created");
 
       panel.iconPath = vscode.Uri.joinPath(
         context.extensionUri,

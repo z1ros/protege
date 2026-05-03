@@ -39,6 +39,15 @@ function exitTeachingStep(): void {
   }
 }
 
+/** True while at least one teach_step call is in flight (audio playing,
+ *  TTS fetching, or pause-after timer running). hostAudio reads this so
+ *  the post-audio chip flip can keep the status bar on "thinking" between
+ *  steps in a lesson chain instead of bouncing through "idle" — which
+ *  the user perceived as the chip lying about the bot's state. */
+export function isTeachingStepActive(): boolean {
+  return activeSteps > 0;
+}
+
 /** Called from webviewHost when the webview posts `voice/playbackDone`
  *  with a requestId. Resolves the awaiting teach_step. */
 export function resolvePlayback(requestId: string | undefined, reason: "ended" | "error"): void {

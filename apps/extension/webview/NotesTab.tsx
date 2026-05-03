@@ -443,6 +443,10 @@ function NotesEditor({
   const editor = useCreateBlockNote({ schema: notesSchema });
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  // Wrapping ref the code-block-chrome effect uses to scope its
+  // MutationObserver. Avoids a global document.querySelector that
+  // could pick up stale notes-bn-host nodes from a previous mount.
+  const hostRef = useRef<HTMLDivElement | null>(null);
 
   // Initial load: parse the stored HTML into BlockNote blocks and
   // replace the empty document. tryParseHTMLToBlocks is async because
@@ -547,14 +551,115 @@ function NotesEditor({
     };
   }, [editor]);
 
+  // Inject a copy button + line-number gutter into every BN code block.
+  // BN owns the DOM, so we attach contenteditable=false widgets via a
+  // MutationObserver instead of rendering JSX siblings. Idempotent —
+  // ensureChrome creates the chrome on first sight and just resyncs the
+  // gutter line count on subsequent ticks. Cheap; runs once per editor
+  // mutation, no debounce needed because `ensureChrome` short-circuits
+  // when the chrome already exists.
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+
+    const COPY_ICON =
+      '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<rect x="5" y="5" width="9" height="9" rx="1.5"/>' +
+      '<path d="M2.5 10.5V3a.5.5 0 0 1 .5-.5h7"/>' +
+      "</svg>";
+
+    function lineCountOf(text: string): number {
+      if (!text) return 1;
+      const trimmed = text.endsWith("\n") ? text.slice(0, -1) : text;
+      return Math.max(1, trimmed.split("\n").length);
+    }
+
+    function setGutter(gutter: HTMLElement, n: number): void {
+      let s = "";
+      for (let i = 1; i <= n; i++) s += `${i}\n`;
+      if (gutter.textContent !== s) gutter.textContent = s;
+    }
+
+    function flashCopied(btn: HTMLButtonElement): void {
+      const label = btn.querySelector(".notes-code-copy-label");
+      btn.classList.add("is-copied");
+      if (label) label.textContent = "Copied";
+      window.setTimeout(() => {
+        btn.classList.remove("is-copied");
+        const lbl = btn.querySelector(".notes-code-copy-label");
+        if (lbl) lbl.textContent = "Copy";
+      }, 1200);
+    }
+
+    function ensureChrome(block: HTMLElement): void {
+      const pre = block.querySelector("pre");
+      if (!pre) return;
+
+      let gutter = block.querySelector<HTMLElement>(":scope > .notes-code-gutter");
+      if (!gutter) {
+        gutter = document.createElement("div");
+        gutter.className = "notes-code-gutter";
+        gutter.setAttribute("contenteditable", "false");
+        gutter.setAttribute("aria-hidden", "true");
+        block.appendChild(gutter);
+      }
+
+      let copyBtn = block.querySelector<HTMLButtonElement>(
+        ":scope > .notes-code-copy"
+      );
+      if (!copyBtn) {
+        copyBtn = document.createElement("button");
+        copyBtn.type = "button";
+        copyBtn.className = "notes-code-copy";
+        copyBtn.setAttribute("contenteditable", "false");
+        copyBtn.setAttribute("aria-label", "Copy code");
+        copyBtn.title = "Copy";
+        copyBtn.innerHTML = `${COPY_ICON}<span class="notes-code-copy-label">Copy</span>`;
+        copyBtn.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const target = block.querySelector("pre");
+          const text = target?.textContent ?? "";
+          if (!text || !navigator.clipboard) return;
+          navigator.clipboard.writeText(text).then(
+            () => flashCopied(copyBtn!),
+            () => {
+              /* clipboard denied — silently noop */
+            }
+          );
+        });
+        block.appendChild(copyBtn);
+      }
+
+      setGutter(gutter, lineCountOf(pre.textContent ?? ""));
+    }
+
+    function rescan(): void {
+      host!
+        .querySelectorAll<HTMLElement>('[data-content-type="codeBlock"]')
+        .forEach(ensureChrome);
+    }
+
+    rescan();
+    const obs = new MutationObserver(rescan);
+    obs.observe(host, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+    return () => obs.disconnect();
+  }, [editor]);
+
   return (
-    <BlockNoteView
-      editor={editor}
-      theme="dark"
-      // We render our own toolbar/menus in the surrounding chrome
-      // (or rely on BlockNote's defaults — which we DO want here for
-      // bubble + slash). Keep BlockNote's defaults on.
-    />
+    <div ref={hostRef} className="notes-bn-editor-host">
+      <BlockNoteView
+        editor={editor}
+        theme="dark"
+        // We render our own toolbar/menus in the surrounding chrome
+        // (or rely on BlockNote's defaults — which we DO want here for
+        // bubble + slash). Keep BlockNote's defaults on.
+      />
+    </div>
   );
 }
 
