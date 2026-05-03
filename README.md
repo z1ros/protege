@@ -61,6 +61,34 @@ If F5 opens a "find a Markdown extension" prompt, you're focused on a
 Markdown file without a debug config selected — use the Run and Debug
 panel and pick `Run Extension` explicitly.
 
+## Pointing the dev host at the local backend
+
+`pnpm dev:extension` already defaults to `http://localhost:8787`, so 99%
+of the time you don't need to do anything — just run `pnpm dev:backend`
+and F5.
+
+If you need to **force** the backend (e.g. running a `.vsix` build but
+want it to talk to local, or repro a prod-only bug from your dev host),
+copy the template:
+
+```bash
+cp apps/extension/src/user/teamOverride.local.ts.example \
+   apps/extension/src/user/teamOverride.local.ts
+# Edit it: set TEAM_OVERRIDE to "local" or "prod" instead of null.
+```
+
+The `.local.ts` file is gitignored. When you're done, delete it:
+
+```bash
+rm apps/extension/src/user/teamOverride.local.ts
+```
+
+**Don't run `pnpm build` while it's set** — tsup will refuse with a clear
+error. That's intentional: it stops a `vsce package` from accidentally
+shipping your override to the marketplace (this is what broke 0.1.4).
+The pre-commit hook also blocks staging the file. Both guards are
+installed automatically by `pnpm install`.
+
 ## Troubleshooting
 
 - **`kokoro warmup failed: Unable to get model file path or buffer`** —
