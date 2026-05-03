@@ -32,7 +32,9 @@ voice/         Wake-word training config (openWakeWord)
 ```bash
 # 1. Install. The workspace `postinstall` hook also pre-downloads the
 #    Kokoro TTS model (~160 MB) into the transformers.js cache so the
-#    backend doesn't hit a known CDN bug on first boot. Safe to re-run.
+#    backend doesn't hit a known CDN bug on first boot, AND installs
+#    the repo's pre-commit hooks into .git/hooks (idempotent).
+#    Re-run this after every `git pull` to keep hooks in sync.
 pnpm install
 
 # 2. Backend env
