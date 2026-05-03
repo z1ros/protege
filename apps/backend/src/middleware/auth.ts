@@ -29,6 +29,10 @@ const MAX_TOKEN_LEN = 400;
 
 interface CacheEntry {
   githubId: string;
+  /** GitHub username (case-preserved as the API returned it). Drives the
+   *  internal-team allowlist gate on `/me`. Logins are case-insensitive
+   *  in GitHub's auth model — compare lowercased. */
+  githubLogin: string | null;
   expiresAt: number;
 }
 
@@ -47,10 +51,10 @@ export function isAuthRequired(): boolean {
   return v !== "false" && v !== "0";
 }
 
-async function verifyGitHubToken(token: string): Promise<string | null> {
+async function verifyGitHubToken(token: string): Promise<CacheEntry | null> {
   const cached = tokenCache.get(token);
   if (cached && cached.expiresAt > Date.now()) {
-    return cached.githubId;
+    return cached;
   }
   if (cached) tokenCache.delete(token);
 
@@ -66,14 +70,18 @@ async function verifyGitHubToken(token: string): Promise<string | null> {
       signal: controller.signal,
     });
     if (!res.ok) return null;
-    const data = (await res.json()) as { id?: number | string };
+    const data = (await res.json()) as {
+      id?: number | string;
+      login?: string;
+    };
     if (data.id == null) return null;
-    const id = String(data.id);
-    tokenCache.set(token, {
-      githubId: id,
+    const entry: CacheEntry = {
+      githubId: String(data.id),
+      githubLogin: typeof data.login === "string" ? data.login : null,
       expiresAt: Date.now() + CACHE_TTL_MS,
-    });
-    return id;
+    };
+    tokenCache.set(token, entry);
+    return entry;
   } catch {
     return null;
   } finally {
@@ -103,8 +111,13 @@ export function githubAuth(): MiddlewareHandler {
 
     if (!required) {
       if (token) {
-        const verifiedId = await verifyGitHubToken(token);
-        if (verifiedId) c.set("authenticatedUserId", verifiedId);
+        const verified = await verifyGitHubToken(token);
+        if (verified) {
+          c.set("authenticatedUserId", verified.githubId);
+          if (verified.githubLogin) {
+            c.set("authenticatedGitHubLogin", verified.githubLogin);
+          }
+        }
       }
       await next();
       return;
@@ -113,27 +126,30 @@ export function githubAuth(): MiddlewareHandler {
     if (!token) {
       return c.json({ error: "authentication required" }, 401);
     }
-    const verifiedId = await verifyGitHubToken(token);
-    if (!verifiedId) {
+    const verified = await verifyGitHubToken(token);
+    if (!verified) {
       return c.json({ error: "invalid or expired token" }, 401);
     }
 
     const claimedHeader = c.req.header("x-user-id");
     const claimedQuery = c.req.query("userId");
-    if (claimedHeader && claimedHeader !== verifiedId) {
+    if (claimedHeader && claimedHeader !== verified.githubId) {
       return c.json(
         { error: "x-user-id does not match authenticated identity" },
         403
       );
     }
-    if (claimedQuery && claimedQuery !== verifiedId) {
+    if (claimedQuery && claimedQuery !== verified.githubId) {
       return c.json(
         { error: "userId does not match authenticated identity" },
         403
       );
     }
 
-    c.set("authenticatedUserId", verifiedId);
+    c.set("authenticatedUserId", verified.githubId);
+    if (verified.githubLogin) {
+      c.set("authenticatedGitHubLogin", verified.githubLogin);
+    }
     await next();
   };
 }
@@ -142,6 +158,14 @@ export function githubAuth(): MiddlewareHandler {
  *  middleware didn't run or wasn't able to verify (dev mode, no token). */
 export function getAuthenticatedUserId(c: Context): string | null {
   const v = c.get("authenticatedUserId") as string | undefined;
+  return v ?? null;
+}
+
+/** Read the verified GitHub login (username) set by `githubAuth`. Returns
+ *  null when the middleware didn't run, the token was invalid, or the
+ *  GitHub /user response somehow didn't include a login. */
+export function getAuthenticatedGitHubLogin(c: Context): string | null {
+  const v = c.get("authenticatedGitHubLogin") as string | undefined;
   return v ?? null;
 }
 

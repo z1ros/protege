@@ -236,26 +236,19 @@ describe("quotas — counter helpers create the row when missing", () => {
   });
 });
 
-describe("quotas — addToolCalls + checkToolCallLimit", () => {
-  it("checkToolCallLimit allows when under the cap and rejects at the cap", async () => {
+describe("quotas — addToolCalls", () => {
+  it("accumulates tool-call counts in the user_quotas row", async () => {
     pinDate("2026-04-29T12:00:00Z");
-    const { addToolCalls, checkToolCallLimit, USER_FACING_LIMITS } = await import(
-      "./quotas.js"
-    );
-    // Need a row to exist before addToolCalls / checkToolCallLimit can
-    // see it. The chat route normally goes through checkAndIncrement
-    // first which creates the row; reproduce that here.
-    const { checkAndIncrement } = await import("./quotas.js");
+    const { addToolCalls, checkAndIncrement } = await import("./quotas.js");
+    // Need a row to exist before addToolCalls can update it. The chat
+    // route normally goes through checkAndIncrement first which creates
+    // the row; reproduce that here.
     await checkAndIncrement(USER, "teach");
 
-    expect((await checkToolCallLimit(USER, 1)).allowed).toBe(true);
-    await addToolCalls(USER, USER_FACING_LIMITS.tool_calls);
-    const blocked = await checkToolCallLimit(USER, 1);
-    expect(blocked.allowed).toBe(false);
-    if (!blocked.allowed) {
-      expect(blocked.used).toBe(USER_FACING_LIMITS.tool_calls);
-      expect(blocked.limit).toBe(USER_FACING_LIMITS.tool_calls);
-    }
+    await addToolCalls(USER, 3);
+    await addToolCalls(USER, 2);
+    const stored = fakeRows.get(todayKey()) as Record<string, number> | undefined;
+    expect(stored?.tool_calls).toBe(5);
   });
 });
 
@@ -440,5 +433,116 @@ describe("quotas — full beta-day simulation", () => {
     // First call on the new day — fresh row, allowed.
     const fresh = await checkAndIncrement(USER, "teach");
     expect(fresh.allowed).toBe(true);
+  });
+});
+
+// ============================================================
+// Tests added against the documented spec for ship-blocker-fixes.
+// Spec: addCostUsd should clamp NaN/Infinity/negatives to safe values
+// before writing them to the row. Token columns must always be finite,
+// non-negative numbers. The function is a no-op when all inputs are
+// zero/missing.
+// ============================================================
+
+describe("quotas — addCostUsd robustness against malformed inputs", () => {
+  it("happy path — finite delta + tokens stored as expected sums", async () => {
+    pinDate("2026-04-29T12:00:00Z");
+    const { addCostUsd } = await import("./quotas.js");
+    await addCostUsd(USER, 0.01, { prompt: 100, completion: 50 });
+    const stored = fakeRows.get(todayKey()) as Record<string, number> | undefined;
+    expect(stored?.total_usd_estimate).toBeCloseTo(0.01, 6);
+    expect(stored?.prompt_tokens).toBe(100);
+    expect(stored?.completion_tokens).toBe(50);
+    expect(stored?.total_tokens).toBe(150);
+  });
+
+  it("NaN deltaUsd with valid tokens — row written, total_usd_estimate is NOT NaN", async () => {
+    pinDate("2026-04-29T12:00:00Z");
+    const { addCostUsd } = await import("./quotas.js");
+    await addCostUsd(USER, Number.NaN, { prompt: 200, completion: 100 });
+    const stored = fakeRows.get(todayKey()) as Record<string, number> | undefined;
+    expect(stored).toBeDefined();
+    // Must be a finite number — not NaN.
+    expect(Number.isFinite(stored?.total_usd_estimate)).toBe(true);
+    expect(stored?.total_usd_estimate).toBeGreaterThanOrEqual(0);
+    // Tokens still recorded normally.
+    expect(stored?.prompt_tokens).toBe(200);
+    expect(stored?.completion_tokens).toBe(100);
+    expect(stored?.total_tokens).toBe(300);
+  });
+
+  it("NaN prompt token with valid completion — prompt_tokens + total_tokens are finite", async () => {
+    pinDate("2026-04-29T12:00:00Z");
+    const { addCostUsd } = await import("./quotas.js");
+    await addCostUsd(USER, 0.005, { prompt: Number.NaN, completion: 50 });
+    const stored = fakeRows.get(todayKey()) as Record<string, number> | undefined;
+    expect(stored).toBeDefined();
+    expect(Number.isFinite(stored?.prompt_tokens)).toBe(true);
+    expect(stored?.prompt_tokens).toBeGreaterThanOrEqual(0);
+    expect(Number.isFinite(stored?.total_tokens)).toBe(true);
+    expect(stored?.total_tokens).toBeGreaterThanOrEqual(0);
+    // completion still recorded
+    expect(stored?.completion_tokens).toBe(50);
+  });
+
+  it("Infinity prompt — not stored as Infinity", async () => {
+    pinDate("2026-04-29T12:00:00Z");
+    const { addCostUsd } = await import("./quotas.js");
+    await addCostUsd(USER, 0.005, { prompt: Number.POSITIVE_INFINITY, completion: 25 });
+    const stored = fakeRows.get(todayKey()) as Record<string, number> | undefined;
+    expect(stored).toBeDefined();
+    expect(Number.isFinite(stored?.prompt_tokens)).toBe(true);
+    expect(stored?.prompt_tokens).toBeGreaterThanOrEqual(0);
+    expect(stored?.prompt_tokens).not.toBe(Number.POSITIVE_INFINITY);
+    expect(Number.isFinite(stored?.total_tokens)).toBe(true);
+  });
+
+  it("negative deltaUsd with no tokens — no row written (no-op)", async () => {
+    pinDate("2026-04-29T12:00:00Z");
+    const { addCostUsd } = await import("./quotas.js");
+    await addCostUsd(USER, -1);
+    const stored = fakeRows.get(todayKey());
+    expect(stored).toBeUndefined();
+  });
+
+  it("two consecutive calls accumulate prompt_tokens", async () => {
+    pinDate("2026-04-29T12:00:00Z");
+    const { addCostUsd } = await import("./quotas.js");
+    await addCostUsd(USER, 0.01, { prompt: 50, completion: 10 });
+    await addCostUsd(USER, 0.01, { prompt: 30, completion: 5 });
+    const stored = fakeRows.get(todayKey()) as Record<string, number> | undefined;
+    expect(stored?.prompt_tokens).toBe(80);
+    expect(stored?.completion_tokens).toBe(15);
+    expect(stored?.total_tokens).toBe(95);
+  });
+
+  it("negative tokens are clamped to 0 (not persisted as negatives)", async () => {
+    pinDate("2026-04-29T12:00:00Z");
+    const { addCostUsd } = await import("./quotas.js");
+    await addCostUsd(USER, 0.005, { prompt: -100, completion: 50 });
+    const stored = fakeRows.get(todayKey()) as Record<string, number> | undefined;
+    expect(stored).toBeDefined();
+    expect(stored?.prompt_tokens).toBeGreaterThanOrEqual(0);
+    expect(stored?.completion_tokens).toBe(50);
+  });
+});
+
+describe("quotas — addToolCalls (post-2026-05-02 cap removal)", () => {
+  it("delta = 0 is a no-op", async () => {
+    pinDate("2026-04-29T12:00:00Z");
+    const { addToolCalls } = await import("./quotas.js");
+    await addToolCalls(USER, 0);
+    const stored = fakeRows.get(todayKey());
+    expect(stored).toBeUndefined();
+  });
+
+  it("multiple calls accumulate without cap", async () => {
+    pinDate("2026-04-29T12:00:00Z");
+    const { addToolCalls } = await import("./quotas.js");
+    await addToolCalls(USER, 5);
+    await addToolCalls(USER, 7);
+    await addToolCalls(USER, 3);
+    const stored = fakeRows.get(todayKey()) as Record<string, number> | undefined;
+    expect(stored?.tool_calls).toBe(15);
   });
 });

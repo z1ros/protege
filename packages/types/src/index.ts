@@ -138,8 +138,10 @@ export interface QuotaSnapshot {
     /** /chat premium-tier turns. Default beta limit: 100/day. */
     chat_messages: { used: number; limit: number };
     /** Tool invocations the model made inside chat (read_file, edit,
-     *  grep, etc.). Default beta limit: 25/day. */
-    tool_calls: { used: number; limit: number };
+     *  grep, etc.). Tracked for analytics; no per-day cap is enforced
+     *  (the daily $ cap covers cost). Optional so future backends can
+     *  drop the field without breaking older clients. */
+    tool_calls?: { used: number; limit: number };
     /** Combined TTS + STT minutes today. Default beta limit: 20/day. */
     voice_minutes: { used: number; limit: number };
     /** Cumulative chat engagement in minutes today — sum of capped
@@ -335,6 +337,13 @@ export interface MeResponse {
    *  categories (Craft, Range, Velocity, Debug, Quality, Independence).
    *  Computed in parallel with v1 during the transition. */
   iqV2: IqV2;
+  /** Server-side internal-team flag. True when the authenticated GitHub
+   *  login appears in `PROTEGE_INTERNAL_LOGINS` (case-insensitive). Gates
+   *  dev-only UI in the webview (Advanced surfaces panel, etc.). Always
+   *  false for non-allowlisted users — the catalog itself is local data
+   *  but other dev-only panels could hit gated endpoints, so we never
+   *  derive this client-side. */
+  internal: boolean;
 }
 
 export interface ActiveFileInfo {
@@ -799,6 +808,10 @@ export type HostToWebview =
       velocity: VelocityInfo;
       breakdown: IqBreakdown;
       iqV2: IqV2;
+      /** Forwarded straight from `MeResponse.internal` so the webview can
+       *  gate dev-only surfaces. Always false until /me resolves; the gate
+       *  stays closed until proven open. */
+      internal: boolean;
     }
   | { type: "iq/gain"; gains: GainEvent[]; codeIq: number }
   | {

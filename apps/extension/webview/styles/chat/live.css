@@ -561,3 +561,201 @@
 .quota-cost-row-full .quota-cost-bar-fill {
   background: linear-gradient(90deg, #8a3030, #d65454);
 }
+
+/* ==========================================================
+   Advanced surfaces — full inventory of every Protege editor
+   surface (CodeLens, hover actions, watcher triggers, hints,
+   teaching surfaces, etc.). Collapsible row at the bottom of
+   Editor Intelligence; read-only for now, toggle support later.
+   Internal-only — only rendered when MeResponse.internal=true.
+   ========================================================== */
+.live-advanced {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  background: var(--glass-1);
+  border: var(--border-glass);
+  border-radius: 10px;
+  overflow: hidden;
+  transition: border-color 150ms ease;
+}
+.live-advanced.open {
+  border-color: rgba(var(--electric-rgb), 0.25);
+}
+.live-advanced-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: transparent;
+  border: none;
+  color: var(--glow);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 150ms ease;
+  text-align: left;
+}
+.live-advanced-toggle:hover {
+  background: rgba(var(--text-rgb), 0.04);
+}
+.live-advanced-chevron {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  color: var(--text-faint);
+  transition: transform 200ms var(--ease-spring);
+}
+.live-advanced.open .live-advanced-chevron {
+  transform: rotate(90deg);
+  color: var(--electric-soft);
+}
+.live-advanced-summary {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.live-advanced-count {
+  font-size: 10px;
+  color: var(--text-faint);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+}
+.live-advanced-body {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0 8px;
+  border-top: 1px solid rgba(var(--text-rgb), 0.06);
+}
+.live-advanced-group {
+  display: flex;
+  flex-direction: column;
+}
+.live-advanced-group-label {
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  font-weight: 500;
+  padding: 10px 14px 4px;
+}
+.live-advanced-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  font-size: 11px;
+  color: var(--text-dim);
+  transition: background 120ms ease;
+}
+.live-advanced-row:hover {
+  background: rgba(var(--text-rgb), 0.03);
+  color: var(--text);
+}
+.live-advanced-row-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.live-advanced-status {
+  font-size: 8.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-family: var(--font-mono);
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.live-advanced-status.active {
+  color: var(--electric-soft);
+  background: rgba(var(--electric-rgb), 0.12);
+}
+.live-advanced-status.paused {
+  color: var(--text-faint);
+  background: rgba(var(--text-rgb), 0.06);
+}
+.live-advanced-status.experimental {
+  color: #f0b94d;
+  background: rgba(240, 185, 77, 0.1);
+}
+
+/* "?" tooltip — pure CSS, hover-driven. The popover floats above
+   the row and is ARIA-described via the parent's aria-label so
+   screen readers still get the description. */
+.live-advanced-help {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  border-radius: 50%;
+  border: 1px solid rgba(var(--text-rgb), 0.18);
+  background: transparent;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  cursor: help;
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+.live-advanced-help:hover {
+  color: var(--electric-soft);
+  border-color: rgba(var(--electric-rgb), 0.45);
+  background: rgba(var(--electric-rgb), 0.08);
+}
+.live-advanced-tooltip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: -4px;
+  min-width: 200px;
+  max-width: 260px;
+  padding: 8px 10px;
+  background: rgba(13, 11, 24, 0.96);
+  border: 1px solid rgba(var(--electric-rgb), 0.3);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.4;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: normal;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(2px);
+  transition: opacity 160ms ease, transform 160ms ease;
+  z-index: 10;
+}
+.live-advanced-tooltip::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  right: 8px;
+  border: 5px solid transparent;
+  border-top-color: rgba(13, 11, 24, 0.96);
+}
+.live-advanced-help:hover .live-advanced-tooltip,
+.live-advanced-help:focus-visible .live-advanced-tooltip {
+  opacity: 1;
+  transform: translateY(0);
+}
+.live-advanced-tooltip-source {
+  display: block;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(var(--text-rgb), 0.08);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--text-faint);
+  letter-spacing: 0.02em;
+  word-break: break-all;
+}

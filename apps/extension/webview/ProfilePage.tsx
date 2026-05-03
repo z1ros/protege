@@ -204,8 +204,6 @@ const DEFAULT_USAGE = {
   // chart (voice vs chat split below). Limits no longer surfaced.
   chatMessagesUsed: 0,
   chatMessagesLimit: 100,
-  toolCallsUsed: 0,
-  toolCallsLimit: 25,
   voiceMinutesUsed: 0,
   voiceMinutesLimit: 25,
   // Single user-facing budget (2026-05-02). 2M tokens/day calibrated
@@ -245,8 +243,6 @@ function PlanSection() {
     ? {
         chatMessagesUsed: quota.usage.chat_messages.used,
         chatMessagesLimit: quota.usage.chat_messages.limit,
-        toolCallsUsed: quota.usage.tool_calls.used,
-        toolCallsLimit: quota.usage.tool_calls.limit,
         voiceMinutesUsed: quota.usage.voice_minutes.used,
         voiceMinutesLimit: quota.usage.voice_minutes.limit,
         chatMinutesUsed: quota.usage.chat_minutes?.used ?? 0,

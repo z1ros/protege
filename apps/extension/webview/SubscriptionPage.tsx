@@ -7,8 +7,6 @@ interface Props {
   trialDaysLeft: number;
   chatMessagesUsed: number;
   chatMessagesLimit: number;
-  toolCallsUsed: number;
-  toolCallsLimit: number;
   voiceMinutesUsed: number;
   voiceMinutesLimit: number;
 }
@@ -37,13 +35,10 @@ export function SubscriptionPage({
   trialDaysLeft,
   chatMessagesUsed,
   chatMessagesLimit,
-  toolCallsUsed,
-  toolCallsLimit,
   voiceMinutesUsed,
   voiceMinutesLimit,
 }: Props) {
   const messagePct = Math.min(100, (chatMessagesUsed / chatMessagesLimit) * 100);
-  const toolPct = Math.min(100, (toolCallsUsed / toolCallsLimit) * 100);
   const voicePct = Math.min(100, (voiceMinutesUsed / voiceMinutesLimit) * 100);
   const isTrial = plan === "trial";
 
@@ -79,13 +74,6 @@ export function SubscriptionPage({
             used={chatMessagesUsed}
             limit={chatMessagesLimit}
             pct={messagePct}
-            unlimited={!isTrial}
-          />
-          <UsageRow
-            label="Tool calls"
-            used={toolCallsUsed}
-            limit={toolCallsLimit}
-            pct={toolPct}
             unlimited={!isTrial}
           />
           <UsageRow

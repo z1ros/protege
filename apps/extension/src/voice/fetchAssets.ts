@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as crypto from "node:crypto";
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
 
@@ -54,6 +55,22 @@ const VERSION_STAMP_FILE = ".voice-version";
  *  apps/backend/src/routes/voiceAssets.ts) was a stopgap; this is the
  *  real answer. */
 const RELEASE_BASE = "https://github.com/BohdanChuprynka/protege-voice-assets/releases/download";
+
+/** SHA-256 of each platform tarball as published on the GitHub Release.
+ *  The fetcher refuses to extract any archive whose hash doesn't match —
+ *  defense-in-depth against the asset-host being compromised (write
+ *  access to BohdanChuprynka/protege-voice-assets would otherwise be a
+ *  silent RCE primitive on every voice user). When ASSET_VERSION is
+ *  bumped, regenerate via `shasum -a 256 protege-voice-vX.Y.Z-*.tar.gz`
+ *  and replace these constants in the same commit.
+ *
+ *  Hashes for v0.0.1 (computed 2026-05-02 against the live release). */
+const TARBALL_SHA256: Record<string, string> = {
+  "darwin-arm64": "cf981532b4a17018253582b05b6860b3928709a5aa0a2901f4021dccb4e0a56a",
+  "darwin-x64":   "7847d1ec299f7926d2ebd9d972f27162f70b365ac0dd62f843d9a7ee62886932",
+  "linux-x64":    "d09b3e19fecf30204c530a15a40dfadbffacc81c9ccd42f698577062a31c286d",
+  "win32-x64":    "ddf65b6b48edb2452a9c14fb9fe2872f6946a803127f42bb5db4c6cb1148f5ab",
+};
 
 interface AssetTarget {
   platform: NodeJS.Platform;
@@ -237,7 +254,26 @@ async function runFetchPipeline(
     });
   }
 
-  // ---- Phase 2: extract ----
+  // ---- Phase 2a: integrity check ----
+  // Verify the SHA-256 of the downloaded tarball before we extract +
+  // chmod+exec the binary inside. Pinned hashes live in TARBALL_SHA256
+  // and are bumped in lockstep with ASSET_VERSION. A mismatch means
+  // either the release was tampered with or the constant is stale —
+  // either way, refuse to install.
+  const expectedHash = TARBALL_SHA256[`${target.platform}-${target.arch}`];
+  if (!expectedHash) {
+    throw new FetchError(
+      `No pinned SHA-256 for ${target.platform}-${target.arch}; refusing to install. Bump ASSET_VERSION + TARBALL_SHA256 together.`
+    );
+  }
+  const actualHash = await sha256OfFile(archivePath);
+  if (actualHash !== expectedHash) {
+    throw new FetchError(
+      `Voice assets hash mismatch for ${target.platform}-${target.arch}: expected ${expectedHash}, got ${actualHash}. Refusing to extract — re-pull the extension or report this.`
+    );
+  }
+
+  // ---- Phase 2b: extract ----
   // tar is present on macOS, Linux, and Windows 10+ (System32\tar.exe).
   // We don't bundle a JS tar lib — keeps the .vsix small and the path
   // simple. If a target platform lacks tar in PATH, this throws and the
@@ -304,6 +340,13 @@ async function runFetchPipeline(
     ASSET_VERSION,
     "utf8"
   );
+  // Audit-trail log: prints the verified SHA on every successful install
+  // so a user grepping logs (or pasting them into a bug report) can
+  // confirm exactly which binary now lives on disk. Cheap observability,
+  // non-fatal if the host has no console.
+  console.log(
+    `[protege] voice assets installed: ${target.platform}-${target.arch} ${ASSET_VERSION} sha256=${expectedHash}`
+  );
   // tmpDir cleanup happens in the outer finally (whether this path
   // returns normally or throws), so partial archives don't linger.
 }
@@ -311,3 +354,17 @@ async function runFetchPipeline(
 // Note: `voiceCapture.ts` exposes its own `ensureVoiceEngine` wrapper
 // that drives the VS Code progress notification UI directly. There is
 // no need for a separate convenience wrapper here.
+
+/** Stream-hash a file with SHA-256. Used to integrity-check the
+ *  downloaded tarball against the pinned `TARBALL_SHA256` constants
+ *  before we extract + chmod+exec the binary inside. Streaming (rather
+ *  than `readFileSync`) keeps memory flat regardless of archive size. */
+export async function sha256OfFile(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash("sha256");
+    const stream = fs.createReadStream(filePath);
+    stream.on("error", reject);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("end", () => resolve(hash.digest("hex")));
+  });
+}

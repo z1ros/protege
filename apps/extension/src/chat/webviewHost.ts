@@ -1198,6 +1198,7 @@ async function sendInitialState(webview: vscode.Webview, userId: string | null) 
       velocity: me.velocity,
       breakdown: me.breakdown,
       iqV2: me.iqV2,
+      internal: me.internal,
     } satisfies HostToWebview);
   } catch {
     // backend may be offline

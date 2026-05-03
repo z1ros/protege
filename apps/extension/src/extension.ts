@@ -104,6 +104,7 @@ function broadcastMe(me: MeResponse) {
     velocity: me.velocity,
     breakdown: me.breakdown,
     iqV2: me.iqV2,
+    internal: me.internal,
   };
   broadcast(msg);
 }

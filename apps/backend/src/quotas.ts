@@ -490,7 +490,17 @@ export async function addCostUsd(
   deltaUsd: number,
   tokens?: { prompt: number; completion: number }
 ): Promise<void> {
-  if (deltaUsd <= 0 && (!tokens || (tokens.prompt + tokens.completion) === 0)) return;
+  // Clamp inputs: NaN/Infinity/negatives from a malformed usage payload
+  // would silently corrupt total_tokens / total_usd_estimate via the
+  // UPSERT below. Guard at the boundary so downstream arithmetic is safe.
+  const safeDelta = Number.isFinite(deltaUsd) && deltaUsd > 0 ? deltaUsd : 0;
+  const safeTokens = tokens
+    ? {
+        prompt: Math.max(0, Number.isFinite(tokens.prompt) ? tokens.prompt : 0),
+        completion: Math.max(0, Number.isFinite(tokens.completion) ? tokens.completion : 0),
+      }
+    : undefined;
+  if (safeDelta === 0 && (!safeTokens || (safeTokens.prompt + safeTokens.completion) === 0)) return;
   if (!isQuotaSchemaReady()) return;
   const sb = getSupabase();
   if (!sb) return;
@@ -524,12 +534,12 @@ export async function addCostUsd(
   const row: Record<string, unknown> = {
     user_id: userId,
     day,
-    total_usd_estimate: currentUsd + deltaUsd,
+    total_usd_estimate: currentUsd + safeDelta,
   };
-  if (tokens) {
-    row.prompt_tokens = currentPrompt + tokens.prompt;
-    row.completion_tokens = currentCompletion + tokens.completion;
-    row.total_tokens = currentTotal + tokens.prompt + tokens.completion;
+  if (safeTokens) {
+    row.prompt_tokens = currentPrompt + safeTokens.prompt;
+    row.completion_tokens = currentCompletion + safeTokens.completion;
+    row.total_tokens = currentTotal + safeTokens.prompt + safeTokens.completion;
   }
   const { error: writeErr } = await sb
     .from("user_quotas")
@@ -672,7 +682,12 @@ export async function addToolCalls(
   userId: string,
   delta: number
 ): Promise<void> {
-  if (delta <= 0) return;
+  // Defense-in-depth clamp: caller (chat.ts:1259) passes
+  // `result.toolUses.length` which JS guarantees is a non-negative int,
+  // but normalize anyway so a future caller can't corrupt the column
+  // with NaN/Infinity/negatives. Mirrors the addCostUsd boundary clamp.
+  const safeDelta = Number.isFinite(delta) && delta > 0 ? Math.floor(delta) : 0;
+  if (safeDelta === 0) return;
   if (!isQuotaSchemaReady()) return;
   const sb = getSupabase();
   if (!sb) return;
@@ -690,7 +705,7 @@ export async function addToolCalls(
   const current = (data?.tool_calls as number | undefined) ?? 0;
   // UPSERT — see addCostUsd comment for rationale.
   const { error: writeErr } = await sb.from("user_quotas").upsert(
-    { user_id: userId, day, tool_calls: current + delta },
+    { user_id: userId, day, tool_calls: current + safeDelta },
     { onConflict: "user_id,day" }
   );
   if (writeErr) {
@@ -766,36 +781,6 @@ export async function addChatMinutes(
   if (writeErr) {
     console.warn("[quotas] addChatMinutes write failed:", writeErr.message);
   }
-}
-
-/**
- * Pre-check + bump tool-calls. Used by /chat to gate calls that would
- * push a user past the daily 25 tool-call cap before the LLM runs.
- */
-export async function checkToolCallLimit(
-  userId: string,
-  pendingToolUses: number
-): Promise<{ allowed: true } | { allowed: false; used: number; limit: number; resetAt: number }> {
-  if (!isQuotaSchemaReady() || pendingToolUses <= 0) return { allowed: true };
-  const sb = getSupabase();
-  if (!sb) return { allowed: true };
-  const day = utcDay();
-  const { data } = await sb
-    .from("user_quotas")
-    .select("tool_calls")
-    .eq("user_id", userId)
-    .eq("day", day)
-    .maybeSingle();
-  const used = (data?.tool_calls as number | undefined) ?? 0;
-  if (used >= USER_FACING_LIMITS.tool_calls) {
-    return {
-      allowed: false,
-      used,
-      limit: USER_FACING_LIMITS.tool_calls,
-      resetAt: nextResetMs(),
-    };
-  }
-  return { allowed: true };
 }
 
 /**
