@@ -337,6 +337,13 @@ export interface MeResponse {
    *  categories (Craft, Range, Velocity, Debug, Quality, Independence).
    *  Computed in parallel with v1 during the transition. */
   iqV2: IqV2;
+  /** Server-side internal-team flag. True when the authenticated GitHub
+   *  login appears in `PROTEGE_INTERNAL_LOGINS` (case-insensitive). Gates
+   *  dev-only UI in the webview (Advanced surfaces panel, etc.). Always
+   *  false for non-allowlisted users — the catalog itself is local data
+   *  but other dev-only panels could hit gated endpoints, so we never
+   *  derive this client-side. */
+  internal: boolean;
 }
 
 export interface ActiveFileInfo {
@@ -801,6 +808,10 @@ export type HostToWebview =
       velocity: VelocityInfo;
       breakdown: IqBreakdown;
       iqV2: IqV2;
+      /** Forwarded straight from `MeResponse.internal` so the webview can
+       *  gate dev-only surfaces. Always false until /me resolves; the gate
+       *  stays closed until proven open. */
+      internal: boolean;
     }
   | { type: "iq/gain"; gains: GainEvent[]; codeIq: number }
   | {

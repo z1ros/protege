@@ -578,6 +578,10 @@ export function App() {
   const [velocityInfo, setVelocityInfo] = useState<VelocityInfo | null>(null);
   const [breakdown, setBreakdown] = useState<IqBreakdown | null>(null);
   const [iqV2, setIqV2] = useState<IqV2 | null>(null);
+  /** Server-side internal-team flag from `MeResponse.internal`. Defaults
+   *  to false so dev-only surfaces stay hidden until /me proves the
+   *  authenticated GitHub login is on the allowlist. */
+  const [internal, setInternal] = useState(false);
   const [toast, setToast] = useState<GainEvent | null>(null);
   const [overlay, setOverlay] = useState<"profile" | null>(null);
   const [authUser, setAuthUser] = useState<{
@@ -724,6 +728,7 @@ export function App() {
         setVelocityInfo(msg.velocity);
         setBreakdown(msg.breakdown);
         setIqV2(msg.iqV2);
+        setInternal(msg.internal);
       } else if (msg.type === "iq/gain") {
         setCodeIq(msg.codeIq);
         const top = [...msg.gains].sort((a, b) => b.deltaIq - a.deltaIq)[0];
@@ -1769,6 +1774,7 @@ export function App() {
         <LiveTab
           fileName={fileName}
           liveReviewOn={liveMode}
+          internal={internal}
           onToggleLiveReview={() => {
             setLiveMode((m) => {
               const next = !m;
