@@ -91,6 +91,12 @@ shipping your override to the marketplace (this is what broke 0.1.4).
 The pre-commit hook also blocks staging the file. Both guards are
 installed automatically by `pnpm install`.
 
+## Publishing
+
+See [apps/extension/PUBLISHING.md](apps/extension/PUBLISHING.md) for the
+full Open VSX release flow (build → package → publish). Token lives in
+`apps/extension/.env` (gitignored; template at `.env.example`).
+
 ## Troubleshooting
 
 - **`kokoro warmup failed: Unable to get model file path or buffer`** —
