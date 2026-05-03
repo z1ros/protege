@@ -130,7 +130,13 @@ class GhostLensProvider implements vscode.CodeLensProvider {
           ? hasNativeDiagnosticInRange(doc.uri, s.range)
           : hasNativeDiagnosticOnLine(doc.uri, s.range.start.line);
       if (rangeHasNative) return false;
-      if (gateShouldSuppress(uriKey, s)) return false;
+      // skipCooldown:true to match underlineWhisper (renderer-side
+      // contract documented in findingGate.shouldSuppress). liveReview
+      // arms the (ruleId@line) cooldown when it STORES a finding, so a
+      // strict `shouldSuppress` call here silently drops the freshly-
+      // stored finding in the same render cycle — whisper paints the
+      // token highlight but the lens + whole-line wash never appear.
+      if (gateShouldSuppress(uriKey, s, { skipCooldown: true })) return false;
       return true;
     });
     if (filtered.length === 0) {
@@ -426,7 +432,11 @@ export function registerGhostMentor(
           const line = position.line;
           const onLine = all.filter(
             (s) =>
-              !gateShouldSuppress(uri, s) &&
+              // skipCooldown:true — same renderer-side bypass as the
+              // CodeLens provider above and underlineWhisper. Without it,
+              // hovering on a freshly-stored finding returned no card
+              // while the whisper underline was visible right next to it.
+              !gateShouldSuppress(uri, s, { skipCooldown: true }) &&
               Math.max(0, Math.min(doc.lineCount - 1, s.range.start.line)) ===
                 line &&
               !(s.scope === "block" || s.scope === "flow"

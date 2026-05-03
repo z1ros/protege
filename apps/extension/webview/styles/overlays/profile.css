@@ -33,7 +33,33 @@
   color: var(--text-dim);
 }
 
-.profile-stats { margin-top: 0; }
+/* Override the default 3-col `.hero-stats` grid — ProfilePage only
+   renders Streak + Concepts (2 cards), so a 1fr/1fr/1fr grid leaves a
+   dead third column and shrinks each card to ~33% width. With 2 equal
+   columns the cards fill the row, the serif numbers feel less cramped,
+   and the "best 6d" / "mastered" sublabels have breathing room.
+   Selector is `.hero-stats.profile-stats` (specificity 0,2,0) to win
+   over the `.hero-stats { 1fr 1fr 1fr }` rule that responsive.css
+   re-asserts inside the <520px media query — media queries don't add
+   specificity, so a higher-specificity selector here wins regardless of
+   load order. The ultra-narrow (<360px) 1-col stack is re-applied below
+   with the same boosted selector. */
+.hero-stats.profile-stats {
+  margin-top: 0;
+  grid-template-columns: 1fr 1fr;
+}
+.profile-stats .hero-stat {
+  padding: 16px 12px 14px;
+}
+.profile-stats .hero-stat-value .serif-num {
+  font-size: 32px;
+}
+@media (max-width: 360px) {
+  /* Below ~360px the row would clip "best 6d" / "15/41" inside two
+     ~150px cards. Stack to single column, matching the existing
+     ultra-narrow behavior in responsive.css for plain .hero-stats. */
+  .hero-stats.profile-stats { grid-template-columns: 1fr; }
+}
 
 .profile-section {
   display: flex;

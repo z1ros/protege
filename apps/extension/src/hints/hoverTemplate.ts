@@ -45,12 +45,16 @@ const PALETTE: Record<HoverKind, { accent: string; label: string }> = {
   teach:    { accent: "#b863ff", label: "TEACH" },
 };
 
-// Tiny inline SVG logo — base64'd so it stays a single <img> data URI.
-// 12x12 white orbit ring + dot. Matches the Protege brand.
+// Inline brand mark — Orbit (one ring + one offset dot on the
+// perimeter), per the canonical Protege logo. Colors aligned to the
+// launcher palette: pure white --glow (#ffffff) so it reads bright on
+// the dark hover background instead of the lavender-grey #d0d5e8 we
+// shipped earlier (user feedback: "still old logo with circle").
+// Stroke tightened slightly for crisper rendering at 12x12.
 const LOGO_B64 = Buffer.from(
-  `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 32 32">` +
-    `<circle cx="16" cy="16" r="10.5" fill="none" stroke="#d0d5e8" stroke-width="2.2"/>` +
-    `<circle cx="23.42" cy="8.58" r="3" fill="#d0d5e8"/>` +
+  `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 32 32">` +
+    `<circle cx="16" cy="16" r="10.5" fill="none" stroke="#ffffff" stroke-width="2"/>` +
+    `<circle cx="23.42" cy="8.58" r="3.2" fill="#ffffff"/>` +
   `</svg>`,
   "utf8"
 ).toString("base64");
@@ -81,7 +85,7 @@ export function renderProtegeHover(opts: HoverOptions): vscode.MarkdownString {
 
   // ---- One-line header: [logo] Protege · Title     [CHIP] ----
   md.appendMarkdown(
-    `<img src="${LOGO_URI}" width="12" height="12" align="center" /> ` +
+    `<img src="${LOGO_URI}" width="14" height="14" align="center" /> ` +
     `<span style="color:rgba(245,246,250,0.5);font-weight:600;letter-spacing:0.5">Protege</span>` +
     `<span style="color:rgba(245,246,250,0.3)"> · </span>` +
     `<span style="color:#f5f6fa;font-weight:600">${escapeHtml(opts.title)}</span>` +
