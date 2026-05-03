@@ -2315,7 +2315,19 @@ function renderHtml(
   // (TextMate regex compiled to WebAssembly). Without it the webview's
   // CSP silently kills the syntax-highlight pipeline and every code block
   // renders as monochrome plain text.
-  const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline' https://fonts.googleapis.com; script-src 'nonce-${nonce}' 'wasm-unsafe-eval' 'strict-dynamic'; img-src ${webview.cspSource} data: blob: https://avatars.githubusercontent.com; font-src ${webview.cspSource} https://fonts.gstatic.com; connect-src ${webview.cspSource} http://localhost:8787 http://127.0.0.1:8787; media-src ${webview.cspSource} blob: data: http://localhost:8787 http://127.0.0.1:8787;`;
+  //
+  // connect-src + media-src include BOTH the local-dev origin
+  // (localhost:8787) AND the production backend
+  // (protege-backend-production.up.railway.app). The webview itself
+  // doesn't know which one it'll talk to — getBackendUrl() is set
+  // dynamically by the host via a `backend/url` message — so the CSP has
+  // to allowlist both, otherwise the marketplace .vsix gets blocked
+  // every time it tries to fetch /tts or /log from prod. (Self-hosted
+  // forks pointing at a different origin via PROTEGE_BACKEND_URL or the
+  // protege.backendUrl setting will need to edit this constant; that's
+  // the same governance boundary as the voice-asset host.)
+  const PROD_BACKEND_ORIGIN = "https://protege-backend-production.up.railway.app";
+  const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline' https://fonts.googleapis.com; script-src 'nonce-${nonce}' 'wasm-unsafe-eval' 'strict-dynamic'; img-src ${webview.cspSource} data: blob: https://avatars.githubusercontent.com; font-src ${webview.cspSource} https://fonts.gstatic.com; connect-src ${webview.cspSource} http://localhost:8787 http://127.0.0.1:8787 ${PROD_BACKEND_ORIGIN}; media-src ${webview.cspSource} blob: data: http://localhost:8787 http://127.0.0.1:8787 ${PROD_BACKEND_ORIGIN};`;
 
   return `<!DOCTYPE html>
 <html lang="en">
