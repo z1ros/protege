@@ -93,8 +93,12 @@ export class LauncherProvider implements vscode.WebviewViewProvider {
         vscode.Uri.joinPath(this.ctx.extensionUri, "media"),
       ],
     };
+    // Use the high-res 128×128 PNG for the launcher mark — the SVG was
+    // rendering anti-aliased at the small mark size and looked muddy
+    // against the hero card's dark glass. The PNG is pre-rasterized at
+    // 128×128 and downscales cleanly to the 36-42 px mark size.
     const logoUri = view.webview.asWebviewUri(
-      vscode.Uri.joinPath(this.ctx.extensionUri, "media", "logo.svg")
+      vscode.Uri.joinPath(this.ctx.extensionUri, "media", "icon-128x128.png")
     );
     view.webview.html = this.html(view.webview, logoUri);
     currentView = view;
