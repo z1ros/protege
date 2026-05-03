@@ -172,25 +172,29 @@ function HeatmapTooltip({
   if (!active || !payload || payload.length === 0) return null;
   const row = payload[0].payload;
   if (!row) return null;
-  const parts: string[] = [formatFullDate(row.date)];
-  if (row.activeMinutes > 0) {
-    parts.push(formatMinutes(row.activeMinutes));
-  } else {
-    parts.push("no activity");
-  }
-  if (row.filesTouched > 0) {
-    parts.push(
-      `${row.filesTouched} file${row.filesTouched === 1 ? "" : "s"}`
-    );
-  }
+  const hasActivity = row.activeMinutes > 0;
+  const fileLabel =
+    row.filesTouched > 0
+      ? `${row.filesTouched} file${row.filesTouched === 1 ? "" : "s"}`
+      : null;
   return (
-    <div className="echo-heatmap-tooltip">
-      {parts.map((p, i) => (
-        <React.Fragment key={i}>
-          {i > 0 ? <span className="echo-heatmap-tooltip-sep"> · </span> : null}
-          <span>{p}</span>
-        </React.Fragment>
-      ))}
+    <div className="echo-heatmap-tooltip" role="tooltip">
+      <div className="echo-heatmap-tooltip-date">{formatFullDate(row.date)}</div>
+      <div className="echo-heatmap-tooltip-row">
+        <span
+          className={`echo-heatmap-tooltip-dot ${hasActivity ? "" : "is-empty"}`}
+          aria-hidden
+        />
+        <span className="echo-heatmap-tooltip-value">
+          {hasActivity ? formatMinutes(row.activeMinutes) : "No activity"}
+        </span>
+        {fileLabel ? (
+          <>
+            <span className="echo-heatmap-tooltip-sep" aria-hidden />
+            <span className="echo-heatmap-tooltip-meta">{fileLabel}</span>
+          </>
+        ) : null}
+      </div>
     </div>
   );
 }

@@ -13,7 +13,8 @@ import { isTeachingMessage } from "../intent/teachingTrigger.js";
 import { getActiveFileEditor } from "../workspace/activeFile.js";
 import { classifyResponse, dispatchRouterActions } from "./responseRouter.js";
 import { getHistory, appendMessage, searchHistory, clearHistory } from "./chatHistory.js";
-import { clearAllHighlights, setLessonActive } from "../ai/tools.js";
+import { clearAllHighlights, setLessonActive, resetConversationLineMemory } from "../ai/tools.js";
+import { decideShouldSpeak } from "./shouldSpeak.js";
 import { isLiveReviewActive } from "../review/liveReview.js";
 import {
   startRecording,
@@ -727,6 +728,11 @@ export function mountProtegeWebview(
       post(webview, { type: "chat/fullHistory", messages: getHistory() });
     } else if (msg.type === "chat/clearHistory") {
       clearHistory();
+      // Wipe the cross-turn highlight-line memory too — a fresh chat
+      // means the user can re-see lines they'd already been shown.
+      // (Mid-conversation `clearAllHighlights` doesn't touch this; only
+      // an explicit chat reset does.)
+      resetConversationLineMemory();
       post(webview, { type: "chat/history", messages: [] });
     } else if (msg.type === "notes/list") {
       const { listNotes } = await import("../notes/notesStore.js");
@@ -1686,11 +1692,14 @@ async function handleChat(
     );
   }
 
-  // Wipe any lingering highlight decorations from a previous turn. The
-  // model may paint new ones during this run via highlight_code, but we
-  // always start each turn on a fresh canvas — fixes the "highlights stay
-  // forever" UX bug.
-  clearAllHighlights().catch(() => {});
+  // Highlights persist across turns by default now (2026-05-03). User
+  // explicitly asked: "once it highlights something, it'll be there
+  // until I click dismiss". Sticky-by-default + the existing per-call
+  // replace semantics inside highlightCode mean a NEW highlight_code
+  // call still wipes/replaces; the user just doesn't lose their last
+  // result by typing a follow-up message. Use the ✘ Dismiss action
+  // (CodeLens row above each highlight) or the `clear_highlights`
+  // command-palette entry to remove them.
 
   // Create the user message for persistence. Stamp source from the
   // ORIGINAL mode (not effectiveMode) so voice-dialogue promotions don't
@@ -1919,21 +1928,16 @@ async function handleChat(
     // voice mode and thinks the bot is broken.
     const voiceChannel = isVoiceTurn || isWakeWordListening();
     const replyHasText = reply.trim().length > 0;
-    // If teach_step was called, suppress the terminal-reply TTS in
-    // voice/teaching modes — each teach_step already played its own
-    // narration. Without this gate, the user hears the per-step
-    // narrations AND a redundant final-reply TTS stacked on top.
-    const shouldSpeak =
-      !teachStepWasCalled &&
-      (effectiveMode === "voice" ||
-        effectiveMode === "voice-dialogue" ||
-        (effectiveMode === "teaching" && voiceChannel && replyHasText) ||
-        // teaching-text turns also speak when the voice channel is
-        // open (wake word listening or current turn was voice). The
-        // user typed via keyboard but has voice on — they still expect
-        // the bot to speak the response. Without this, voice users in
-        // a lesson hear silence after every typed message.
-        (effectiveMode === "teaching-text" && voiceChannel && replyHasText));
+    // Single source of truth for the speak/silence decision lives in
+    // `./shouldSpeak.ts`. Pulled out so the closer-question exception
+    // and teach_step suppression are unit-testable without a webview
+    // harness; behavior is preserved verbatim.
+    const shouldSpeak = decideShouldSpeak({
+      effectiveMode,
+      teachStepWasCalled,
+      voiceChannel,
+      reply,
+    });
     // Learning-fork reconciliation: keep the LLM honest.
     //   - If the user's message had build/teach intent AND the reply has
     //     NO <learningFork> tag AND gate conditions pass, inject one
@@ -2083,7 +2087,15 @@ async function handleChat(
     // pick an arbitrary mounted webview as `target`. Text turns already
     // saw the user's own message locally (optimistic append) so a
     // duplicate assistant render across panels is harmless.
-    broadcast({ type: "chat/append", message: assistant });
+    //
+    // Skip the broadcast (and persistence) when the model produced no
+    // terminal text. Happens when a turn ran entirely as teach_step /
+    // highlight_code tool calls and the model's final answer is empty.
+    // Without this guard the chat panel paints an empty assistant
+    // bubble — user reported it as a bug ("it shows empty response").
+    if (displayReply.trim().length > 0) {
+      broadcast({ type: "chat/append", message: assistant });
+    }
     // Refresh the quota snapshot now that the backend has incremented
     // teach_calls + tool_calls + cost for this turn. `fetchQuota` emits
     // through `onQuotaChange`, which the broadcaster above is wired to —
@@ -2099,16 +2111,13 @@ async function handleChat(
       // before sending to TTS. Without this, Kokoro reads "let i equals
       // zero curly brace console dot log…" out loud OR chokes on the
       // syntax and produces silence — which is what the user hit when
-      // the model emitted a fenced snippet in a voice reply. The chat
-      // panel still renders the original `finalReply` (broadcast above
-      // via chat/append), so the visual code block is preserved; only
-      // the spoken text is sanitized. Word cap tightened 2026-04-30
-      // again 70 → 50: AI-vs-AI sim showed Haiku 4.5 still produces
-      // 80-word lectures despite the 30-word target. trimForVoice clips
-      // to the last sentence boundary at-or-before the cap, so the user
-      // hears clean stops (~2 sentences) instead of 25-second monologues.
-      // Match the chat-display cap (35) so spoken and visible match.
-      // Mismatched caps led to "I see more text than I heard" confusion.
+      // the model emitted a fenced snippet in a voice reply.
+      //
+      // Word cap stays as a brevity hint, but trimForVoice itself was
+      // changed (2026-05-03) to ALWAYS finish the sentence it lands in
+      // — it never cuts backwards to a prior period and drops the
+      // final sentence. So a reply of 36 words gets spoken in full
+      // rather than losing "The effect is fine." off the tail.
       const spoken = trimForVoice(finalReply, 35);
       // Pre-suspend wake BEFORE the broadcast. Otherwise the chain is
       // broadcast → webview → fetch /tts → onplaying → post :true → host
@@ -2148,6 +2157,11 @@ async function handleChat(
               // true so the composer's "stop" button remained visible
               // and clickable. Now switch back to "send" mode.
               broadcast({ type: "chat/loading", loading: false });
+              // Highlights stay until the user dismisses them — see the
+              // start-of-turn comment for the sticky-by-default policy.
+              // The trailing `← <label>` from a teach_step tour's last
+              // beat will now linger until the user hits ✘ Dismiss; the
+              // older auto-clear here was removed at user request.
               // Keep STRICT mode on for 5s after TTS ends — only a clearly
               // spoken "Protege" (avg ≥ STRICT_AVG_THRESHOLD = 0.55) can
               // re-trigger wake during this window. Bot speaker reverb,
@@ -2214,11 +2228,20 @@ async function handleChat(
       } else {
         setVoiceState("off");
       }
+      // Text-path: highlights stay until the user dismisses (or the AI
+      // calls highlight_code again, replacing them). Same sticky-by-
+      // default policy as the voice path above — particularly relevant
+      // for "find bugs" replies where the user wants the highlights to
+      // remain visible while they read the bullet list.
     }
 
     // Persist the assistant's reply. userMsg was already persisted
     // above (before the AI call) so it survives AI errors and reloads.
-    appendMessage(assistant);
+    // Skip the persist for the same empty-reply case the broadcast
+    // skips above — no point storing a blank entry in chat history.
+    if (displayReply.trim().length > 0) {
+      appendMessage(assistant);
+    }
 
     // JARVIS: Route the reply through the Smart Response Router.
     // This highlights relevant code in the editor, shows apply-fix

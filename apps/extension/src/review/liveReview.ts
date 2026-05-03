@@ -219,7 +219,15 @@ const PENDING_FIX_TTL_MS = 60_000;
 // you wrote, stuck, moved attention), short enough to feel real-time on
 // a typist who pauses regularly. Phase-1 hits cloud nano (~$0.0002/scan)
 // gated by autoBudgetPerHour.
-const IDLE_SCAN_MS = 20_000;
+//
+// Bumped 2026-05-03 from 20s → 60s. User feedback: at 20s the scanner
+// fired several times during a single coding session even when the
+// edits were trivial, eating tokens for no real benefit. 60s matches
+// the "I just paused to read what I wrote" cadence better and cuts
+// auto-fire rate ~3x without losing the real-time feel — typical
+// pauses past 60s are genuine "I'm stuck / re-reading" moments where
+// a finding is actually useful.
+const IDLE_SCAN_MS = 60_000;
 // Phase-2 (cloud refinement) fires CLOUD_REFINE_DELAY_MS after a phase-1
 // pass that returned >= 1 finding. The delay lets the user keep typing
 // without immediately burning a cloud call on a transient state. Each
@@ -608,42 +616,50 @@ function startLiveReview(): void {
   editorListener = vscode.window.onDidChangeActiveTextEditor((editor) => {
     if (!editor) return;
     // Skip virtual documents (output channels, settings UI, etc.) —
-    // they're not user code, scanning them is pointless and burns
-    // tokens on guaranteed-bad findings. Only file:// schemes count.
-    // runReview also defends against this, but bailing here saves the
-    // tab-switch log line + cache check for noise that doesn't matter.
+    // they're not user code; nothing to repaint.
     if (editor.document.uri.scheme !== "file") return;
-    // Per-URI dedup: if we've scanned this exact text before, the cache
-    // already has the right suggestions. Skip the LLM call and just
-    // refresh surfaces. Without this, every tab switch re-scans even
-    // unchanged files — common pattern (jump to a file, jump back) used
-    // to fire two LLM calls for zero new info.
+    // Tab-switch policy (2026-05-03): NEVER fire a fresh scan on tab
+    // switch. The 60s typing-idle trigger is the sole entry point —
+    // if the user engages with the file, they get findings; if they
+    // just peek and leave, we burn zero tokens. Cached suggestions
+    // from a prior scan are still surfaced so jumping back to a known
+    // file still shows the underlines/CodeLens.
     const uriKey = editor.document.uri.toString();
     const text = editor.document.getText();
     const cached = lastScannedTextByUri.get(uriKey);
     if (cached !== undefined && cached === text && suggestionsByUri.has(uriKey)) {
-      // Sync the global lastScannedText so a follow-up keystroke-debounced
-      // scan still sees the dedup guard at runReview entry.
+      // Sync globals so a follow-up keystroke-debounced scan still
+      // sees the dedup guard at runReview entry.
       lastScannedText = text;
       pendingChangeSize = 0;
       currentSuggestions = suggestionsByUri.get(uriKey) ?? [];
       log(
         "liveReview",
-        `tab-switch dedup HIT · ${editor.document.fileName.split(/[\\/]/).pop()} · ${currentSuggestions.length} cached findings`
+        `tab-switch · cached · ${editor.document.fileName.split(/[\\/]/).pop()} · ${currentSuggestions.length} findings`
       );
       refreshAllSurfaces();
       broadcastState();
       return;
     }
+    // No cache for this file — clear the painted surface and wait for
+    // the user to type. The idle-typing listener will pick up from here
+    // once they actually engage.
     lastScannedText = null;
-    pendingChangeSize = Infinity;
+    pendingChangeSize = 0;
+    currentSuggestions = [];
     log(
       "liveReview",
-      `LIVE tab-switch · ${editor.document.fileName.split(/[\\/]/).pop()}`
+      `tab-switch · no scan · ${editor.document.fileName.split(/[\\/]/).pop()} (waiting for typing)`
     );
-    void runReview(editor);
+    refreshAllSurfaces();
+    broadcastState();
   });
 
+  // Startup: same policy as tab-switch — display cached findings if
+  // the user already scanned this file earlier in the session, but
+  // do NOT auto-scan whatever happens to be the active file at boot.
+  // Catches the "open IDE, glance at code, switch to terminal" case
+  // that used to burn a free LLM call before the user even typed.
   if (vscode.window.activeTextEditor) {
     const editor = vscode.window.activeTextEditor;
     const uriKey = editor.document.uri.toString();
@@ -654,13 +670,6 @@ function startLiveReview(): void {
       pendingChangeSize = 0;
       currentSuggestions = suggestionsByUri.get(uriKey) ?? [];
       refreshAllSurfaces();
-    } else {
-      pendingChangeSize = Infinity;
-      log(
-        "liveReview",
-        `LIVE startup · ${editor.document.fileName.split(/[\\/]/).pop()}`
-      );
-      void runReview(editor);
     }
   }
 
@@ -674,12 +683,13 @@ function startLiveReview(): void {
   // until focus comes back. Pending edits during the unfocused window
   // count: we treat a refocus as if the user just paused typing, so
   // the freshest content gets reviewed without waiting another 7s.
-  windowStateListener = vscode.window.onDidChangeWindowState((s) => {
-    if (!active || !s.focused) return;
-    const editor = vscode.window.activeTextEditor;
-    if (!editor) return;
-    log("liveReview", "LIVE refocus · firing catch-up scan");
-    void runReview(editor);
+  // Refocus path retired (2026-05-03): consistent with the no-scan-
+  // on-tab-switch policy. Returning from another app doesn't imply
+  // the user wants fresh feedback — the moment they touch the
+  // keyboard, the idle-typing debounce will fire on its own.
+  windowStateListener = vscode.window.onDidChangeWindowState(() => {
+    /* intentionally empty — kept registered so the dispose chain in
+       deactivateLiveReview still has a Disposable to clean up. */
   });
 
   // Gate-change re-renders cover the only repaint path that matters:

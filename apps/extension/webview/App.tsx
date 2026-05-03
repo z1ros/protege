@@ -617,6 +617,12 @@ export function App() {
     useState<LearningSessionTrace | null>(null);
   const [streakOpen, setStreakOpen] = useState(false);
   const [chatHistoryOpen, setChatHistoryOpen] = useState(false);
+  // Wake-word listener state — mirrored from the host's `wake/state`
+  // broadcasts. Drives the "auto-voice for quick prompts" rule: when
+  // wake is live the user is in a voice context, so quick-prompt sends
+  // (Explain this file / Find bugs / etc.) default to voice mode and
+  // the reply is spoken. When wake is off, those sends stay text.
+  const [wakeActive, setWakeActive] = useState(false);
   // Separate from `messages`: this is the full persisted history the
   // host returns when the panel opens. `messages` represents the
   // current chat view (can be cleared by "New chat"); this represents
@@ -797,6 +803,13 @@ export function App() {
         }
       } else if (msg.type === "auth/user") {
         setAuthUser(msg.user);
+      } else if (msg.type === "wake/state") {
+        // Treat the listener as "active" only when it's fully running —
+        // status="loading" means the binary is still loading models, so
+        // no audio is being captured yet. Treating loading as active
+        // would auto-flip quick-prompt sends to voice before the wake
+        // binary is actually online.
+        setWakeActive(!!msg.active && msg.status !== "loading");
       } else if (msg.type === "config/backend") {
         setBackendUrl(msg.url);
       } else if (msg.type === "watcher/nudge") {
@@ -1416,7 +1429,14 @@ export function App() {
                     <button
                       key={p.label}
                       className="prompt-btn"
-                      onClick={() => sendMessage(p.label)}
+                      // Quick-prompt sends auto-flip to voice when the
+                      // wake listener is live — user has already opted
+                      // into a voice context, so getting a typed reply
+                      // back from "Explain this file" feels broken.
+                      // Wake off → text (unchanged default).
+                      onClick={() =>
+                        sendMessage(p.label, wakeActive ? "voice" : undefined)
+                      }
                     >
                       <span className="prompt-icon">{p.icon}</span>
                       {p.label}

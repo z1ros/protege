@@ -293,8 +293,8 @@ function renderCardHtml(args: InsetArgs): string {
   <div class="card">
     <div class="hdr">
       <svg class="logo" viewBox="0 0 32 32" aria-hidden>
-        <circle cx="16" cy="16" r="10.5" fill="none" stroke="#d0d5e8" stroke-width="2"/>
-        <circle cx="23.42" cy="8.58" r="3" fill="#d0d5e8"/>
+        <circle cx="16" cy="16" r="10.5" fill="none" stroke="#ffffff" stroke-width="2"/>
+        <circle cx="23.42" cy="8.58" r="3.2" fill="#ffffff"/>
       </svg>
       <span class="brand">Protege</span>
       <span class="chip">${escapeHtml(a.label)}</span>

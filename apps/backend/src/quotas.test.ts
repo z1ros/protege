@@ -527,6 +527,117 @@ describe("quotas — addCostUsd robustness against malformed inputs", () => {
   });
 });
 
+describe("quotas — checkTokenLimit (2M daily ceiling, sole /chat gate)", () => {
+  it("allows when no row exists yet (zero tokens used)", async () => {
+    pinDate("2026-05-03T12:00:00Z");
+    const { checkTokenLimit } = await import("./quotas.js");
+    const r = await checkTokenLimit(USER);
+    expect(r.allowed).toBe(true);
+  });
+
+  it("allows when total_tokens is below the 2M ceiling", async () => {
+    pinDate("2026-05-03T12:00:00Z");
+    const { checkTokenLimit, DAILY_TOKEN_DISPLAY_LIMIT } = await import("./quotas.js");
+    fakeRows.set(todayKey(), {
+      user_id: USER,
+      day: "2026-05-03",
+      total_tokens: DAILY_TOKEN_DISPLAY_LIMIT - 1, // 1,999,999
+    });
+    const r = await checkTokenLimit(USER);
+    expect(r.allowed).toBe(true);
+  });
+
+  it("blocks at exactly the 2M ceiling with kind:tokens + reason:token-cap", async () => {
+    pinDate("2026-05-03T12:00:00Z");
+    const { checkTokenLimit, DAILY_TOKEN_DISPLAY_LIMIT } = await import("./quotas.js");
+    fakeRows.set(todayKey(), {
+      user_id: USER,
+      day: "2026-05-03",
+      total_tokens: DAILY_TOKEN_DISPLAY_LIMIT, // exactly 2M
+    });
+    const r = await checkTokenLimit(USER);
+    expect(r.allowed).toBe(false);
+    if (!r.allowed) {
+      expect(r.kind).toBe("tokens");
+      expect(r.reason).toBe("token-cap");
+      expect(r.used).toBe(DAILY_TOKEN_DISPLAY_LIMIT);
+      expect(r.limit).toBe(DAILY_TOKEN_DISPLAY_LIMIT);
+      // resetAt must be the next 00:00 UTC.
+      expect(r.resetAt).toBe(new Date("2026-05-04T00:00:00Z").getTime());
+    }
+  });
+
+  it("blocks when total_tokens overshoots the cap (e.g. last call burst past 2M)", async () => {
+    pinDate("2026-05-03T12:00:00Z");
+    const { checkTokenLimit } = await import("./quotas.js");
+    fakeRows.set(todayKey(), {
+      user_id: USER,
+      day: "2026-05-03",
+      total_tokens: 2_500_000,
+    });
+    const r = await checkTokenLimit(USER);
+    expect(r.allowed).toBe(false);
+    if (!r.allowed) expect(r.used).toBe(2_500_000);
+  });
+
+  it("RESET behavior: hitting 2M today does not block tomorrow", async () => {
+    pinDate("2026-05-03T23:59:30Z");
+    const { checkTokenLimit, DAILY_TOKEN_DISPLAY_LIMIT } = await import("./quotas.js");
+
+    // Today: cap maxed.
+    fakeRows.set(todayKey(), {
+      user_id: USER,
+      day: "2026-05-03",
+      total_tokens: DAILY_TOKEN_DISPLAY_LIMIT,
+    });
+    const blocked = await checkTokenLimit(USER);
+    expect(blocked.allowed).toBe(false);
+
+    // Cross UTC midnight — the gate now reads tomorrow's (nonexistent) row.
+    vi.setSystemTime(new Date("2026-05-04T00:00:30Z"));
+    const fresh = await checkTokenLimit(USER);
+    expect(fresh.allowed).toBe(true);
+
+    // Yesterday's exhausted row is still in storage (no migration needed).
+    expect(
+      (fakeRows.get(`${USER}:2026-05-03`) as Record<string, number>).total_tokens
+    ).toBe(DAILY_TOKEN_DISPLAY_LIMIT);
+    // Today's row hasn't been touched.
+    expect(fakeRows.has(`${USER}:2026-05-04`)).toBe(false);
+  });
+
+  it("cap is per-user — userA hitting 2M does not block userB", async () => {
+    pinDate("2026-05-03T12:00:00Z");
+    const { checkTokenLimit, DAILY_TOKEN_DISPLAY_LIMIT } = await import("./quotas.js");
+    fakeRows.set(`userA:2026-05-03`, {
+      user_id: "userA",
+      day: "2026-05-03",
+      total_tokens: DAILY_TOKEN_DISPLAY_LIMIT,
+    });
+    const a = await checkTokenLimit("userA");
+    const b = await checkTokenLimit("userB");
+    expect(a.allowed).toBe(false);
+    expect(b.allowed).toBe(true);
+  });
+
+  it("end-to-end: addCostUsd accumulates tokens, checkTokenLimit gates at 2M", async () => {
+    pinDate("2026-05-03T12:00:00Z");
+    const { addCostUsd, checkTokenLimit, DAILY_TOKEN_DISPLAY_LIMIT } = await import("./quotas.js");
+
+    // Burn 1.9M in two chunks — still allowed.
+    await addCostUsd(USER, 5.0, { prompt: 800_000, completion: 200_000 });
+    await addCostUsd(USER, 5.0, { prompt: 700_000, completion: 200_000 });
+    expect((await checkTokenLimit(USER)).allowed).toBe(true);
+
+    // Push past 2M.
+    await addCostUsd(USER, 1.0, { prompt: 100_000, completion: 50_000 });
+    const stored = fakeRows.get(todayKey()) as Record<string, number>;
+    expect(stored.total_tokens).toBeGreaterThanOrEqual(DAILY_TOKEN_DISPLAY_LIMIT);
+    const blocked = await checkTokenLimit(USER);
+    expect(blocked.allowed).toBe(false);
+  });
+});
+
 describe("quotas — addToolCalls (post-2026-05-02 cap removal)", () => {
   it("delta = 0 is a no-op", async () => {
     pinDate("2026-04-29T12:00:00Z");

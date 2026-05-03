@@ -522,27 +522,59 @@ function extractKeyTokens(message: string): string[] {
  * still tight enough that we won't re-anchor to an unrelated block —
  * the token has to actually appear somewhere nearby.
  */
-function findAnyTokenNearLine(
+/**
+ * Count distinct tokens that appear on the line. Used to score how well
+ * a line matches a finding's prose — multi-token matches beat single
+ * weak hits ("console" appears on both `console.log(…)` and a JSX
+ * "Check your console for a message" — only the first ALSO contains
+ * `log`, so it scores 2 vs 1 and wins).
+ */
+function countTokenMatches(line: string, needles: string[]): number {
+  const lineLower = line.toLowerCase();
+  let n = 0;
+  for (const t of needles) {
+    if (lineLower.includes(t)) n++;
+  }
+  return n;
+}
+
+/**
+ * Find the line within ±`window` of `hint` that matches the most tokens.
+ * Ties broken by proximity to `hint` (closer wins). Returns null when
+ * no line in the window matches any token.
+ *
+ * Earlier version returned the FIRST line with ANY single-token match,
+ * which mis-anchored "console.log runs on mount" to a JSX line that
+ * happened to contain the word "console" — even though the actual
+ * console.log statement (matching `console` AND `log` together) was
+ * just 4 lines away. Score-by-count fixes that class of false hit.
+ */
+function findBestTokenLineNear(
   lines: string[],
   tokens: string[],
   hint: number,
   window = 15
-): { lineIdx: number; token: string } | null {
+): { lineIdx: number; matches: number } | null {
   if (tokens.length === 0) return null;
   const needles = tokens.map((t) => t.toLowerCase());
+  let best: { lineIdx: number; matches: number; dist: number } | null = null;
   for (let d = 0; d <= window; d++) {
     const candidates = d === 0 ? [hint] : [hint - d, hint + d];
     for (const i of candidates) {
       if (i < 0 || i >= lines.length) continue;
-      const lineLower = lines[i]!.toLowerCase();
-      for (let k = 0; k < needles.length; k++) {
-        if (lineLower.includes(needles[k]!)) {
-          return { lineIdx: i, token: tokens[k]! };
-        }
+      const matches = countTokenMatches(lines[i]!, needles);
+      if (matches === 0) continue;
+      if (
+        !best ||
+        matches > best.matches ||
+        (matches === best.matches && d < best.dist)
+      ) {
+        best = { lineIdx: i, matches, dist: d };
       }
     }
   }
-  return null;
+  if (!best) return null;
+  return { lineIdx: best.lineIdx, matches: best.matches };
 }
 
 /**
@@ -604,32 +636,39 @@ function reconcileIssueLine(
   // hit but a secondary one (e.g. `useState` vs. generic "state") does.
   const tokens = extractKeyTokens(issue.message ?? "");
   if (tokens.length > 0) {
-    const anchorText = doc.lineAt(anchor).text.toLowerCase();
-    const hitOnAnchor = tokens.some((t) =>
-      anchorText.includes(t.toLowerCase())
+    const needles = tokens.map((t) => t.toLowerCase());
+    const lines = Array.from(
+      { length: lineCount },
+      (_, i) => doc.lineAt(i).text
     );
-    if (!hitOnAnchor) {
-      const lines = Array.from(
-        { length: lineCount },
-        (_, i) => doc.lineAt(i).text
+    const anchorMatches = countTokenMatches(lines[anchor]!, needles);
+    const best = findBestTokenLineNear(lines, tokens, anchor, 15);
+
+    if (anchorMatches === 0 && best === null) {
+      // Layer 4 — drop. None of the candidate tokens exist within 15
+      // lines of the reported line; the finding is too unreliable
+      // to render at all.
+      log(
+        "reviewEngine",
+        `anchor-dropped ${fileName} · no token from [${tokens.slice(0, 3).join(",")}] found within 15 lines of ${anchor + 1} · ruleId=${issue.ruleId ?? "?"}`
       );
-      const found = findAnyTokenNearLine(lines, tokens, anchor, 15);
-      if (found !== null) {
-        log(
-          "reviewEngine",
-          `anchor-retargeted ${fileName} · token="${found.token}" was at line ${found.lineIdx + 1}, not ${anchor + 1} · ruleId=${issue.ruleId ?? "?"}`
-        );
-        anchor = found.lineIdx;
-      } else {
-        // Layer 4 — drop. None of the candidate tokens exist within
-        // 15 lines of the reported line; the finding is too unreliable
-        // to render at all.
-        log(
-          "reviewEngine",
-          `anchor-dropped ${fileName} · no token from [${tokens.slice(0, 3).join(",")}] found within 15 lines of ${anchor + 1} · ruleId=${issue.ruleId ?? "?"}`
-        );
-        return null;
-      }
+      return null;
+    }
+
+    // Retarget when there's a STRICTLY better-matching line nearby.
+    // "Strictly better" = more distinct token hits, not just a tie.
+    // Earlier code only retargeted when the anchor had ZERO matches —
+    // a single weak hit on the anchor was enough to lock it in place
+    // even if a different line scored 2x. The classic miss: the model
+    // says "console.log on line 11" pointing at a JSX line containing
+    // the word "console" (1 match), while the actual console.log
+    // statement scores both `console` AND `log` (2 matches) on line 7.
+    if (best && best.matches > anchorMatches && best.lineIdx !== anchor) {
+      log(
+        "reviewEngine",
+        `anchor-retargeted ${fileName} · better match @ line ${best.lineIdx + 1} (${best.matches} tokens) vs anchor line ${anchor + 1} (${anchorMatches}) · ruleId=${issue.ruleId ?? "?"}`
+      );
+      anchor = best.lineIdx;
     }
   }
 

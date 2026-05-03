@@ -54,35 +54,29 @@ export function trimForVoice(text: string, maxWords = 90): string {
   const words = stripped.split(" ");
   if (words.length <= maxWords) return stripped;
 
-  // Look for a sentence boundary at-or-before the cap.
-  const rough = words.slice(0, maxWords).join(" ");
-  const lastPeriodBefore = Math.max(
-    rough.lastIndexOf(". "),
-    rough.lastIndexOf("! "),
-    rough.lastIndexOf("? ")
-  );
-  // Also look for the FIRST boundary after the cap — if there's no
-  // boundary earlier (or the earlier one is suspiciously close to the
-  // start), better to overshoot than chop.
-  const beyond = words.slice(maxWords).join(" ");
-  const overshootMatch = beyond.match(/[.!?](?=\s|$)/);
-  const firstPeriodAfter = overshootMatch
-    ? rough.length + 1 + overshootMatch.index!
-    : -1;
-
-  // Prefer earlier boundary if it lands past 1/3 of the cap (i.e. we
-  // got at least one substantive sentence in). Otherwise, accept the
-  // overshoot to avoid a mid-thought trail-off.
-  const minEarlyChars = Math.floor(rough.length / 3);
-  if (lastPeriodBefore >= minEarlyChars) {
-    return rough.slice(0, lastPeriodBefore + 1).trim();
+  // Cap landed somewhere mid-text. New rule (2026-05-03): never cut
+  // BACKWARDS to a previous period — that drops a final sentence the
+  // user reasonably expects to hear (e.g. "The effect is fine."). The
+  // model's word-budget is enforced by the cap softly; the trim's job
+  // is only to land on a clean sentence boundary, even if that means
+  // overshooting by a handful of words.
+  //
+  // Algorithm: find the FIRST sentence boundary at-or-after the cap
+  // and stop there. If the very last char of the original is already
+  // a sentence terminator we just return as-is — we're past the cap
+  // but the model already wrapped a sentence right at the end.
+  const beyondStart = words.slice(0, maxWords).join(" ").length;
+  // Search the rest of the stripped string for a `. ` / `! ` / `? `
+  // (or terminator at end-of-string). `(?=\s|$)` is the spaces-or-EOS
+  // lookahead so we stop at sentence boundaries, not embedded periods
+  // (e.g. "v1.2.3").
+  const rest = stripped.slice(beyondStart);
+  const m = rest.match(/[.!?](?=\s|$)/);
+  if (m && typeof m.index === "number") {
+    return stripped.slice(0, beyondStart + m.index + 1).trim();
   }
-  if (firstPeriodAfter >= 0) {
-    return stripped.slice(0, firstPeriodAfter + 1).trim();
-  }
-  // No sentence boundary anywhere — model produced one giant run-on.
-  // Return the full stripped text; trailing "…" is worse than letting
-  // the user hear the whole thing once.
+  // No sentence boundary anywhere after the cap — model produced one
+  // giant run-on. Speak the whole thing rather than chop mid-thought.
   return stripped;
 }
 

@@ -57,6 +57,33 @@ interface ActiveHighlight {
 }
 const activeHighlightMeta = new Map<string, ActiveHighlight[]>();
 
+/**
+ * Cross-turn cache of (uri, line) pairs the AI has already highlighted
+ * during the current chat session. The user reported re-highlighting
+ * the same line twice ("it highlighted it once. I was thinking it
+ * should be cached"). When the AI re-issues highlight_code on a line
+ * already in this set, the renderer skips painting THAT region — the
+ * narration still plays (so a teach_step beat can reference a line
+ * already shown), the visual just doesn't re-fire.
+ *
+ * Cleared by:
+ *   - `resetConversationLineMemory()` — fired on "New chat" / chat
+ *     session reset / explicit user clear (Escape key cascade).
+ *   - NOT cleared on between-turn `clearAllHighlights()`. The whole
+ *     point is to remember across turns within a single conversation.
+ */
+const conversationLineMemory = new Set<string>();
+function lineMemoryKey(uri: string, line: number): string {
+  return `${uri}#${line}`;
+}
+
+/** Reset the cross-turn dedup cache. Called on new chat sessions and
+ *  on explicit user clears so a fresh conversation can re-highlight
+ *  any line. */
+export function resetConversationLineMemory(): void {
+  conversationLineMemory.clear();
+}
+
 class HighlightCodeLensProvider implements vscode.CodeLensProvider {
   private _onDidChange = new vscode.EventEmitter<void>();
   onDidChangeCodeLenses = this._onDidChange.event;
@@ -243,12 +270,15 @@ function setHighlightContext() {
 }
 
 function scheduleAutoClear() {
+  // Sticky highlights (2026-05-03): highlights now stay until the user
+  // explicitly dismisses (CodeLens ✘ Dismiss) or the AI calls
+  // highlight_code again (which replaces). The 45s inactivity auto-
+  // clear that previously lived here was wiping highlights before the
+  // user finished reading them. Kept as a no-op so existing call sites
+  // (highlightCode below, errorPath cleanups) don't need to change.
   if (highlightAutoTimer) clearTimeout(highlightAutoTimer);
-  if (activeHighlightFiles.size === 0) return;
-  highlightAutoTimer = setTimeout(async () => {
-    highlightAutoTimer = null;
-    await clearHighlights();
-  }, HIGHLIGHT_AUTO_CLEAR_MS);
+  highlightAutoTimer = null;
+  void HIGHLIGHT_AUTO_CLEAR_MS; // kept for future re-enable; silence unused warning
 }
 
 export function hasActiveHighlights(): boolean {
@@ -530,6 +560,23 @@ async function highlightCode(regions: HighlightRegion[]): Promise<string> {
     return "no regions provided";
   }
 
+  // Pre-screen against the cross-turn line-memory: if EVERY incoming
+  // region is already remembered as previously highlighted in this
+  // conversation, skip the whole pipeline — including the
+  // clearHighlights call below. Otherwise the redundant call would
+  // wipe the user's existing visible highlights without painting
+  // anything new (because the dedup loop later skips painting too),
+  // leaving them with nothing on screen. Caller still sees a
+  // success-shaped string return so its narration / cursor flow runs.
+  const allDeduped = regions.every((r) => {
+    const uri = resolveUri(r.path).toString();
+    const claimedStart = Math.max(0, ((r.startLine | 0) - 1));
+    return conversationLineMemory.has(lineMemoryKey(uri, claimedStart));
+  });
+  if (allDeduped) {
+    return `highlight_code: all ${regions.length} region(s) already shown earlier in this conversation — kept existing highlights, no repaint`;
+  }
+
   // Clear previous highlights across all kinds / all visible editors.
   await clearHighlights();
 
@@ -567,6 +614,17 @@ async function highlightCode(regions: HighlightRegion[]): Promise<string> {
       });
       continue;
     }
+    // Cross-turn dedup — if this exact (uri, start-line) was already
+    // highlighted earlier in the conversation, skip the visual repaint.
+    // Caller (e.g. teach_step) still gets a "success" return so its
+    // narration plays normally; the user just doesn't see the same
+    // line lit up twice across turns. Reset by `resetConversationLineMemory`
+    // on new-chat / explicit clear.
+    const memKey = lineMemoryKey(uri.toString(), correctedStart);
+    if (conversationLineMemory.has(memKey)) {
+      continue;
+    }
+    conversationLineMemory.add(memKey);
     if (!groups.has(key)) {
       groups.set(key, { uri, kind, options: [] });
     }
