@@ -1839,3 +1839,5 @@ export type LearningTraceEvent =
   | { kind: "hint-revealed"; at: string; stepId: string }
   | { kind: "show-revealed"; at: string; stepId: string }
   | { kind: "session-ended"; at: string; outcome: "complete" | "abandoned" | "replaced" };
+
+export * from "./iq3/index.js";
