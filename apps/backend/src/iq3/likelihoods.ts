@@ -148,6 +148,462 @@ export const LIKELIHOODS: Iq3LikelihoodEntry[] = [
     matchKey: "chat_turn.intent=plan.includes_constraints",
     trait: "specificPrompts", pLow: 0.10, pMid: 0.40, pHigh: 0.55,
   },
+
+  // -----------------------------------------------------------------
+  // Comprehension :: pausesBeforeLargeEdits
+  // -----------------------------------------------------------------
+  {
+    matchKey: "before_text_change.size>=50chars.idle_duration>=20s",
+    trait: "pausesBeforeLargeEdits", pLow: 0.05, pMid: 0.30, pHigh: 0.65,
+  },
+  {
+    matchKey: "before_text_change.size>=50chars.idle_duration<=2s",
+    trait: "pausesBeforeLargeEdits", pLow: 0.65, pMid: 0.30, pHigh: 0.10,
+  },
+  {
+    matchKey: "selection_change.size>=20lines.before_edit",
+    trait: "pausesBeforeLargeEdits", pLow: 0.10, pMid: 0.35, pHigh: 0.60,
+  },
+  {
+    matchKey: "stare_pause.duration>=15s.no_edit_after",
+    trait: "pausesBeforeLargeEdits", pLow: 0.20, pMid: 0.45, pHigh: 0.50,
+  },
+
+  // -----------------------------------------------------------------
+  // Comprehension :: summarizesCodebase
+  // -----------------------------------------------------------------
+  {
+    matchKey: "session_start.file_opened_count>=5.before_first_edit",
+    trait: "summarizesCodebase", pLow: 0.05, pMid: 0.30, pHigh: 0.65,
+  },
+  {
+    matchKey: "session_start.file_opened_count<=1.before_first_edit",
+    trait: "summarizesCodebase", pLow: 0.65, pMid: 0.30, pHigh: 0.10,
+  },
+  {
+    matchKey: "editor_navigation.kind=symbol-search.before_edit",
+    trait: "summarizesCodebase", pLow: 0.10, pMid: 0.35, pHigh: 0.60,
+  },
+  {
+    matchKey: "text_change.size>=10chars.no_prior_file_open_in_5min",
+    trait: "summarizesCodebase", pLow: 0.60, pMid: 0.30, pHigh: 0.10,
+  },
+
+  // -----------------------------------------------------------------
+  // Comprehension :: asksClarifyingQuestions
+  // -----------------------------------------------------------------
+  {
+    matchKey: "chat_turn.intent=plan.before_first_edit",
+    trait: "asksClarifyingQuestions", pLow: 0.10, pMid: 0.35, pHigh: 0.60,
+  },
+  {
+    matchKey: "chat_turn.contains_question_mark.charCount>=60",
+    trait: "asksClarifyingQuestions", pLow: 0.10, pMid: 0.35, pHigh: 0.60,
+  },
+  {
+    matchKey: "chat_turn.intent=request.no_prior_question",
+    trait: "asksClarifyingQuestions", pLow: 0.60, pMid: 0.30, pHigh: 0.10,
+  },
+  {
+    matchKey: "session_start.no_chat_turn.first_edit_within_2min",
+    trait: "asksClarifyingQuestions", pLow: 0.65, pMid: 0.30, pHigh: 0.10,
+  },
+
+  // -----------------------------------------------------------------
+  // Comprehension :: navigatesBySymbols
+  // -----------------------------------------------------------------
+  {
+    matchKey: "editor_navigation.kind=def-jump.session_count>=3",
+    trait: "navigatesBySymbols", pLow: 0.05, pMid: 0.30, pHigh: 0.65,
+  },
+  {
+    matchKey: "editor_navigation.kind=symbol-search.session_count>=2",
+    trait: "navigatesBySymbols", pLow: 0.10, pMid: 0.35, pHigh: 0.60,
+  },
+  {
+    matchKey: "editor_navigation.kind=file-bounce.session_count>=10.no_def-jump",
+    trait: "navigatesBySymbols", pLow: 0.65, pMid: 0.30, pHigh: 0.10,
+  },
+  {
+    matchKey: "session_tick.no_navigation.duration>=15min",
+    trait: "navigatesBySymbols", pLow: 0.60, pMid: 0.35, pHigh: 0.10,
+  },
+
+  // -----------------------------------------------------------------
+  // Execution :: compilesCleanOnSave
+  // -----------------------------------------------------------------
+  {
+    matchKey: "file_saved.errorCount=0.session_proportion>=0.8",
+    trait: "compilesCleanOnSave", pLow: 0.05, pMid: 0.30, pHigh: 0.65,
+  },
+  {
+    matchKey: "file_saved.errorCount>=3.session_proportion>=0.4",
+    trait: "compilesCleanOnSave", pLow: 0.65, pMid: 0.30, pHigh: 0.10,
+  },
+  {
+    matchKey: "file_saved.errorCount=0",
+    trait: "compilesCleanOnSave", pLow: 0.20, pMid: 0.45, pHigh: 0.50,
+  },
+  {
+    matchKey: "file_saved.errorCount>=5",
+    trait: "compilesCleanOnSave", pLow: 0.70, pMid: 0.25, pHigh: 0.05,
+  },
+
+  // -----------------------------------------------------------------
+  // Execution :: keepsFunctionsSmall
+  // -----------------------------------------------------------------
+  {
+    matchKey: "commit_detected.avg_function_lines<=20",
+    trait: "keepsFunctionsSmall", pLow: 0.05, pMid: 0.30, pHigh: 0.65,
+  },
+  {
+    matchKey: "commit_detected.avg_function_lines>=80",
+    trait: "keepsFunctionsSmall", pLow: 0.65, pMid: 0.30, pHigh: 0.10,
+  },
+  {
+    matchKey: "commit_detected.max_function_lines<=40",
+    trait: "keepsFunctionsSmall", pLow: 0.10, pMid: 0.35, pHigh: 0.60,
+  },
+  {
+    matchKey: "commit_detected.max_function_lines>=200",
+    trait: "keepsFunctionsSmall", pLow: 0.75, pMid: 0.20, pHigh: 0.05,
+  },
+
+  // -----------------------------------------------------------------
+  // Execution :: conceptDepth
+  // -----------------------------------------------------------------
+  {
+    matchKey: "concept_encountered.distinct_difficulty3_count>=5.in_30days",
+    trait: "conceptDepth", pLow: 0.05, pMid: 0.20, pHigh: 0.75,
+  },
+  {
+    matchKey: "concept_encountered.only_difficulty1.in_30days",
+    trait: "conceptDepth", pLow: 0.70, pMid: 0.25, pHigh: 0.05,
+  },
+  {
+    matchKey: "concept_encountered.distinct_count>=20.in_30days",
+    trait: "conceptDepth", pLow: 0.05, pMid: 0.30, pHigh: 0.65,
+  },
+  {
+    matchKey: "concept_encountered.distinct_count<=3.in_30days",
+    trait: "conceptDepth", pLow: 0.65, pMid: 0.30, pHigh: 0.05,
+  },
+
+  // -----------------------------------------------------------------
+  // Execution :: styleMatchesCodebase
+  // -----------------------------------------------------------------
+  {
+    matchKey: "line_diff.style_match_score>=0.85",
+    trait: "styleMatchesCodebase", pLow: 0.05, pMid: 0.30, pHigh: 0.65,
+  },
+  {
+    matchKey: "line_diff.style_match_score<=0.3",
+    trait: "styleMatchesCodebase", pLow: 0.65, pMid: 0.30, pHigh: 0.10,
+  },
+  {
+    matchKey: "commit_detected.lint_warnings_added>=5",
+    trait: "styleMatchesCodebase", pLow: 0.65, pMid: 0.30, pHigh: 0.10,
+  },
+  {
+    matchKey: "commit_detected.lint_warnings_added=0",
+    trait: "styleMatchesCodebase", pLow: 0.10, pMid: 0.40, pHigh: 0.55,
+  },
+
+  // -----------------------------------------------------------------
+  // Diagnostics :: errorResolutionFast
+  // -----------------------------------------------------------------
+  {
+    matchKey: "error_cleared.duration_since_appeared<=120s",
+    trait: "errorResolutionFast", pLow: 0.10, pMid: 0.35, pHigh: 0.60,
+  },
+  {
+    matchKey: "error_cleared.duration_since_appeared>=900s",
+    trait: "errorResolutionFast", pLow: 0.65, pMid: 0.30, pHigh: 0.10,
+  },
+  {
+    matchKey: "error_cleared.duration_since_appeared<=60s.error_severity=high",
+    trait: "errorResolutionFast", pLow: 0.05, pMid: 0.20, pHigh: 0.75,
+  },
+  {
+    matchKey: "error_persists.duration>=600s",
+    trait: "errorResolutionFast", pLow: 0.70, pMid: 0.25, pHigh: 0.05,
+  },
+
+  // -----------------------------------------------------------------
+  // Diagnostics :: fixNotBandAid
+  // -----------------------------------------------------------------
+  {
+    matchKey: "error_cleared.with_test_added.in_window=10min",
+    trait: "fixNotBandAid", pLow: 0.05, pMid: 0.20, pHigh: 0.75,
+  },
+  {
+    matchKey: "error_cleared.with_try_catch_added.no_logging",
+    trait: "fixNotBandAid", pLow: 0.70, pMid: 0.25, pHigh: 0.05,
+  },
+  {
+    matchKey: "error_cleared.targeted_edit.line_count<=5",
+    trait: "fixNotBandAid", pLow: 0.10, pMid: 0.35, pHigh: 0.60,
+  },
+  {
+    matchKey: "error_cleared.broad_edit.line_count>=30",
+    trait: "fixNotBandAid", pLow: 0.25, pMid: 0.45, pHigh: 0.30,
+  },
+
+  // -----------------------------------------------------------------
+  // Diagnostics :: testsAfterError
+  // -----------------------------------------------------------------
+  {
+    matchKey: "error_cleared.then.test_run_result.in_window=15min",
+    trait: "testsAfterError", pLow: 0.10, pMid: 0.35, pHigh: 0.60,
+  },
+  {
+    matchKey: "error_cleared.then.commit_detected.no_test_change.in_window=15min",
+    trait: "testsAfterError", pLow: 0.65, pMid: 0.30, pHigh: 0.10,
+  },
+  {
+    matchKey: "error_cleared.then.writesTestFile.in_window=20min",
+    trait: "testsAfterError", pLow: 0.05, pMid: 0.20, pHigh: 0.75,
+  },
+  {
+    matchKey: "error_cleared.no_test_change.session",
+    trait: "testsAfterError", pLow: 0.60, pMid: 0.30, pHigh: 0.10,
+  },
+
+  // -----------------------------------------------------------------
+  // Diagnostics :: readsStackTrace
+  // -----------------------------------------------------------------
+  {
+    matchKey: "chat_turn.contains_stack_trace.charCount>=200",
+    trait: "readsStackTrace", pLow: 0.10, pMid: 0.35, pHigh: 0.60,
+  },
+  {
+    matchKey: "error_appeared.then.editor_navigation.kind=def-jump.matches_stack_frame",
+    trait: "readsStackTrace", pLow: 0.05, pMid: 0.20, pHigh: 0.75,
+  },
+  {
+    matchKey: "error_appeared.no_navigation.duration>=120s",
+    trait: "readsStackTrace", pLow: 0.65, pMid: 0.30, pHigh: 0.10,
+  },
+
+  // -----------------------------------------------------------------
+  // Verification :: writesTestFiles
+  // -----------------------------------------------------------------
+  {
+    matchKey: "commit_detected.test_file_changes>=2.session_count>=3",
+    trait: "writesTestFiles", pLow: 0.05, pMid: 0.30, pHigh: 0.65,
+  },
+  {
+    matchKey: "commit_detected.no_test_changes.session_count>=10",
+    trait: "writesTestFiles", pLow: 0.70, pMid: 0.25, pHigh: 0.05,
+  },
+  {
+    matchKey: "file_saved.path_matches_test_pattern",
+    trait: "writesTestFiles", pLow: 0.10, pMid: 0.35, pHigh: 0.60,
+  },
+  {
+    matchKey: "commit_detected.test_to_src_ratio>=0.5",
+    trait: "writesTestFiles", pLow: 0.05, pMid: 0.25, pHigh: 0.70,
+  },
+
+  // -----------------------------------------------------------------
+  // Verification :: assertionDensity
+  // -----------------------------------------------------------------
+  {
+    matchKey: "line_diff.assertions_added>=3.lines_added>=20",
+    trait: "assertionDensity", pLow: 0.05, pMid: 0.30, pHigh: 0.65,
+  },
+  {
+    matchKey: "line_diff.assertions_added=0.lines_added>=50",
+    trait: "assertionDensity", pLow: 0.65, pMid: 0.30, pHigh: 0.10,
+  },
+  {
+    matchKey: "commit_detected.assertions_per_loc>=0.05",
+    trait: "assertionDensity", pLow: 0.05, pMid: 0.30, pHigh: 0.65,
+  },
+  {
+    matchKey: "commit_detected.assertions_per_loc<=0.005",
+    trait: "assertionDensity", pLow: 0.70, pMid: 0.25, pHigh: 0.05,
+  },
+
+  // -----------------------------------------------------------------
+  // Verification :: edgeCaseCoverage
+  // -----------------------------------------------------------------
+  {
+    matchKey: "commit_detected.test_contains_null_or_empty.test_added>=1",
+    trait: "edgeCaseCoverage", pLow: 0.10, pMid: 0.35, pHigh: 0.60,
+  },
+  {
+    matchKey: "commit_detected.test_contains_boundary_value.test_added>=1",
+    trait: "edgeCaseCoverage", pLow: 0.05, pMid: 0.25, pHigh: 0.70,
+  },
+  {
+    matchKey: "commit_detected.test_added>=1.no_edge_case_keyword",
+    trait: "edgeCaseCoverage", pLow: 0.55, pMid: 0.35, pHigh: 0.10,
+  },
+  {
+    matchKey: "commit_detected.test_added.assertion_count>=5",
+    trait: "edgeCaseCoverage", pLow: 0.25, pMid: 0.45, pHigh: 0.30,
+  },
+
+  // -----------------------------------------------------------------
+  // Verification :: preCommitReads
+  // -----------------------------------------------------------------
+  {
+    matchKey: "commit_detected.recent_file_opens>=3.in_window=10min_before",
+    trait: "preCommitReads", pLow: 0.05, pMid: 0.30, pHigh: 0.65,
+  },
+  {
+    matchKey: "commit_detected.no_file_opens.in_window=10min_before",
+    trait: "preCommitReads", pLow: 0.65, pMid: 0.30, pHigh: 0.10,
+  },
+  {
+    matchKey: "commit_detected.recent_scroll>=5.in_window=10min_before",
+    trait: "preCommitReads", pLow: 0.10, pMid: 0.35, pHigh: 0.60,
+  },
+
+  // -----------------------------------------------------------------
+  // Stewardship :: consistentNaming
+  // -----------------------------------------------------------------
+  {
+    matchKey: "line_diff.naming_consistency_score>=0.85",
+    trait: "consistentNaming", pLow: 0.05, pMid: 0.30, pHigh: 0.65,
+  },
+  {
+    matchKey: "line_diff.naming_consistency_score<=0.3",
+    trait: "consistentNaming", pLow: 0.65, pMid: 0.30, pHigh: 0.10,
+  },
+  {
+    matchKey: "commit_detected.identifier_entropy<=0.4",
+    trait: "consistentNaming", pLow: 0.10, pMid: 0.35, pHigh: 0.60,
+  },
+  {
+    matchKey: "commit_detected.identifier_entropy>=0.8",
+    trait: "consistentNaming", pLow: 0.65, pMid: 0.30, pHigh: 0.10,
+  },
+
+  // -----------------------------------------------------------------
+  // Stewardship :: removesDeadCode
+  // -----------------------------------------------------------------
+  {
+    matchKey: "commit_detected.lines_deleted>=lines_added.session_count>=2",
+    trait: "removesDeadCode", pLow: 0.05, pMid: 0.30, pHigh: 0.65,
+  },
+  {
+    matchKey: "commit_detected.lines_deleted=0.session_count>=10",
+    trait: "removesDeadCode", pLow: 0.65, pMid: 0.30, pHigh: 0.10,
+  },
+  {
+    matchKey: "line_diff.unused_import_removed>=1",
+    trait: "removesDeadCode", pLow: 0.10, pMid: 0.35, pHigh: 0.60,
+  },
+  {
+    matchKey: "commit_detected.commented_out_code_added>=3",
+    trait: "removesDeadCode", pLow: 0.65, pMid: 0.30, pHigh: 0.10,
+  },
+
+  // -----------------------------------------------------------------
+  // Stewardship :: refactorsWhileTouching
+  // -----------------------------------------------------------------
+  {
+    matchKey: "commit_detected.touches_unrelated_files.with_classification=refactor",
+    trait: "refactorsWhileTouching", pLow: 0.05, pMid: 0.30, pHigh: 0.65,
+  },
+  {
+    matchKey: "commit_detected.single_file.feature_only.session_count>=10",
+    trait: "refactorsWhileTouching", pLow: 0.25, pMid: 0.45, pHigh: 0.30,
+  },
+  {
+    matchKey: "commit_detected.contains_renames.feature_change_present",
+    trait: "refactorsWhileTouching", pLow: 0.10, pMid: 0.35, pHigh: 0.60,
+  },
+
+  // -----------------------------------------------------------------
+  // Stewardship :: commentsWhyNotWhat
+  // -----------------------------------------------------------------
+  {
+    matchKey: "line_diff.comments_added.contains_why_keyword>=1",
+    trait: "commentsWhyNotWhat", pLow: 0.05, pMid: 0.30, pHigh: 0.65,
+  },
+  {
+    matchKey: "line_diff.comments_added.is_what_describing>=3",
+    trait: "commentsWhyNotWhat", pLow: 0.60, pMid: 0.30, pHigh: 0.10,
+  },
+  {
+    matchKey: "commit_detected.comment_density>=0.3",
+    trait: "commentsWhyNotWhat", pLow: 0.55, pMid: 0.35, pHigh: 0.15,
+  },
+  {
+    matchKey: "commit_detected.comment_density<=0.05.with_comments",
+    trait: "commentsWhyNotWhat", pLow: 0.10, pMid: 0.35, pHigh: 0.60,
+  },
+
+  // -----------------------------------------------------------------
+  // AI Partnership :: iteratesOnAiOutput
+  // -----------------------------------------------------------------
+  {
+    matchKey: "ai_suggestion_accepted.then.text_change.editFraction>=0.3.in_window=5min",
+    trait: "iteratesOnAiOutput", pLow: 0.05, pMid: 0.30, pHigh: 0.65,
+  },
+  {
+    matchKey: "ai_suggestion_accepted.no_edit.in_window=30min",
+    trait: "iteratesOnAiOutput", pLow: 0.65, pMid: 0.30, pHigh: 0.10,
+  },
+  {
+    matchKey: "ai_suggestion_accepted.then.test_run_result.in_window=10min",
+    trait: "iteratesOnAiOutput", pLow: 0.10, pMid: 0.35, pHigh: 0.60,
+  },
+  {
+    matchKey: "ai_suggestion_accepted.then.error_appeared.no_iteration",
+    trait: "iteratesOnAiOutput", pLow: 0.65, pMid: 0.30, pHigh: 0.10,
+  },
+
+  // -----------------------------------------------------------------
+  // AI Partnership :: overridesAiConfidently
+  // -----------------------------------------------------------------
+  {
+    matchKey: "ai_suggestion_rejected.session_count>=3",
+    trait: "overridesAiConfidently", pLow: 0.10, pMid: 0.35, pHigh: 0.60,
+  },
+  {
+    matchKey: "ai_suggestion_rejected.then.text_change.contains_alternative_logic",
+    trait: "overridesAiConfidently", pLow: 0.05, pMid: 0.25, pHigh: 0.70,
+  },
+  {
+    matchKey: "ai_suggestion_accepted.session_count>=20.no_rejections",
+    trait: "overridesAiConfidently", pLow: 0.70, pMid: 0.25, pHigh: 0.05,
+  },
+
+  // -----------------------------------------------------------------
+  // AI Partnership :: explainsAfterAccept
+  // -----------------------------------------------------------------
+  {
+    matchKey: "ai_suggestion_accepted.then.chat_turn.intent=debug.in_window=15min",
+    trait: "explainsAfterAccept", pLow: 0.10, pMid: 0.35, pHigh: 0.60,
+  },
+  {
+    matchKey: "ai_suggestion_accepted.then.chat_turn.contains_explain_keyword.in_window=15min",
+    trait: "explainsAfterAccept", pLow: 0.05, pMid: 0.25, pHigh: 0.70,
+  },
+  {
+    matchKey: "ai_suggestion_accepted.no_chat_turn.in_window=60min",
+    trait: "explainsAfterAccept", pLow: 0.65, pMid: 0.30, pHigh: 0.10,
+  },
+
+  // -----------------------------------------------------------------
+  // AI Partnership :: agenticFlowQuality
+  // -----------------------------------------------------------------
+  {
+    matchKey: "chat_turn.intent=plan.then.commit_detected.in_window=2hour",
+    trait: "agenticFlowQuality", pLow: 0.10, pMid: 0.35, pHigh: 0.60,
+  },
+  {
+    matchKey: "chat_turn.intent=plan.then.error_persists.in_window=4hour",
+    trait: "agenticFlowQuality", pLow: 0.65, pMid: 0.30, pHigh: 0.10,
+  },
+  {
+    matchKey: "chat_turn.intent=request.then.test_run_result.passed=tests",
+    trait: "agenticFlowQuality", pLow: 0.05, pMid: 0.30, pHigh: 0.65,
+  },
 ];
 
 /** Convenience: which trait owns a given matchKey (for ingest fast-path). */
