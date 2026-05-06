@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { detectFieldFromRepo } from "./fieldVector.js";
+import { detectFieldFromRepo, updateFieldVector } from "./fieldVector.js";
+import { uniformFieldPrior } from "@protege/types";
 
 describe("repo archaeology", () => {
   it("flags 'web' for a typical React repo", () => {
@@ -50,5 +51,21 @@ describe("repo archaeology", () => {
     });
     const sum = Object.values(result).reduce((a, b) => a + b, 0);
     expect(sum).toBeCloseTo(1, 5);
+  });
+});
+
+describe("combined field vector update", () => {
+  it("blends repo + concepts + self-declared with spec weights", () => {
+    const v = updateFieldVector({
+      prior: uniformFieldPrior(),
+      repoSignals: { packageJsonDeps: ["react"], fileExtensions: { ".tsx": 5 }, infraFiles: [] },
+      conceptCounts: { "py-pytorch": 3 },
+      selfDeclared: "ml",
+      daysSinceLastUpdate: 1,
+    });
+    // ML or web should dominate (mix of strong signals)
+    const dom = Object.entries(v).sort((a, b) => b[1] - a[1])[0][0];
+    expect(["ml", "web"]).toContain(dom);
+    expect(Object.values(v).reduce((s, x) => s + x, 0)).toBeCloseTo(1, 5);
   });
 });

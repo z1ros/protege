@@ -1,5 +1,6 @@
 import type { Iq3FieldId, Iq3FieldVector } from "@protege/types";
-import { FIELD_IDS } from "@protege/types";
+import { FIELD_IDS, uniformFieldPrior } from "@protege/types";
+import { fieldVectorFromConceptCounts } from "./taxonomyService.js";
 
 /** Lightweight signature of a workspace, computed extension-side. */
 export interface RepoSignals {
@@ -159,4 +160,45 @@ export function dominantField(v: Iq3FieldVector): Iq3FieldId {
     }
   }
   return best;
+}
+
+export interface FieldUpdateInput {
+  prior: Iq3FieldVector;
+  repoSignals?: RepoSignals;
+  conceptCounts?: Record<string, number>;
+  selfDeclared?: Iq3FieldId;
+  daysSinceLastUpdate?: number;
+}
+
+/**
+ * One-shot field vector update applying all three sources at the spec's
+ * weights: 40% repo / 40% concepts / 20% self-declared.
+ */
+export function updateFieldVector(input: FieldUpdateInput): Iq3FieldVector {
+  const repo  = input.repoSignals    ? detectFieldFromRepo(input.repoSignals) : null;
+  const conc  = input.conceptCounts  ? fieldVectorFromConceptCounts(input.conceptCounts) : null;
+
+  const fresh = mixFreshSources(repo, conc, input.selfDeclared);
+  return emaMergeField(input.prior, fresh, 30, input.daysSinceLastUpdate ?? 1);
+}
+
+function mixFreshSources(
+  repo: Iq3FieldVector | null,
+  conc: Iq3FieldVector | null,
+  selfDeclared: Iq3FieldId | undefined,
+): Iq3FieldVector {
+  const baseline = uniformFieldPrior();
+  const w_repo = repo ? 0.4 : 0;
+  const w_conc = conc ? 0.4 : 0;
+  const w_self = selfDeclared ? 0.2 : 0;
+  const w_baseline = 1 - (w_repo + w_conc + w_self);
+  const result = {} as Iq3FieldVector;
+  for (const f of FIELD_IDS) {
+    result[f] =
+      w_baseline * baseline[f] +
+      w_repo * (repo ? repo[f] : 0) +
+      w_conc * (conc ? conc[f] : 0) +
+      w_self * (selfDeclared === f ? 1 : 0);
+  }
+  return result;
 }
