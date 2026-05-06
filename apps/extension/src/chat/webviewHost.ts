@@ -46,6 +46,8 @@ import {
   registerEchoBroadcastTarget,
   type PanelState as EchoPanelState,
 } from "../echo/panel.js";
+import { getBatcher } from "../echo/batcher.js";
+import { buildChatTurnEvent } from "../iq3/eventProducers/chatTurn.js";
 import type { EchoHostToWebview } from "@protege/types";
 
 // Audited allowlist for webview-initiated `command:` URIs. Adding a button
@@ -1525,6 +1527,12 @@ async function handleChat(
   mode: "text" | "voice" | "voice-dialogue" | "teaching" | "teaching-text",
   contextMessages?: ChatMessage[]
 ) {
+  // --- IQ3 chat_turn event (Task 19) ---
+  // Observe the prompt BEFORE any short-circuits or LLM calls so the HMM
+  // sees every user turn regardless of downstream outcome. Backend
+  // rewrites `acceptedAi` after the fact.
+  getBatcher()?.push(buildChatTurnEvent(message));
+
   // --- Explicit "teach me X" short-circuit (fork chip redundant) ---
   // When the user unambiguously says "teach me X", skip the verifier
   // clarifier dance and the fork chip — they told us what they want.
