@@ -20,6 +20,7 @@ import { conceptTipsRoute } from "./routes/conceptTips.js";
 import { walkRoute } from "./routes/walk.js";
 import { notesRoute } from "./routes/notes.js";
 import { chatHistoryRoute } from "./routes/chatHistory.js";
+import iqRouter from "./iq3/routes/iq.js";
 
 const app = new Hono();
 
@@ -108,6 +109,7 @@ app.route("/concept-tips", conceptTipsRoute);
 app.route("/walk", walkRoute);
 app.route("/notes", notesRoute);
 app.route("/chat-history", chatHistoryRoute);
+app.route("/iq", iqRouter);
 
 // Echo nightly jobs — rollup, archetypeClassifier.
 // Scaffolding only; widget agents fill in the real aggregation logic.
