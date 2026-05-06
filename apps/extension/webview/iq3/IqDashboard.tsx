@@ -5,6 +5,11 @@ import { HeadlineCard } from "./HeadlineCard.js";
 import { PillarBar } from "./PillarBar.js";
 import { FieldVector } from "./FieldVector.js";
 import { OnboardingProbes } from "./OnboardingProbes.js";
+import {
+  SelfRatingPrompt,
+  shouldShowSelfRating,
+  markSelfRatingShown,
+} from "./SelfRatingPrompt.js";
 import { vscode } from "../vscode.js";
 
 /**
@@ -26,6 +31,9 @@ import { vscode } from "../vscode.js";
 export function IqDashboard() {
   const [headline, setHeadline] = useState<Iq3Headline | null>(null);
   const [doneOnboarding, setDoneOnboarding] = useState(false);
+  // Compute eligibility once at mount so the prompt doesn't blink in
+  // and out as `localStorage` is read on each render.
+  const [showRating, setShowRating] = useState(() => shouldShowSelfRating());
 
   useEffect(() => {
     const handler = (event: MessageEvent) => {
@@ -90,6 +98,27 @@ export function IqDashboard() {
         <div className="iq3-floor-note">
           {`Senior gated by ${headline.rank.floorViolation.pillar} floor (${headline.rank.floorViolation.score} < ${headline.rank.floorViolation.floor}). Lift it to advance.`}
         </div>
+      ) : null}
+      {showRating && headline.maturity !== "cold" ? (
+        <SelfRatingPrompt
+          onSubmit={(rating, note) => {
+            try {
+              vscode.postMessage({
+                type: "iq/selfRating",
+                payload: { rating, note },
+              });
+            } catch {
+              // Bridge unavailable — still mark shown so we honor the
+              // cooldown rather than nag on every reload.
+            }
+            markSelfRatingShown();
+            setShowRating(false);
+          }}
+          onSkip={() => {
+            markSelfRatingShown();
+            setShowRating(false);
+          }}
+        />
       ) : null}
     </div>
   );

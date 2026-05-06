@@ -1158,6 +1158,24 @@ export function mountProtegeWebview(
         // Bridge not yet started (activation race) — next 30s poll
         // will pick up the new state anyway.
       }
+    } else if (msg.type === "iq/selfRating") {
+      // Periodic self-rating (Task 25). Forward to backend
+      // `POST /iq/self-rating` (Task 17), which records it as a
+      // declarative-evidence event. We swallow network errors — the
+      // user already saw the prompt commit, and the next /iq/me poll
+      // will reflect whichever side persisted.
+      const id = currentUserIdOrNull();
+      if (!id) return;
+      await authedFetch(`${BACKEND_URL}/iq/self-rating`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-user-id": id },
+        body: JSON.stringify({
+          userId: id,
+          rating: msg.payload.rating,
+          ratedAt: new Date().toISOString(),
+          note: msg.payload.note,
+        }),
+      }).catch(() => {});
     } else if (msg.type === "learning/forkChosen") {
       if (msg.choice === "learn") {
         // Fire Learning Mode with the user's original ask as the

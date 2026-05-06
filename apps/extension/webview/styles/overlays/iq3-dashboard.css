@@ -189,3 +189,19 @@
   cursor: pointer;
   padding: 4px 0;
 }
+
+/* iq3 self-rating prompt — Task 25
+ *
+ * Periodic 1-10 score the user gives themselves on this codebase.
+ * Shown at the bottom of the dashboard once per 90-day cooldown
+ * (gated webview-side via localStorage), and never during cold
+ * maturity since the user is still calibrating then.
+ */
+.iq3-selfrate { display: flex; flex-direction: column; gap: 8px; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 6px; }
+.iq3-selfrate-prompt { font-size: 13px; }
+.iq3-selfrate-buttons { display: flex; gap: 4px; flex-wrap: wrap; }
+.iq3-selfrate-btn { padding: 6px 10px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); border-radius: 4px; cursor: pointer; font-family: inherit; color: inherit; font-size: 12px; min-width: 28px; }
+.iq3-selfrate-btn--sel { background: rgba(59, 130, 246, 0.3); border-color: rgba(59, 130, 246, 0.6); }
+.iq3-selfrate-note { padding: 6px; font-size: 12px; resize: vertical; min-height: 32px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.08); color: inherit; font-family: inherit; border-radius: 4px; }
+.iq3-selfrate-actions { display: flex; gap: 8px; }
+.iq3-selfrate-actions button { padding: 6px 12px; cursor: pointer; font-size: 12px; }

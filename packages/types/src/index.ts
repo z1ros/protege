@@ -757,6 +757,15 @@ export type WebviewToHost =
   | {
       type: "iq/onboardingComplete";
       payload: { field: Iq3FieldId; matchKeys: string[] };
+    }
+  /** Webview → host: periodic self-rating answer. Host forwards to
+   *  `POST /iq/self-rating` (Task 17), which records it as a
+   *  declarative-evidence event in the HMM. `rating` is 1-10
+   *  (beginner → senior); `note` is an optional free-text reason
+   *  the user can leave for their future self. */
+  | {
+      type: "iq/selfRating";
+      payload: { rating: number; note?: string };
     };
 
 /** A single user-authored note in the Notes tab. Stored locally in
