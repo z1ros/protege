@@ -10,13 +10,15 @@
 export interface Iq3ChatTurnEvent {
   type: "chat_turn";
   ts: number;
-  /** the prompt text the user sent (PII-redacted at backend secret pass) */
-  text: string;
-  /** classifier output set by the producer; {specific, vague, request, debug, plan} */
+  /** classifier output set by the producer */
   intent: "specific" | "vague" | "request" | "debug" | "plan";
-  /** length of the prompt in characters (cheap proxy) */
+  /** length of the prompt in characters (proxy for specificity) */
   charCount: number;
-  /** whether this turn produced an "accept" downstream (set after the fact) */
+  /** producer-classified: prompt mentions an error/line/stack reference */
+  containsStackTraceOrLineRef: boolean;
+  /** producer-classified: prompt expresses a constraint or requirement */
+  containsConstraintWords: boolean;
+  /** whether this turn produced an "accept" downstream */
   acceptedAi: boolean;
 }
 

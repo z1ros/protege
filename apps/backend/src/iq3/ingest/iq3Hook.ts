@@ -84,8 +84,7 @@ const MATCHERS: Matcher[] = [
   (e) => {
     if (e.type !== "chat_turn") return [];
     const out: string[] = [];
-    const text = (e as any).text ?? "";
-    const charCount = (e as any).charCount ?? text.length;
+    const charCount = (e as any).charCount ?? 0;
     const intent = (e as any).intent;
     if (intent === "specific" && charCount >= 120) {
       out.push("chat_turn.intent=specific.charCount>=120");
@@ -93,10 +92,10 @@ const MATCHERS: Matcher[] = [
     if (intent === "vague" && charCount < 40) {
       out.push("chat_turn.intent=vague.charCount<40");
     }
-    if (intent === "debug" && /\b(line|stack|error|undefined|null|exception)\b/i.test(text)) {
+    if (intent === "debug" && (e as any).containsStackTraceOrLineRef) {
       out.push("chat_turn.intent=debug.contains_stack_trace_or_line_ref");
     }
-    if (intent === "plan" && /\b(must|should|cannot|requires|constraint)\b/i.test(text)) {
+    if (intent === "plan" && (e as any).containsConstraintWords) {
       out.push("chat_turn.intent=plan.includes_constraints");
     }
     return out;
