@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "generated": "2026-05-06",
+  "tags": {
+    "js-variables":          ["web", "generalist"],
+    "js-closures":           ["web", "generalist"],
+    "js-async-await":        ["web"],
+    "js-promise-all":        ["web"],
+    "react-hooks":           ["web"],
+    "react-context":         ["web"],
+    "py-numpy":              ["ml", "dataEng"],
+    "py-pandas":             ["ml", "dataEng"],
+    "py-pytorch":            ["ml"],
+    "py-transformers":       ["ml"],
+    "py-asyncio":            ["dataEng", "generalist"],
+    "sql-window-functions":  ["dataEng"],
+    "sql-cte":               ["dataEng"],
+    "k8s-deployment":        ["devOps"],
+    "terraform-modules":     ["devOps"],
+    "docker-multistage":     ["devOps"],
+    "auth-jwt":              ["web", "sec"],
+    "auth-oauth2":           ["web", "sec"],
+    "crypto-aes":            ["sec"],
+    "buffer-overflow":       ["sec", "embedded"],
+    "ios-swift-ui":          ["mobile"],
+    "android-kotlin":        ["mobile"],
+    "rust-ownership":        ["systems", "embedded"],
+    "c-malloc-free":         ["systems", "embedded"],
+    "game-physics":          ["game"],
+    "gpu-shaders":           ["game"],
+    "rtos-tasks":            ["embedded"]
+  }
+}
