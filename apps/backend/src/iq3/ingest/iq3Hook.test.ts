@@ -16,52 +16,83 @@ function runMatchers(e: EchoEvent, recent: EchoEvent[] = []): string[] {
   return MATCHERS.flatMap((m) => m(e, ctx));
 }
 
-describe("matcher: paste_classified", () => {
-  it("fires AI-paste matchKey for ai-chat-output source with >=6000 chars and no follow-up edit", () => {
+describe("matcher: read_pattern_observed", () => {
+  it("fires reads-high matchKey for 'deep' pattern", () => {
     const event = {
-      type: "paste_classified",
-      ts: 1000,
-      file: "src/foo.ts",
-      source: "ai-chat-output",
-      chars: 6500,
+      type: "read_pattern_observed",
+      ts: 1,
+      pattern: "deep",
+      msToFirstEdit: 35000,
+      navCount: 3,
+    } as unknown as EchoEvent;
+    expect(runMatchers(event)).toContain(
+      "file_opened.then.navigations>=2.then.first_text_change.afterMs>30s",
+    );
+  });
+
+  it("fires reads-low matchKey for 'jump-in' pattern", () => {
+    const event = {
+      type: "read_pattern_observed",
+      ts: 1,
+      pattern: "jump-in",
+      msToFirstEdit: 2000,
+      navCount: 0,
+    } as unknown as EchoEvent;
+    expect(runMatchers(event)).toContain(
+      "file_opened.then.first_text_change.withinMs<5s",
+    );
+  });
+
+  it("fires neither for 'skim' (intentionally noncommittal)", () => {
+    const event = {
+      type: "read_pattern_observed",
+      ts: 1,
+      pattern: "skim",
+      msToFirstEdit: 10000,
+      navCount: 1,
     } as unknown as EchoEvent;
     const keys = runMatchers(event);
-    expect(keys).toContain(
+    expect(keys).not.toContain(
+      "file_opened.then.navigations>=2.then.first_text_change.afterMs>30s",
+    );
+    expect(keys).not.toContain(
+      "file_opened.then.first_text_change.withinMs<5s",
+    );
+  });
+});
+
+describe("matcher: paste_outcome_observed", () => {
+  it("fires AI-paste no-edit matchKey for 'kept-as-is' on AI source", () => {
+    const event = {
+      type: "paste_outcome_observed",
+      ts: 1,
+      outcome: "kept-as-is",
+      source: "ai-chat-output",
+      chars: 7000,
+    } as unknown as EchoEvent;
+    expect(runMatchers(event)).toContain(
       "paste_classified.source=ai.size>=80lines.no_edit_within_60s",
     );
   });
 
-  it("does not fire when source is not AI-shaped (clipboard/external)", () => {
+  it("does not fire for non-AI source", () => {
     const event = {
-      type: "paste_classified",
-      ts: 1000,
-      file: "src/foo.ts",
+      type: "paste_outcome_observed",
+      ts: 1,
+      outcome: "kept-as-is",
       source: "external",
-      chars: 8000,
+      chars: 7000,
     } as unknown as EchoEvent;
     expect(runMatchers(event)).not.toContain(
       "paste_classified.source=ai.size>=80lines.no_edit_within_60s",
     );
   });
 
-  it("does not fire when source is self-edit-paste even if large", () => {
+  it("does not fire for small AI paste", () => {
     const event = {
-      type: "paste_classified",
-      ts: 1000,
-      file: "src/foo.ts",
-      source: "self-edit-paste",
-      chars: 9000,
-    } as unknown as EchoEvent;
-    expect(runMatchers(event)).not.toContain(
-      "paste_classified.source=ai.size>=80lines.no_edit_within_60s",
-    );
-  });
-
-  it("does not fire when paste is small (chars < 6000)", () => {
-    const event = {
-      type: "paste_classified",
-      ts: 1000,
-      file: "src/foo.ts",
+      type: "paste_outcome_observed",
+      ts: 1,
+      outcome: "kept-as-is",
       source: "ai-chat-output",
       chars: 500,
     } as unknown as EchoEvent;
@@ -70,29 +101,24 @@ describe("matcher: paste_classified", () => {
     );
   });
 
-  it("does not fire when a text_change appears within 60s after the paste", () => {
+  it("does not fire when iterated", () => {
     const event = {
-      type: "paste_classified",
-      ts: 1000,
-      file: "src/foo.ts",
+      type: "paste_outcome_observed",
+      ts: 1,
+      outcome: "iterated",
       source: "ai-chat-output",
       chars: 7000,
     } as unknown as EchoEvent;
-    const followup = {
-      type: "text_change",
-      ts: 30_000,
-      path: "src/foo.ts",
-    } as unknown as EchoEvent;
-    expect(runMatchers(event, [followup])).not.toContain(
+    expect(runMatchers(event)).not.toContain(
       "paste_classified.source=ai.size>=80lines.no_edit_within_60s",
     );
   });
 
   it("accepts hypothetical future ai-* sources (e.g. ai-completion)", () => {
     const event = {
-      type: "paste_classified",
-      ts: 1000,
-      file: "src/foo.ts",
+      type: "paste_outcome_observed",
+      ts: 1,
+      outcome: "kept-as-is",
       source: "ai-completion",
       chars: 7000,
     } as unknown as EchoEvent;
@@ -233,33 +259,56 @@ describe("matcher: chat_turn (post-F4)", () => {
   });
 });
 
-describe("matcher: ai_suggestion_accepted", () => {
-  it("fires thenEdit matchKey when text_change follows within 30s", () => {
+describe("matcher: ai_accept_outcome_observed", () => {
+  it("fires no-edit matchKey for 'no-edit' outcome", () => {
     const event = {
-      type: "ai_suggestion_accepted",
-      ts: 1000,
-      file: "src/foo.ts",
-      chars: 200,
+      type: "ai_accept_outcome_observed",
+      ts: 1,
+      outcome: "no-edit",
+      editFraction: 0,
     } as unknown as EchoEvent;
-    const followup = {
-      type: "text_change",
-      ts: 5_000,
-      path: "src/foo.ts",
+    expect(runMatchers(event)).toContain(
+      "ai_suggestion_accepted.afterMs<2000.withoutEdit",
+    );
+  });
+
+  it("fires iterated matchKey for editFraction >= 0.3", () => {
+    const event = {
+      type: "ai_accept_outcome_observed",
+      ts: 1,
+      outcome: "iterated",
+      editFraction: 0.5,
     } as unknown as EchoEvent;
-    expect(runMatchers(event, [followup])).toContain(
+    expect(runMatchers(event)).toContain(
       "ai_suggestion_accepted.thenEditWithin30s.editFraction>=0.3",
     );
   });
 
-  it("fires withoutEdit matchKey when no follow-up text_change is in the window", () => {
+  it("does NOT fire iterated matchKey for tiny editFraction", () => {
     const event = {
-      type: "ai_suggestion_accepted",
-      ts: 1000,
-      file: "src/foo.ts",
-      chars: 200,
+      type: "ai_accept_outcome_observed",
+      ts: 1,
+      outcome: "iterated",
+      editFraction: 0.05,
     } as unknown as EchoEvent;
+    expect(runMatchers(event)).not.toContain(
+      "ai_suggestion_accepted.thenEditWithin30s.editFraction>=0.3",
+    );
+  });
+
+  it("does NOT fire any matchKey when no-edit is accompanied by editFraction>0 (defensive)", () => {
+    const event = {
+      type: "ai_accept_outcome_observed",
+      ts: 1,
+      outcome: "no-edit",
+      editFraction: 0.4,
+    } as unknown as EchoEvent;
+    // outcome takes precedence; no-edit always means withoutEdit
     expect(runMatchers(event)).toContain(
       "ai_suggestion_accepted.afterMs<2000.withoutEdit",
+    );
+    expect(runMatchers(event)).not.toContain(
+      "ai_suggestion_accepted.thenEditWithin30s.editFraction>=0.3",
     );
   });
 });

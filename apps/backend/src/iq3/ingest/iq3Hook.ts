@@ -13,62 +13,55 @@ interface IngestContext {
 type Matcher = (e: EchoEvent, ctx: IngestContext) => string[];
 
 const MATCHERS: Matcher[] = [
-  // file_opened then no edit for >30s w/ navigations → reads-before-writes
-  (e, ctx) => {
-    if ((e.type as string) !== "text_change") return [];
-    const sameFile = ctx.recent
-      .filter((r) => "path" in r && (r as any).path === (e as any).path)
-      .slice(-20);
-    const lastOpen = [...sameFile].reverse().find((r) => (r.type as string) === "file_opened");
-    if (!lastOpen) return [];
-    const elapsed = (e as any).ts - (lastOpen as any).ts;
-    const navsBetween = sameFile.filter(
-      (r) =>
-        (r.type as string) === "editor_navigation" &&
-        (r as any).ts > (lastOpen as any).ts &&
-        (r as any).ts < (e as any).ts,
-    );
-    if (elapsed >= 30000 && navsBetween.length >= 2) {
+  // read_pattern_observed → reads-before-writes evidence
+  // Replaces the pre-F3 file_opened/text_change windowed matcher. The
+  // extension observes the open→nav→edit sequence locally and ships a
+  // single rollup with the verdict pre-computed. matchKey strings are
+  // byte-identical to the originals so HMM likelihoods are unchanged.
+  (e) => {
+    if (e.type !== "read_pattern_observed") return [];
+    const pattern = (e as any).pattern;
+    if (pattern === "deep") {
       return ["file_opened.then.navigations>=2.then.first_text_change.afterMs>30s"];
     }
-    if (elapsed < 5000) {
+    if (pattern === "jump-in") {
       return ["file_opened.then.first_text_change.withinMs<5s"];
     }
     return [];
   },
 
-  // paste classified as AI source, large, unmodified within 60s
-  // Producer (apps/extension/src/echo/pasteClassifier.ts) emits:
-  //   { type: "paste_classified", source: PasteSource, chars: number, ... }
-  // PasteSource = "external" | "ai-chat-output" | "self-edit-paste".
-  // We treat anything starting with "ai-" as AI-shaped so future variants
-  // ("ai-completion", etc.) flow through without code changes here.
-  // Original spec said ">=80 lines"; the producer emits chars only, so we
-  // use chars >= 6000 (~75 chars/line average for code) as the proxy.
-  (e, ctx) => {
-    if (e.type !== "paste_classified") return [];
+  // paste_outcome_observed → authorship-self evidence
+  // Replaces the pre-F3 paste_classified "no_edit_within_60s" matcher
+  // which tried to look forward in time using the recent buffer (broken
+  // because future events haven't arrived yet at ingest time). The
+  // extension now waits the 60s window locally and emits the verdict.
+  (e) => {
+    if (e.type !== "paste_outcome_observed") return [];
     const source = (e as any).source as string;
-    const isAi = typeof source === "string" && source.startsWith("ai-");
     const chars = (e as any).chars ?? 0;
-    const isLarge = chars >= 6000;
-    if (!isAi || !isLarge) return [];
-    const since = (e as any).ts;
-    const followups = ctx.recent.filter((r) => (r as any).ts > since && (r as any).ts < since + 60000);
-    const hasEdit = followups.some((r) => (r.type as string) === "text_change");
-    if (!hasEdit) return ["paste_classified.source=ai.size>=80lines.no_edit_within_60s"];
+    const isAi = typeof source === "string" && source.startsWith("ai-");
+    if (!isAi || chars < 6000) return [];
+    if ((e as any).outcome === "kept-as-is") {
+      return ["paste_classified.source=ai.size>=80lines.no_edit_within_60s"];
+    }
     return [];
   },
 
-  // ai_suggestion_accepted with edit within 30s
-  (e, ctx) => {
-    if (e.type !== "ai_suggestion_accepted") return [];
-    const within = ctx.recent.filter(
-      (r) => (r.type as string) === "text_change" && (r as any).ts > (e as any).ts && (r as any).ts < (e as any).ts + 30000,
-    );
-    if (within.length === 0) {
+  // ai_accept_outcome_observed → authorship-self evidence
+  // Replaces the pre-F3 ai_suggestion_accepted "withoutEdit / thenEdit"
+  // matcher which had the same broken-future-lookup pattern. Extension
+  // observes the 30s window and ships outcome + editFraction.
+  (e) => {
+    if (e.type !== "ai_accept_outcome_observed") return [];
+    const outcome = (e as any).outcome;
+    const editFraction = (e as any).editFraction ?? 0;
+    if (outcome === "no-edit") {
       return ["ai_suggestion_accepted.afterMs<2000.withoutEdit"];
     }
-    return ["ai_suggestion_accepted.thenEditWithin30s.editFraction>=0.3"];
+    if (outcome === "iterated" && editFraction >= 0.3) {
+      return ["ai_suggestion_accepted.thenEditWithin30s.editFraction>=0.3"];
+    }
+    return [];
   },
 
   // commit detected — message-quality matchers
@@ -132,7 +125,13 @@ const MATCHERS: Matcher[] = [
   },
 ];
 
-const AI_RELATED = new Set<string>(["chat_turn", "ai_suggestion_accepted", "paste_classified"]);
+const AI_RELATED = new Set<string>([
+  "chat_turn",
+  "ai_suggestion_accepted",
+  "paste_classified",
+  "paste_outcome_observed",
+  "ai_accept_outcome_observed",
+]);
 
 const userContexts = new Map<string, IngestContext>();
 function getCtx(userId: string): IngestContext {

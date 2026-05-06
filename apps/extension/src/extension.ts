@@ -75,6 +75,7 @@ import { registerHostAudioCleanup } from "./voice/hostAudio.js";
 import { initEcho, openEchoPanel, getEventStreamChannel } from "./echo/index.js";
 import { startTestRunProducer } from "./iq3/eventProducers/testRunResult.js";
 import { startEditorNavigationProducer } from "./iq3/eventProducers/editorNavigation.js";
+import { startRollupProducers } from "./iq3/eventProducers/rollups.js";
 import { startIq3Bridge } from "./iq3/realtimeBridge.js";
 
 // Module-scoped bridge so other surfaces (panel constructors, status-bar
@@ -185,6 +186,11 @@ export async function activate(context: vscode.ExtensionContext) {
   // the "runsTestsOften" signal in the field/rank composite.
   startTestRunProducer(context);
   startEditorNavigationProducer(context);
+  // Codex F3: extension-side rollups for windowed temporal patterns
+  // (read-pattern, paste-outcome, ai-accept-outcome) that the backend
+  // can't compute without seeing local-only events or looking forward
+  // in time.
+  startRollupProducers(context);
 
   // Realtime bridge — polls /iq/me on a 30s cadence (plus an immediate
   // fire on activate) and forwards the headline to every mounted webview
