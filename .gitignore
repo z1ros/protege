@@ -6,6 +6,7 @@ out
 .env.local
 .env.railway
 .protege-store.json
+.protege-store-iq3.json
 .DS_Store
 .turbo
 coverage

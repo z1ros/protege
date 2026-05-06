@@ -20,7 +20,8 @@ import { conceptTipsRoute } from "./routes/conceptTips.js";
 import { walkRoute } from "./routes/walk.js";
 import { notesRoute } from "./routes/notes.js";
 import { chatHistoryRoute } from "./routes/chatHistory.js";
-import iqRouter from "./iq3/routes/iq.js";
+import iqRouter, { setIq3UserStateRepo } from "./iq3/routes/iq.js";
+import { autoRepo } from "./iq3/persistence.js";
 
 const app = new Hono();
 
@@ -91,6 +92,13 @@ app.post(
     return c.json({ ok: true });
   }
 );
+
+// Wire the iq3 user-state repo before mounting routes. Without this,
+// the first call to `/iq/me` throws "iq3 user-state repo not initialized".
+// `autoRepo` picks Supabase when SUPABASE_URL + SUPABASE_SERVICE_KEY are
+// set, else falls back to a local JSON store at the backend cwd
+// (`.protege-store-iq3.json`, gitignored).
+setIq3UserStateRepo(autoRepo());
 
 app.route("/test", testRoute);
 app.route("/chat", chatRoute);
