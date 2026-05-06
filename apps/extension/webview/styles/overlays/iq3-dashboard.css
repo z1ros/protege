@@ -137,3 +137,55 @@
   border-left: 2px solid rgba(245, 158, 11, 0.6);
   border-radius: 4px;
 }
+
+/* iq3 onboarding probes — Task 24
+ *
+ * Shown in place of the dashboard while the user is fresh
+ * (cold + confidence < 0.2). 5 questions, one screen each.
+ */
+
+.iq3-onboarding {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  max-width: 480px;
+}
+.iq3-onboarding-step {
+  font-size: 12px;
+  opacity: 0.6;
+}
+.iq3-onboarding-prompt {
+  font-size: 16px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.iq3-onboarding-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.iq3-onboarding-opt {
+  padding: 12px;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  color: inherit;
+  font-size: 14px;
+}
+.iq3-onboarding-opt:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.iq3-onboarding-skip {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  color: inherit;
+  opacity: 0.5;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 0;
+}

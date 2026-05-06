@@ -4,6 +4,8 @@ import { PILLAR_FLOOR_FALLBACK, PILLAR_IDS } from "@protege/types";
 import { HeadlineCard } from "./HeadlineCard.js";
 import { PillarBar } from "./PillarBar.js";
 import { FieldVector } from "./FieldVector.js";
+import { OnboardingProbes } from "./OnboardingProbes.js";
+import { vscode } from "../vscode.js";
 
 /**
  * IQ dashboard — Phase A surface for the Iq3 HMM.
@@ -23,6 +25,7 @@ import { FieldVector } from "./FieldVector.js";
  */
 export function IqDashboard() {
   const [headline, setHeadline] = useState<Iq3Headline | null>(null);
+  const [doneOnboarding, setDoneOnboarding] = useState(false);
 
   useEffect(() => {
     const handler = (event: MessageEvent) => {
@@ -40,6 +43,33 @@ export function IqDashboard() {
 
   if (!headline) {
     return <div className="iq3-dashboard-empty">Loading IQ…</div>;
+  }
+  // Cold + low-confidence users see the 5-question probe flow before
+  // they ever see the dashboard. Once `doneOnboarding` flips, they
+  // never re-enter this branch in the same webview session — the next
+  // headline poll bumps confidence and maturity anyway.
+  const isCold =
+    headline.maturity === "cold" &&
+    headline.confidence < 0.2 &&
+    !doneOnboarding;
+  if (isCold) {
+    return (
+      <OnboardingProbes
+        onComplete={(field, matchKeys) => {
+          try {
+            vscode.postMessage({
+              type: "iq/onboardingComplete",
+              payload: { field, matchKeys },
+            });
+          } catch {
+            // Webview <-> host bridge unavailable (running outside
+            // VS Code, e.g. storybook-style preview). Swallow so the
+            // user still gets to the dashboard.
+          }
+          setDoneOnboarding(true);
+        }}
+      />
+    );
   }
   const floor = PILLAR_FLOOR_FALLBACK[headline.rank.uncappedRank];
   return (

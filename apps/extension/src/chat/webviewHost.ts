@@ -1131,6 +1131,33 @@ export function mountProtegeWebview(
       const id = requireUserIdOrToast();
       if (!id) return;
       await toggleGlobalWake(context, id);
+    } else if (msg.type === "iq/onboardingComplete") {
+      // Webview finished the 5-question probe flow. Forward to the
+      // backend so the matchKeys + self-declared field land in the
+      // user's Iq3 state, then trigger an immediate Iq3 bridge
+      // refresh so the dashboard stops showing the cold-start
+      // branch on the next render.
+      const id = currentUserIdOrNull();
+      if (!id) return;
+      try {
+        await authedFetch(`${BACKEND_URL}/iq/onboarding`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-user-id": id },
+          body: JSON.stringify(msg.payload),
+        });
+      } catch {
+        // Backend offline / not signed in. Silent — webview already
+        // moved past the cold branch via local state, so the user
+        // sees the dashboard either way and the next /iq/me poll
+        // picks up whatever did persist.
+      }
+      try {
+        const { getIq3Bridge } = await import("../extension.js");
+        await getIq3Bridge?.()?.refresh();
+      } catch {
+        // Bridge not yet started (activation race) — next 30s poll
+        // will pick up the new state anyway.
+      }
     } else if (msg.type === "learning/forkChosen") {
       if (msg.choice === "learn") {
         // Fire Learning Mode with the user's original ask as the

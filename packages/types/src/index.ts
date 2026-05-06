@@ -3,6 +3,7 @@ export * from "./lineDiff.js";
 import type { Cluster, IqPillars, IqV2, LevelInfo, SynergyResult } from "./concepts.js";
 import type { Iq3NewEvent } from "./iq3/events.js";
 import type { Iq3Headline } from "./iq3/hmm.js";
+import type { Iq3FieldId } from "./iq3/fields.js";
 
 export type Role = "user" | "assistant" | "system" | "tool";
 
@@ -745,7 +746,18 @@ export type WebviewToHost =
   | { type: "notes/create"; title?: string }
   | { type: "notes/update"; id: string; title?: string; body?: string }
   | { type: "notes/delete"; id: string }
-  | { type: "echo/msg"; payload: EchoWebviewToHost };
+  | { type: "echo/msg"; payload: EchoWebviewToHost }
+  /** Webview → host: 5-question onboarding probe completion. Host
+   *  forwards to `POST /iq/onboarding` so the matchKeys go through
+   *  `applyMatchKeys` and the self-declared field is mixed in via
+   *  `applySelfDeclaration`. Phase A's load-bearing signal here is the
+   *  declared field — the `onboarding.*` matchKeys don't yet have HMM
+   *  likelihoods authored, but they're recorded as evidence for future
+   *  iterations. */
+  | {
+      type: "iq/onboardingComplete";
+      payload: { field: Iq3FieldId; matchKeys: string[] };
+    };
 
 /** A single user-authored note in the Notes tab. Stored locally in
  *  globalState; cloud sync TBD. `body` is plain markdown. */
