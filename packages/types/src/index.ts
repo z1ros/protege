@@ -1,6 +1,7 @@
 export * from "./concepts.js";
 export * from "./lineDiff.js";
 import type { Cluster, IqPillars, IqV2, LevelInfo, SynergyResult } from "./concepts.js";
+import type { Iq3NewEvent } from "./iq3/events.js";
 
 export type Role = "user" | "assistant" | "system" | "tool";
 
@@ -1107,7 +1108,8 @@ export type EchoEvent =
       language: string | null;
       workspaceRoot: string;
       concepts: string[];
-    };
+    }
+  | Iq3NewEvent;
 
 export type EchoEventKind = EchoEvent["type"];
 
