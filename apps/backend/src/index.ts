@@ -21,6 +21,7 @@ import { walkRoute } from "./routes/walk.js";
 import { notesRoute } from "./routes/notes.js";
 import { chatHistoryRoute } from "./routes/chatHistory.js";
 import iqRouter, { setIq3UserStateRepo } from "./iq3/routes/iq.js";
+import selfRatingRouter from "./iq3/routes/selfRating.js";
 import { autoRepo } from "./iq3/persistence.js";
 
 const app = new Hono();
@@ -118,6 +119,7 @@ app.route("/walk", walkRoute);
 app.route("/notes", notesRoute);
 app.route("/chat-history", chatHistoryRoute);
 app.route("/iq", iqRouter);
+app.route("/iq/self-rating", selfRatingRouter);
 
 // Echo nightly jobs — rollup, archetypeClassifier.
 // Scaffolding only; widget agents fill in the real aggregation logic.
