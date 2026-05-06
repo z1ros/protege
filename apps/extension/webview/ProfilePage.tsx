@@ -7,6 +7,7 @@ import type {
 import { CinematicPlate } from "./CinematicPlate.js";
 import { IconStar, IconCheck, IconPlus } from "./icons.js";
 import { vscode, onHostMessage } from "./vscode.js";
+import { IqDashboard } from "./iq3/IqDashboard.js";
 
 /**
  * Profile page — merged with Settings.
@@ -54,6 +55,12 @@ export function ProfilePage({
               the real progress signals. */}
         </div>
       </CinematicPlate>
+
+      {/* Iq3 dashboard (Task 23) — headline score, field vector, and
+          per-pillar bars. Replaces the legacy Code IQ headline that used
+          to live in the hero. Subscribes to `iq/headline` broadcasts the
+          extension fans out every 30s from `/iq/me`. */}
+      <IqDashboard />
 
       <div className="hero-stats profile-stats">
         <div className="hero-stat">

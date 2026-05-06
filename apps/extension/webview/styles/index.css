@@ -43,6 +43,7 @@
 
 @import "./overlays/shell.css";
 @import "./overlays/profile.css";
+@import "./overlays/iq3-dashboard.css";
 @import "./overlays/settings.css";
 @import "./overlays/subscription.css";
 @import "./overlays/streak-journal.css";

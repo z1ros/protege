@@ -1,0 +1,139 @@
+/* iq3 dashboard — Task 23
+ *
+ * Lives inside the Profile overlay. Subscribes to `iq/headline`
+ * broadcasts and renders the Iq3Headline (score, CI, rank, pillars,
+ * field vector). Variables are kept VS-Code-aware so the dashboard
+ * blends with whichever theme the user runs.
+ */
+
+.iq3-dashboard {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.iq3-dashboard-empty {
+  padding: 24px;
+  text-align: center;
+  opacity: 0.6;
+  font-size: 13px;
+}
+
+.iq3-headline-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.iq3-headline-score {
+  font-size: 48px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.iq3-ci {
+  font-size: 14px;
+  opacity: 0.6;
+  margin-left: 8px;
+  font-weight: 400;
+}
+
+.iq3-rank {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.iq3-confidence {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.iq3-field-vector {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.iq3-field-bar {
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.iq3-field-segment {
+  height: 100%;
+}
+
+.iq3-field-legend {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.iq3-field-swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
+.iq3-pillars {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.iq3-pillar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.iq3-pillar-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+.iq3-pillar-track {
+  position: relative;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.iq3-pillar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3b82f6, #06b6d4);
+  border-radius: 4px;
+}
+
+.iq3-pillar-floor {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.iq3-pillar--pending .iq3-pillar-pending {
+  font-size: 12px;
+  opacity: 0.5;
+  font-style: italic;
+}
+
+.iq3-floor-note {
+  font-size: 12px;
+  opacity: 0.85;
+  padding: 8px 10px;
+  background: rgba(245, 158, 11, 0.1);
+  border-left: 2px solid rgba(245, 158, 11, 0.6);
+  border-radius: 4px;
+}
