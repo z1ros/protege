@@ -38,10 +38,20 @@ const MATCHERS: Matcher[] = [
   },
 
   // paste classified as AI source, large, unmodified within 60s
+  // Producer (apps/extension/src/echo/pasteClassifier.ts) emits:
+  //   { type: "paste_classified", source: PasteSource, chars: number, ... }
+  // PasteSource = "external" | "ai-chat-output" | "self-edit-paste".
+  // We treat anything starting with "ai-" as AI-shaped so future variants
+  // ("ai-completion", etc.) flow through without code changes here.
+  // Original spec said ">=80 lines"; the producer emits chars only, so we
+  // use chars >= 6000 (~75 chars/line average for code) as the proxy.
   (e, ctx) => {
     if (e.type !== "paste_classified") return [];
-    const isLarge = (e as any).size >= 80;
-    if ((e as any).source !== "ai" || !isLarge) return [];
+    const source = (e as any).source as string;
+    const isAi = typeof source === "string" && source.startsWith("ai-");
+    const chars = (e as any).chars ?? 0;
+    const isLarge = chars >= 6000;
+    if (!isAi || !isLarge) return [];
     const since = (e as any).ts;
     const followups = ctx.recent.filter((r) => (r as any).ts > since && (r as any).ts < since + 60000);
     const hasEdit = followups.some((r) => (r.type as string) === "text_change");
@@ -62,19 +72,22 @@ const MATCHERS: Matcher[] = [
   },
 
   // commit detected — message-quality matchers
+  // Producer-side variant (packages/types/src/index.ts) emits the field as
+  // `message: string`. Earlier matcher used `msg`/`msgChars` which never
+  // existed on the wire, so commit quality was mis-scored.
   (e) => {
     if (e.type !== "commit_detected") return [];
     const out: string[] = [];
-    const msg = (e as any).msg ?? "";
-    const msgChars = (e as any).msgChars ?? msg.length;
-    if (msgChars >= 80 && /\b(because|since|to fix|due to|so that)\b/i.test(msg)) {
+    const message = (e as any).message ?? "";
+    const msgChars = message.length;
+    if (msgChars >= 80 && /\b(because|since|to fix|due to|so that)\b/i.test(message)) {
       out.push("commit_detected.msg_chars>=80.contains_why_keyword");
     }
     if (msgChars < 20) out.push("commit_detected.msg_chars<20");
-    if (/^[a-z]+(\(.+?\))?:\s/.test(msg)) {
+    if (/^[a-z]+(\(.+?\))?:\s/.test(message)) {
       out.push("commit_detected.msg_matches_conventional");
     }
-    if (/^(wip|fix|update)$/i.test(msg.trim())) {
+    if (/^(wip|fix|update)$/i.test(message.trim())) {
       out.push("commit_detected.msg_matches_wip_or_fix_only");
     }
     return out;
@@ -154,3 +167,7 @@ export async function ingestForUser(
   }
   await repo.save(state);
 }
+
+/** @internal Exposed for unit tests of individual matcher predicates.
+ *  Do not import from production code paths. */
+export const _MATCHERS_FOR_TEST: ReadonlyArray<Matcher> = MATCHERS;
