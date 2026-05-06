@@ -2,6 +2,7 @@ export * from "./concepts.js";
 export * from "./lineDiff.js";
 import type { Cluster, IqPillars, IqV2, LevelInfo, SynergyResult } from "./concepts.js";
 import type { Iq3NewEvent } from "./iq3/events.js";
+import type { Iq3Headline } from "./iq3/hmm.js";
 
 export type Role = "user" | "assistant" | "system" | "tool";
 
@@ -972,6 +973,11 @@ export type HostToWebview =
       trace: LearningSessionTrace | null;
     }
   | { type: "ownership/changed"; path: string; summary: OwnershipSummary }
+  /** IQ3 headline pushed by the realtime bridge — polls /iq/me on a 30s
+   *  cadence (plus an immediate fire on activate) and forwards the latest
+   *  headline so the webview's IqDashboard can render score + pillars +
+   *  field vector without polling on its own. */
+  | { type: "iq/headline"; payload: Iq3Headline }
   | { type: "echo/msg"; payload: EchoHostToWebview };
 
 /* ========== Echo — behavior observation dashboard ========== */

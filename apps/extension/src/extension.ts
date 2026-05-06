@@ -75,6 +75,15 @@ import { registerHostAudioCleanup } from "./voice/hostAudio.js";
 import { initEcho, openEchoPanel, getEventStreamChannel } from "./echo/index.js";
 import { startTestRunProducer } from "./iq3/eventProducers/testRunResult.js";
 import { startEditorNavigationProducer } from "./iq3/eventProducers/editorNavigation.js";
+import { startIq3Bridge } from "./iq3/realtimeBridge.js";
+
+// Module-scoped bridge so other surfaces (panel constructors, status-bar
+// widgets, etc.) can read the latest headline via `getIq3Bridge()` without
+// passing the handle around through every mount call.
+let _iq3Bridge: ReturnType<typeof startIq3Bridge> | null = null;
+export function getIq3Bridge(): ReturnType<typeof startIq3Bridge> | null {
+  return _iq3Bridge;
+}
 // File Walk retired 2026-04-28 — sticky sidebar view + status-bar
 // shortcut + webview provider all removed. Module kept on disk;
 // re-enable by restoring this import, the registerFileWalk() call,
@@ -176,6 +185,21 @@ export async function activate(context: vscode.ExtensionContext) {
   // the "runsTestsOften" signal in the field/rank composite.
   startTestRunProducer(context);
   startEditorNavigationProducer(context);
+
+  // Realtime bridge — polls /iq/me on a 30s cadence (plus an immediate
+  // fire on activate) and forwards the headline to every mounted webview
+  // via `broadcast()`. Webview-side consumer (IqDashboard) lands in Task 23.
+  _iq3Bridge = startIq3Bridge(context);
+  const iq3Unsub = _iq3Bridge.onHeadline((headline) => {
+    broadcast({ type: "iq/headline", payload: headline });
+  });
+  context.subscriptions.push({
+    dispose: () => {
+      iq3Unsub();
+      _iq3Bridge?.dispose();
+      _iq3Bridge = null;
+    },
+  });
 
   // ===== Editor Inset proposed API — opt-in via command only =====
   // Cursor's runtime doesn't expose `createWebviewTextEditorInset`, so the
