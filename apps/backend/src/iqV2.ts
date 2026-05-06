@@ -11,6 +11,24 @@
  * See Architecture/code-iq-v2-plan.md for the rationale of each formula
  * and the calibration table (Curious 30–80, Senior 550–720, Staff 720–860).
  */
+
+/**
+ * @deprecated Code IQ v2 — superseded by `iq3/` (see docs/superpowers/specs/2026-05-06-code-iq-design.md).
+ *
+ * Kept for one release cycle so existing webview code can read v2-shaped
+ * pillars while migration completes. New code MUST use `apps/backend/src/iq3/`.
+ */
+
+let _iqV2Warned = false;
+function _warnIqV2Deprecated() {
+  if (_iqV2Warned) return;
+  _iqV2Warned = true;
+  console.warn(
+    "[iqV2] DEPRECATED — migrate callers to iq3. " +
+    "v2 will be removed in the next release.",
+  );
+}
+
 import type {
   ClusterSummary,
   ConceptRow,
@@ -353,6 +371,7 @@ function computeIndependence(_input: IqV2Input): IqV2Category {
 /* ---------- main entry ---------- */
 
 export function computeIqV2(input: IqV2Input): IqV2 {
+  _warnIqV2Deprecated();
   const craft = computeCraft(input);
   const range = computeRange(input);
   const velocity = computeVelocityV2(input);

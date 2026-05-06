@@ -794,7 +794,8 @@ export interface IqV2LevelBand {
 }
 
 /** The calibration table from the plan. Authoritative — do not adjust
- *  without updating Architecture/code-iq-v2-plan.md. */
+ *  without updating Architecture/code-iq-v2-plan.md.
+ *  @deprecated Use iq3 rank.computeRank instead. */
 export const IQV2_LEVEL_BANDS: Array<{
   id: IqV2LevelBand["id"];
   label: string;
@@ -811,6 +812,7 @@ export const IQV2_LEVEL_BANDS: Array<{
   { id: "legend",     label: "Legend",     min: 950, max: 1000 },
 ];
 
+/** @deprecated Use iq3 rank.computeRank instead. */
 export function iqV2LevelFor(iq: number): IqV2LevelBand {
   let band = IQV2_LEVEL_BANDS[0];
   for (const b of IQV2_LEVEL_BANDS) {

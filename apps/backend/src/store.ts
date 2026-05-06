@@ -44,6 +44,11 @@ import { computeIqV2 } from "./iqV2.js";
  * JSON-file-backed store for MVP. Shape mirrors the Supabase schema we'll
  * swap to later. All IQ math lives in @protege/types/concepts so backend
  * and extension stay in lockstep.
+ *
+ * NOTE (2026-05): Code IQ v3 (apps/backend/src/iq3/) is the new IQ
+ * engine. Functions in this file marked @deprecated are read-only
+ * during the v2→v3 transition and will be removed in a follow-up.
+ * The concept-retrieval / memory (RAG) path is preserved.
  */
 
 export interface UserRow {
@@ -1279,7 +1284,9 @@ export async function recordConcepts(
   };
 }
 
-/** Raw (pre-bonus) IQ contribution of a single concept row. */
+/** Raw (pre-bonus) IQ contribution of a single concept row.
+ *  @deprecated v2 IQ math — superseded by iq3 composite. Retained while
+ *  the v2 webview still consumes per-concept iqContribution. */
 function iqContribution(row: ConceptState): number {
   const w = conceptWeight(row.conceptName);
   const m = masteryCurve(row.timesUsed);
@@ -1756,6 +1763,7 @@ export async function getUserSnapshot(userId: string) {
 }
 
 export const RULE_COUNT = CONCEPT_META.length;
+/** @deprecated v2 IQ ceiling — iq3 uses 0–1000 rank scale via iq3/rank. */
 export const MAX_IQ = IQ_CEILING;
 export const TOTAL_CONCEPT_WEIGHT = TOTAL_WEIGHT;
 
