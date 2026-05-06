@@ -68,7 +68,17 @@ export function supabaseRepo(client: SupabaseClientLike): Iq3UserStateRepo {
         .select("*")
         .eq("user_id", userId)
         .single();
-      if (error || !data) return null;
+      if (error) {
+        // PGRST116 = "Results contain 0 rows" from PostgREST .single().
+        // Treat that as a missing row; everything else (auth, network,
+        // schema mismatch) MUST throw so callers don't silently overwrite
+        // a real user's state with a fresh blank one.
+        if (error.code === "PGRST116") return null;
+        throw new Error(
+          `iq3_user_state load failed: ${error.message ?? String(error)}`,
+        );
+      }
+      if (!data) return null;
       return {
         userId: data.user_id,
         traits: data.traits,
