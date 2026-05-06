@@ -29,6 +29,7 @@ import {
   getShadowSyncStats,
   pullFromSupabaseIfCold,
 } from "../echo/sync.js";
+import { ingestForUser } from "../iq3/ingest/iq3Hook.js";
 import { assembleHeroPayload } from "../echo/widgets/w1_hero.js";
 import { assemblePolarPayload } from "../echo/widgets/w2_polar.js";
 import { assembleHeatmapPayload } from "../echo/widgets/w5_heatmap.js";
@@ -150,6 +151,7 @@ echoRoute.post("/events", async (c) => {
   }
 
   const accepted: EchoEventInput[] = [];
+  const acceptedRaw: EchoEvent[] = [];
   const rewriteTouchesByFile = new Map<
     string,
     Array<{ fingerprint: string; sampleContent: string; ts: number }>
@@ -178,6 +180,7 @@ echoRoute.post("/events", async (c) => {
   for (const raw of rawEvents) {
     if (!validateEchoEvent(raw)) continue;
     accepted.push(echoEventToInput(userId, raw));
+    acceptedRaw.push(raw);
 
     // Side-effect: keep LineRewriteCounter fresh on line_diff events.
     if (raw.type === "line_diff") {
@@ -343,6 +346,14 @@ echoRoute.post("/events", async (c) => {
       }
     }
   });
+
+  // Fire-and-forget iq3 HMM ingest. Wrapped non-fatally so a bug in iq3
+  // can't stall the response or break the existing event-storage pipeline.
+  if (acceptedRaw.length > 0) {
+    ingestForUser(userId, acceptedRaw).catch((err) => {
+      console.warn("[iq3] ingest failed (non-fatal):", err?.message ?? err);
+    });
+  }
 
   return c.json({ ok: true, accepted: accepted.length });
 });
