@@ -73,6 +73,7 @@ import { stopWakeWordListener, isWakeWordListening } from "./voice/voiceCapture.
 import { registerVoiceStatusBar, setVoiceState } from "./voice/voiceStatusBar.js";
 import { registerHostAudioCleanup } from "./voice/hostAudio.js";
 import { initEcho, openEchoPanel, getEventStreamChannel } from "./echo/index.js";
+import { startTestRunProducer } from "./iq3/eventProducers/testRunResult.js";
 // File Walk retired 2026-04-28 — sticky sidebar view + status-bar
 // shortcut + webview provider all removed. Module kept on disk;
 // re-enable by restoring this import, the registerFileWalk() call,
@@ -168,6 +169,11 @@ export async function activate(context: vscode.ExtensionContext) {
   // Login-first: pass null when signed-out — every subsystem buffers locally
   // and only posts when the user signs in (see batcher.ts auth gate).
   initEcho(context, currentUserIdOrNull(), output);
+
+  // ===== IQ3 event producers =====
+  // VS Code Test API → test_run_result events for the IQ3 HMM. Verifies
+  // the "runsTestsOften" signal in the field/rank composite.
+  startTestRunProducer(context);
 
   // ===== Editor Inset proposed API — opt-in via command only =====
   // Cursor's runtime doesn't expose `createWebviewTextEditorInset`, so the
