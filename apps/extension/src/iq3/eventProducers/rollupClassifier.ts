@@ -23,3 +23,37 @@ export function classifyReadPattern(
   if (msToFirstEdit < 5000 && navCount === 0) return "jump-in";
   return "skim";
 }
+
+/**
+ * Decide whether an `onDidChangeTextDocument` change should count as
+ * an "edit during the post-paste / post-AI-accept window" toward
+ * `editedDuring` / `sawEdit`.
+ *
+ * Codex review caught a self-invalidation bug: the paste itself fires
+ * a `text_change` whose document version equals the version observed
+ * at the moment `paste_classified` is dispatched. Without gating, the
+ * rollup producer's own `onDidChangeTextDocument` handler flips
+ * `editedDuring=true` on the same paste, so `kept-as-is` never fires.
+ *
+ * Primary defence: VS Code increments `TextDocument.version` on every
+ * content change. Capture the post-paste version when we observe the
+ * paste; only count subsequent changes whose version is strictly
+ * greater. Same-version changes are the paste itself (or pre-paste
+ * residue we don't want to credit either).
+ *
+ * Secondary defence (belt-and-suspenders): a 100 ms time grace covers
+ * the rare case where the doc can't be located (e.g. the paste
+ * happened in a now-closed editor or different file scheme, in which
+ * case `pendingVersion` is 0 and version-gating degrades).
+ */
+export function shouldCountAsEdit(
+  pendingVersion: number,
+  changeVersion: number,
+  pendingTs: number,
+  nowMs: number,
+  graceMs = 100,
+): boolean {
+  if (changeVersion <= pendingVersion) return false;
+  if (nowMs - pendingTs < graceMs) return false;
+  return true;
+}

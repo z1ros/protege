@@ -6,9 +6,9 @@ import type {
   EchoEvent,
 } from "@protege/types";
 import { getBatcher } from "../../echo/batcher.js";
-import { classifyReadPattern } from "./rollupClassifier.js";
+import { classifyReadPattern, shouldCountAsEdit } from "./rollupClassifier.js";
 
-export { classifyReadPattern };
+export { classifyReadPattern, shouldCountAsEdit };
 
 /**
  * Extension-side rollup producers for Codex F3.
@@ -47,6 +47,13 @@ interface PendingPaste {
   uri: string;
   source: string;
   chars: number;
+  /**
+   * `TextDocument.version` immediately after the paste. The paste
+   * itself fires its own `onDidChangeTextDocument` with this version;
+   * we only count subsequent changes (strictly greater) toward
+   * `editedDuring`. See Codex follow-up: self-edit invalidation.
+   */
+  pastedAtVersion: number;
   editedDuring: boolean;
   timer: ReturnType<typeof setTimeout>;
 }
@@ -56,6 +63,8 @@ interface PendingAccept {
   uri: string;
   acceptedChars: number;
   totalChangedChars: number;
+  /** Same self-invalidation guard as PendingPaste; see comment there. */
+  acceptedAtVersion: number;
   sawEdit: boolean;
   timer: ReturnType<typeof setTimeout>;
 }
@@ -133,20 +142,38 @@ export function startRollupProducers(
         opens.delete(key);
       }
 
-      // Feed pending paste / accept observations
+      // Feed pending paste / accept observations.
+      //
+      // Codex follow-up: gate by `TextDocument.version` to prevent
+      // self-invalidation. The paste/AI-accept event is itself a text
+      // change; without version gating its own change handler flips
+      // editedDuring=true on the same paste, so `kept-as-is` never
+      // fires. shouldCountAsEdit() rejects same-version changes
+      // (the paste itself) and adds a 100 ms time-grace as a
+      // belt-and-suspenders defence.
       const uri = e.document.uri.toString();
+      const changeVersion = e.document.version;
+      const now = Date.now();
       let changedChars = 0;
       for (const change of e.contentChanges) {
         changedChars += change.text.length + change.rangeLength;
       }
       for (const p of pendingPastes) {
-        if (p.uri === uri) p.editedDuring = true;
+        if (p.uri !== uri) continue;
+        if (!shouldCountAsEdit(p.pastedAtVersion, changeVersion, p.pasteTs, now)) {
+          continue;
+        }
+        p.editedDuring = true;
       }
       for (const a of pendingAccepts) {
-        if (a.uri === uri) {
-          a.sawEdit = true;
-          a.totalChangedChars += changedChars;
+        if (a.uri !== uri) continue;
+        if (
+          !shouldCountAsEdit(a.acceptedAtVersion, changeVersion, a.acceptTs, now)
+        ) {
+          continue;
         }
+        a.sawEdit = true;
+        a.totalChangedChars += changedChars;
       }
     }),
   );
@@ -172,11 +199,25 @@ export function startRollupProducers(
         const source = (e as any).source as string;
         const chars = (e as any).chars as number;
         const uri = vscode.Uri.file(file).toString();
+        // Capture the post-paste TextDocument.version. The paste's
+        // own text_change carries this version; gating on strictly
+        // greater versions excludes the paste itself from
+        // editedDuring. Falls back to 0 if the doc isn't open
+        // (defensive — the time-grace inside shouldCountAsEdit
+        // covers that case).
+        const doc = vscode.workspace.textDocuments.find(
+          (d) =>
+            d.uri.toString() === uri ||
+            d.uri.fsPath === file ||
+            d.fileName === file,
+        );
+        const pastedAtVersion = doc?.version ?? 0;
         const pending: PendingPaste = {
           pasteTs: (e as any).ts,
           uri,
           source,
           chars,
+          pastedAtVersion,
           editedDuring: false,
           timer: setTimeout(() => {
             pendingPastes.delete(pending);
@@ -218,11 +259,24 @@ export function startRollupProducers(
           ((e as any).chars as number | undefined) ??
           0;
         const uri = vscode.Uri.file(file).toString();
+        // Same self-invalidation guard as paste — the AI-accept
+        // event is emitted from inside watcher's
+        // onDidChangeTextDocument handler, so its own text_change
+        // arrives at our editedDuring handler with the same doc
+        // version. Gate on strictly greater versions only.
+        const doc = vscode.workspace.textDocuments.find(
+          (d) =>
+            d.uri.toString() === uri ||
+            d.uri.fsPath === file ||
+            d.fileName === file,
+        );
+        const acceptedAtVersion = doc?.version ?? 0;
         const pending: PendingAccept = {
           acceptTs: (e as any).ts,
           uri,
           acceptedChars,
           totalChangedChars: 0,
+          acceptedAtVersion,
           sawEdit: false,
           timer: setTimeout(() => {
             pendingAccepts.delete(pending);

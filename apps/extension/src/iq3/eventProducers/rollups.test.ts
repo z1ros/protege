@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { classifyReadPattern } from "./rollupClassifier.js";
+import { classifyReadPattern, shouldCountAsEdit } from "./rollupClassifier.js";
 
 /**
  * Unit tests for the rollup classifier(s). The full producer wires
@@ -32,5 +32,30 @@ describe("classifyReadPattern", () => {
 
   it("treats the 5s threshold as exclusive (5s exactly is NOT jump-in)", () => {
     expect(classifyReadPattern(5000, 0)).toBe("skim");
+  });
+});
+
+/**
+ * Codex review follow-up: paste/AI-accept rollups self-invalidated
+ * because the originating event is itself a text_change. Gate on
+ * `TextDocument.version` (primary) plus a small time-grace
+ * (defensive secondary) so the paste's own change handler doesn't
+ * flip editedDuring on its own paste.
+ */
+describe("shouldCountAsEdit", () => {
+  it("rejects same-version change (the paste itself)", () => {
+    expect(shouldCountAsEdit(5, 5, 1000, 2000)).toBe(false);
+  });
+
+  it("rejects within grace window even if version higher", () => {
+    expect(shouldCountAsEdit(5, 6, 1000, 1050)).toBe(false);
+  });
+
+  it("accepts higher version + outside grace", () => {
+    expect(shouldCountAsEdit(5, 6, 1000, 2000)).toBe(true);
+  });
+
+  it("rejects lower version (impossible but defensive)", () => {
+    expect(shouldCountAsEdit(5, 4, 1000, 2000)).toBe(false);
   });
 });
