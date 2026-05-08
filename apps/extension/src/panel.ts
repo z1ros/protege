@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { mountProtegeWebview } from "./chat/webviewHost.js";
 import { devPortMapping, isDevMode } from "./devMode.js";
+import { log } from "./log.js";
 
 let current: vscode.WebviewPanel | undefined;
 // In-flight creation promise. Without this, two near-simultaneous
@@ -19,14 +20,16 @@ export async function openProtegePanel(context: vscode.ExtensionContext) {
     // need to relock here (and re-running lockEditorGroup would
     // toggle the lock OFF, which is the opposite of what we want).
     //
-    // Defensive: closing the entire editor GROUP (vs. just the tab)
-    // doesn't always fire `onDidDispose`, so `current` can outlive the
-    // real panel. Touching `.webview.cspSource` on a disposed panel
-    // throws — catch it, clear the stale ref, and fall through to a
-    // fresh create. Without this, clicks land on a dead panel and the
-    // user sees nothing.
+    // Defensive: closing the panel via the tab's X button (or closing
+    // the entire editor GROUP) doesn't always cleanly fire
+    // `onDidDispose` before the user clicks the launcher again — the
+    // ref can outlive the real panel. The previous `cspSource` probe
+    // didn't actually throw on disposed panels in current Cursor/VS
+    // Code, so reveal() would silently no-op and the launcher click
+    // appeared dead. Wrap reveal() itself in try/catch: a disposed
+    // panel will throw, we clear the stale ref, and fall through to
+    // build a fresh panel.
     try {
-      void current.webview.cspSource;
       current.reveal(current.viewColumn ?? vscode.ViewColumn.Beside, false);
       return current;
     } catch {
@@ -131,7 +134,8 @@ export async function openProtegePanel(context: vscode.ExtensionContext) {
       panel.reveal(panel.viewColumn ?? vscode.ViewColumn.Beside, false);
 
       panel.onDidDispose(() => {
-        current = undefined;
+        log("panel", "disposed — clearing current ref");
+        if (current === panel) current = undefined;
       });
 
       return panel;
