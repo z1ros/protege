@@ -73,7 +73,6 @@ import { stopWakeWordListener, isWakeWordListening } from "./voice/voiceCapture.
 import { registerVoiceStatusBar, setVoiceState } from "./voice/voiceStatusBar.js";
 import { registerHostAudioCleanup } from "./voice/hostAudio.js";
 import { initEcho, openEchoPanel, getEventStreamChannel } from "./echo/index.js";
-import { startTestRunProducer } from "./iq3/eventProducers/testRunResult.js";
 import { startEditorNavigationProducer } from "./iq3/eventProducers/editorNavigation.js";
 import { startRollupProducers } from "./iq3/eventProducers/rollups.js";
 import { startIq3Bridge } from "./iq3/realtimeBridge.js";
@@ -182,9 +181,13 @@ export async function activate(context: vscode.ExtensionContext) {
   initEcho(context, currentUserIdOrNull(), output);
 
   // ===== IQ3 event producers =====
-  // VS Code Test API → test_run_result events for the IQ3 HMM. Verifies
-  // the "runsTestsOften" signal in the field/rank composite.
-  startTestRunProducer(context);
+  // Test-run producer deferred — vscode.tests is a proposed API requiring
+  // "testObserver" in package.json#enabledApiProposals + --enable-proposed-api
+  // flag at launch. Even feature-detected access trips VS Code's activation
+  // guard. Decision: ship Phase A without test_run_result events until we
+  // adopt a stable signal source (e.g. terminal output parsing for
+  // vitest/jest). Backend matcher and Iq3TestRunResultEvent type are kept
+  // intact so the producer can be reintroduced cleanly.
   startEditorNavigationProducer(context);
   // Codex F3: extension-side rollups for windowed temporal patterns
   // (read-pattern, paste-outcome, ai-accept-outcome) that the backend
