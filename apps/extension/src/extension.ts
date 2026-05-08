@@ -188,27 +188,51 @@ export async function activate(context: vscode.ExtensionContext) {
   // adopt a stable signal source (e.g. terminal output parsing for
   // vitest/jest). Backend matcher and Iq3TestRunResultEvent type are kept
   // intact so the producer can be reintroduced cleanly.
-  startEditorNavigationProducer(context);
+  //
+  // Each producer is wrapped in try/catch so a single producer crashing
+  // at activation can't take down the rest of activate() — including the
+  // LauncherProvider registration further down. Without this guard, an
+  // exception here makes the sidebar's "Open Protege" button silently
+  // do nothing (no provider bound to the view).
+  try {
+    startEditorNavigationProducer(context);
+  } catch (err) {
+    output.appendLine(
+      `[iq3] startEditorNavigationProducer failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
   // Codex F3: extension-side rollups for windowed temporal patterns
   // (read-pattern, paste-outcome, ai-accept-outcome) that the backend
   // can't compute without seeing local-only events or looking forward
   // in time.
-  startRollupProducers(context);
+  try {
+    startRollupProducers(context);
+  } catch (err) {
+    output.appendLine(
+      `[iq3] startRollupProducers failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 
   // Realtime bridge — polls /iq/me on a 30s cadence (plus an immediate
   // fire on activate) and forwards the headline to every mounted webview
   // via `broadcast()`. Webview-side consumer (IqDashboard) lands in Task 23.
-  _iq3Bridge = startIq3Bridge(context);
-  const iq3Unsub = _iq3Bridge.onHeadline((headline) => {
-    broadcast({ type: "iq/headline", payload: headline });
-  });
-  context.subscriptions.push({
-    dispose: () => {
-      iq3Unsub();
-      _iq3Bridge?.dispose();
-      _iq3Bridge = null;
-    },
-  });
+  try {
+    _iq3Bridge = startIq3Bridge(context);
+    const iq3Unsub = _iq3Bridge.onHeadline((headline) => {
+      broadcast({ type: "iq/headline", payload: headline });
+    });
+    context.subscriptions.push({
+      dispose: () => {
+        iq3Unsub();
+        _iq3Bridge?.dispose();
+        _iq3Bridge = null;
+      },
+    });
+  } catch (err) {
+    output.appendLine(
+      `[iq3] startIq3Bridge failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 
   // ===== Editor Inset proposed API — opt-in via command only =====
   // Cursor's runtime doesn't expose `createWebviewTextEditorInset`, so the
