@@ -194,6 +194,7 @@ export async function activate(context: vscode.ExtensionContext) {
   // LauncherProvider registration further down. Without this guard, an
   // exception here makes the sidebar's "Open Protege" button silently
   // do nothing (no provider bound to the view).
+  logLine("reopen-debug", "extension.activate: registering iq3 producers");
   try {
     startEditorNavigationProducer(context);
   } catch (err) {
@@ -1233,6 +1234,8 @@ export async function activate(context: vscode.ExtensionContext) {
       await getGitHubUser({ createIfNone: true });
     })
   );
+
+  logLine("reopen-debug", "extension.activate: all subsystems registered");
 }
 
 // Old updateStatusBar removed — replaced by statusBarLive.ts

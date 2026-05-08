@@ -14,6 +14,10 @@ let current: vscode.WebviewPanel | undefined;
 let opening: Promise<vscode.WebviewPanel> | undefined;
 
 export async function openProtegePanel(context: vscode.ExtensionContext) {
+  log(
+    "reopen-debug",
+    `openProtegePanel: entered. currentPanel exists? ${current !== undefined} opening? ${opening !== undefined}`
+  );
   if (current) {
     // Re-reveal in whatever column it's already living in. The lock
     // applied at first-create persists with the group, so we don't
@@ -29,18 +33,28 @@ export async function openProtegePanel(context: vscode.ExtensionContext) {
     // appeared dead. Wrap reveal() itself in try/catch: a disposed
     // panel will throw, we clear the stale ref, and fall through to
     // build a fresh panel.
+    log("reopen-debug", "openProtegePanel: trying to reveal existing panel");
     try {
       current.reveal(current.viewColumn ?? vscode.ViewColumn.Beside, false);
+      log("reopen-debug", "openProtegePanel: reveal succeeded; returning existing panel");
       return current;
-    } catch {
+    } catch (e) {
+      log(
+        "reopen-debug",
+        `openProtegePanel: reveal threw, clearing stale ref: ${e instanceof Error ? e.message : String(e)}`
+      );
       console.log("[protege] panel: stale current ref, rebuilding");
       current = undefined;
     }
   }
-  if (opening) return opening;
+  if (opening) {
+    log("reopen-debug", "openProtegePanel: returning in-flight opening promise");
+    return opening;
+  }
 
   opening = (async () => {
     try {
+      log("reopen-debug", "openProtegePanel: creating new webview panel — picking column");
       console.log("[protege] panel: opening — picking target column");
       // Reuse an existing empty editor group if one's lying around — Cursor
       // restores empty groups across sessions (close Protege → group stays
@@ -84,6 +98,7 @@ export async function openProtegePanel(context: vscode.ExtensionContext) {
       }
 
       console.log(`[protege] panel: createWebviewPanel column=${targetColumn}`);
+      log("reopen-debug", `openProtegePanel: createWebviewPanel column=${targetColumn}`);
       const panel = vscode.window.createWebviewPanel(
         "protege.panel",
         "Protege",
@@ -98,6 +113,7 @@ export async function openProtegePanel(context: vscode.ExtensionContext) {
         }
       );
       current = panel;
+      log("reopen-debug", `openProtegePanel: panel created; viewType=${panel.viewType}`);
       console.log("[protege] panel: created");
 
       panel.iconPath = vscode.Uri.joinPath(
@@ -106,7 +122,9 @@ export async function openProtegePanel(context: vscode.ExtensionContext) {
         "icon.svg"
       );
 
+      log("reopen-debug", "openProtegePanel: about to mountProtegeWebview");
       mountProtegeWebview(panel.webview, context);
+      log("reopen-debug", "openProtegePanel: mountProtegeWebview returned");
 
       // Lock the Protege editor group so opening files from the explorer
       // (or via go-to-definition, search, etc.) doesn't drop them into
@@ -135,9 +153,16 @@ export async function openProtegePanel(context: vscode.ExtensionContext) {
 
       panel.onDidDispose(() => {
         log("panel", "disposed — clearing current ref");
-        if (current === panel) current = undefined;
+        log("reopen-debug", "panel.onDidDispose fired");
+        if (current === panel) {
+          current = undefined;
+          log("reopen-debug", "currentPanel ref cleared by onDidDispose");
+        } else {
+          log("reopen-debug", "currentPanel ref already differs (skipping clear)");
+        }
       });
 
+      log("reopen-debug", "openProtegePanel: returning new panel from creation closure");
       return panel;
     } finally {
       opening = undefined;
