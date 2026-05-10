@@ -23,14 +23,34 @@ import type { Iq3LikelihoodEntry, Iq3TraitId } from "@protege/types";
 export const LIKELIHOODS: Iq3LikelihoodEntry[] = [
   // -----------------------------------------------------------------
   // Comprehension :: readsBeforeWrites
+  //
+  // Calibration note (Comprehension polish, iteration 2): original
+  // likelihoods were 3:1 sharp (0.05/0.30/0.70 for deep), which made
+  // the Bayesian update saturate after 2-3 events. A persona with
+  // even a handful of deep reads ended up at trait posterior 0.92+
+  // (senior-level), which over-credited mid-tier streams.
+  //
+  // Softened to ~3.3:1 (0.15/0.35/0.50). Same direction of evidence,
+  // gentler slope, takes more events to saturate. Plus a NEW skim
+  // matchKey provides a "moderate, no strong signal" anchor so a
+  // mid-tier reader (mostly skim, occasional deep) lands near 0.6
+  // instead of pegging high.
   // -----------------------------------------------------------------
   {
     matchKey: "file_opened.then.navigations>=2.then.first_text_change.afterMs>30s",
-    trait: "readsBeforeWrites", pLow: 0.05, pMid: 0.30, pHigh: 0.70,
+    trait: "readsBeforeWrites", pLow: 0.15, pMid: 0.35, pHigh: 0.50,
   },
   {
     matchKey: "file_opened.then.first_text_change.withinMs<5s",
-    trait: "readsBeforeWrites", pLow: 0.70, pMid: 0.30, pHigh: 0.05,
+    trait: "readsBeforeWrites", pLow: 0.50, pMid: 0.35, pHigh: 0.15,
+  },
+  // NEW: skim pattern. Moderate reading style — some scroll, one
+  // navigation, edit within 5–30s. Anchor is "mid" reading, NOT
+  // strong evidence either way. The 0.55 mid weight is what pulls
+  // mid-tier readers toward the middle posterior.
+  {
+    matchKey: "file_opened.then.skim.first_text_change.afterMs>5s.afterMs<30s",
+    trait: "readsBeforeWrites", pLow: 0.25, pMid: 0.55, pHigh: 0.20,
   },
   {
     matchKey: "file_opened.then.scroll_then_no_edit.duration>60s",
@@ -47,18 +67,29 @@ export const LIKELIHOODS: Iq3LikelihoodEntry[] = [
 
   // -----------------------------------------------------------------
   // Execution :: authorshipSelf
+  //
+  // Calibration note (Execution polish): original ratios were 15:1
+  // (0.75/0.20/0.05 for paste-no-edit) and 6:1 (0.10/0.40/0.60 for
+  // iterated). With Execution having only 1 active trait of 5
+  // (others dormant — need commit/lint/concept producers), these
+  // sharp likelihoods saturated authorshipSelf at 0.03 (vibecoder)
+  // or 0.83 (earnest junior) after a few events. The pillar score
+  // then over- or under-shot the consensus targets by 200+ points.
+  //
+  // Softened to ~3:1 ratios — same direction of evidence, gentler
+  // slope, posterior lands closer to mid for typical streams.
   // -----------------------------------------------------------------
   {
     matchKey: "paste_classified.source=ai.size>=80lines.no_edit_within_60s",
-    trait: "authorshipSelf", pLow: 0.75, pMid: 0.20, pHigh: 0.05,
+    trait: "authorshipSelf", pLow: 0.55, pMid: 0.30, pHigh: 0.15,
   },
   {
     matchKey: "ai_suggestion_accepted.afterMs<2000.withoutEdit",
-    trait: "authorshipSelf", pLow: 0.65, pMid: 0.25, pHigh: 0.10,
+    trait: "authorshipSelf", pLow: 0.55, pMid: 0.30, pHigh: 0.15,
   },
   {
     matchKey: "ai_suggestion_accepted.thenEditWithin30s.editFraction>=0.3",
-    trait: "authorshipSelf", pLow: 0.10, pMid: 0.40, pHigh: 0.60,
+    trait: "authorshipSelf", pLow: 0.15, pMid: 0.35, pHigh: 0.50,
   },
   {
     matchKey: "keystroke_batch.size>=200.during10minWindow",
@@ -86,19 +117,26 @@ export const LIKELIHOODS: Iq3LikelihoodEntry[] = [
   },
   {
     matchKey: "error_appeared.then.editor_navigation.kind=def-jump.before_edit",
-    trait: "hypothesisDriven", pLow: 0.05, pMid: 0.30, pHigh: 0.65,
+    trait: "hypothesisDriven", pLow: 0.20, pMid: 0.40, pHigh: 0.40,
   },
 
   // -----------------------------------------------------------------
   // Verification :: runsTestsOften
+  //
+  // Calibration note: original likelihoods were 13:1 sharp (0.05/0.30/0.65)
+  // for manual session>=3. A bootcamp grad with one 3-test burst landed
+  // at 0.80 posterior — saturating "runs tests often" on a single event.
+  // Softened to ~2:1, complemented by the dormant negative matcher
+  // `commit_detected.no_test_run.in_window=10min_before` being wired
+  // (uses existing commit + test events, no new producer needed).
   // -----------------------------------------------------------------
   {
     matchKey: "test_run_result.trigger=manual.session_count>=3",
-    trait: "runsTestsOften", pLow: 0.05, pMid: 0.30, pHigh: 0.65,
+    trait: "runsTestsOften", pLow: 0.20, pMid: 0.40, pHigh: 0.40,
   },
   {
     matchKey: "test_run_result.trigger=save.session_count>=3",
-    trait: "runsTestsOften", pLow: 0.10, pMid: 0.40, pHigh: 0.55,
+    trait: "runsTestsOften", pLow: 0.20, pMid: 0.40, pHigh: 0.40,
   },
   {
     matchKey: "session_boundary.no_test_run.duration>=60min",
@@ -106,7 +144,7 @@ export const LIKELIHOODS: Iq3LikelihoodEntry[] = [
   },
   {
     matchKey: "commit_detected.no_test_run.in_window=10min_before",
-    trait: "runsTestsOften", pLow: 0.55, pMid: 0.35, pHigh: 0.15,
+    trait: "runsTestsOften", pLow: 0.45, pMid: 0.35, pHigh: 0.20,
   },
 
   // -----------------------------------------------------------------
@@ -116,13 +154,28 @@ export const LIKELIHOODS: Iq3LikelihoodEntry[] = [
     matchKey: "commit_detected.msg_chars>=80.contains_why_keyword",
     trait: "meaningfulCommitMsgs", pLow: 0.05, pMid: 0.30, pHigh: 0.65,
   },
+  // Long conventional commits without an explicit "because/since"
+  // keyword are still strong evidence of meaningful messages — most
+  // senior commits frame the rationale via "via X", "to prevent Y",
+  // "for Z" patterns rather than the exact keywords. This catches
+  // them. Slightly weaker than the keyword-explicit signal above.
+  {
+    matchKey: "commit_detected.msg_chars>=80.matches_conventional",
+    trait: "meaningfulCommitMsgs", pLow: 0.10, pMid: 0.35, pHigh: 0.55,
+  },
   {
     matchKey: "commit_detected.msg_chars<20",
     trait: "meaningfulCommitMsgs", pLow: 0.65, pMid: 0.30, pHigh: 0.10,
   },
   {
+    // Conventional commit format alone is ALMOST neutral — AI-generated
+    // commit messages frequently use the convention without carrying
+    // any rationale. The strong "thoughtful commit" signal is
+    // `msg_chars>=80.contains_why_keyword`. Lowered the high weight
+    // from 0.50 → 0.35 so vibecoder-style "feat: short" doesn't
+    // saturate this pillar.
     matchKey: "commit_detected.msg_matches_conventional",
-    trait: "meaningfulCommitMsgs", pLow: 0.20, pMid: 0.45, pHigh: 0.50,
+    trait: "meaningfulCommitMsgs", pLow: 0.30, pMid: 0.45, pHigh: 0.35,
   },
   {
     matchKey: "commit_detected.msg_matches_wip_or_fix_only",
@@ -212,17 +265,22 @@ export const LIKELIHOODS: Iq3LikelihoodEntry[] = [
   // -----------------------------------------------------------------
   // Comprehension :: navigatesBySymbols
   // -----------------------------------------------------------------
+  // Calibration note: original likelihoods were 0.05/0.30/0.65 (sharp
+  // 13:1 ratio). Combined with the readsBeforeWrites matchKeys also
+  // saturating on the same personas, navigatesBySymbols compounded the
+  // over-credit for mid-tier streams. Softened to ~3:1 to give the
+  // navigation signal a meaningful but not dominating contribution.
   {
     matchKey: "editor_navigation.kind=def-jump.session_count>=3",
-    trait: "navigatesBySymbols", pLow: 0.05, pMid: 0.30, pHigh: 0.65,
+    trait: "navigatesBySymbols", pLow: 0.20, pMid: 0.35, pHigh: 0.45,
   },
   {
     matchKey: "editor_navigation.kind=symbol-search.session_count>=2",
-    trait: "navigatesBySymbols", pLow: 0.10, pMid: 0.35, pHigh: 0.60,
+    trait: "navigatesBySymbols", pLow: 0.20, pMid: 0.40, pHigh: 0.40,
   },
   {
     matchKey: "editor_navigation.kind=file-bounce.session_count>=10.no_def-jump",
-    trait: "navigatesBySymbols", pLow: 0.65, pMid: 0.30, pHigh: 0.10,
+    trait: "navigatesBySymbols", pLow: 0.45, pMid: 0.35, pHigh: 0.20,
   },
   {
     matchKey: "session_tick.no_navigation.duration>=15min",
@@ -334,7 +392,7 @@ export const LIKELIHOODS: Iq3LikelihoodEntry[] = [
   // -----------------------------------------------------------------
   {
     matchKey: "error_cleared.with_test_added.in_window=10min",
-    trait: "fixNotBandAid", pLow: 0.05, pMid: 0.20, pHigh: 0.75,
+    trait: "fixNotBandAid", pLow: 0.20, pMid: 0.35, pHigh: 0.45,
   },
   {
     matchKey: "error_cleared.with_try_catch_added.no_logging",
@@ -374,7 +432,7 @@ export const LIKELIHOODS: Iq3LikelihoodEntry[] = [
   // -----------------------------------------------------------------
   {
     matchKey: "chat_turn.contains_stack_trace.charCount>=200",
-    trait: "readsStackTrace", pLow: 0.10, pMid: 0.35, pHigh: 0.60,
+    trait: "readsStackTrace", pLow: 0.20, pMid: 0.40, pHigh: 0.40,
   },
   {
     matchKey: "error_appeared.then.editor_navigation.kind=def-jump.matches_stack_frame",
@@ -411,6 +469,13 @@ export const LIKELIHOODS: Iq3LikelihoodEntry[] = [
   {
     matchKey: "line_diff.assertions_added>=3.lines_added>=20",
     trait: "assertionDensity", pLow: 0.05, pMid: 0.30, pHigh: 0.65,
+  },
+  // Milder positive — fires on smaller test-file edits (e.g. one
+  // it() block with a couple expects). Weaker likelihood ratio than
+  // the 20-line variant since single-save assertion counts are noisy.
+  {
+    matchKey: "line_diff.assertions_added>=2.lines_added>=8",
+    trait: "assertionDensity", pLow: 0.15, pMid: 0.40, pHigh: 0.45,
   },
   {
     matchKey: "line_diff.assertions_added=0.lines_added>=50",

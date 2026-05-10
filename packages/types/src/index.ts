@@ -766,6 +766,20 @@ export type WebviewToHost =
   | {
       type: "iq/selfRating";
       payload: { rating: number; note?: string };
+    }
+  /** Webview → host: ask for an immediate `/iq/me` fetch. Sent by the
+   *  IQ dashboard on mount so the user doesn't wait up to a full 30s
+   *  poll cycle to see their headline. The host also replays the last
+   *  cached headline synchronously on webview mount, so this is a
+   *  belt-and-braces freshness nudge rather than the primary path. */
+  | { type: "iq/refresh" }
+  /** Webview → host: anonymous "found something weird?" feedback on
+   *  Code IQ scoring. Host forwards to `POST /iq/feedback`, which
+   *  persists the trimmed text + a server timestamp ONLY — no userId,
+   *  even though the endpoint is auth-gated against spam. */
+  | {
+      type: "iq/feedback";
+      payload: { text: string };
     };
 
 /** A single user-authored note in the Notes tab. Stored locally in
@@ -1073,6 +1087,10 @@ export type EchoEvent =
       file: string;
       linesAdded: number;
       linesRemoved: number;
+      /** Count of assertion-style calls (`expect(`, `assert*(`, `toBe`,
+       *  `toEqual`, etc.) in newly-added lines. Drives Verification ::
+       *  assertionDensity. Optional for back-compat with older producers. */
+      assertionsAdded?: number;
       /** Touched-line fingerprints so the backend can bump
        *  LineRewriteCounter without the extension shipping content. */
       rewrittenFingerprints: Array<{
@@ -1135,6 +1153,33 @@ export type EchoEvent =
       language: string | null;
       workspaceRoot: string;
       concepts: string[];
+    }
+  | {
+      /** Iq3 v2 producer-sprint event. Fired on file save with a count
+       *  of post-save diagnostics. Drives Verification::writesTestFiles
+       *  and Execution::compilesCleanOnSave matchers. */
+      type: "file_saved";
+      ts: number;
+      path: string;
+      errorCount: number;
+    }
+  | {
+      /** Iq3 v2 producer-sprint event. Fired on a non-trivial text edit.
+       *  Drives Comprehension::pausesBeforeLargeEdits via idle-gap analysis. */
+      type: "text_change";
+      ts: number;
+      file: string;
+      charsAdded: number;
+      charsRemoved: number;
+    }
+  | {
+      /** Iq3 v2 producer-sprint event. Periodic 200-char keystroke
+       *  burst marker — used by `text_change` idle-gap analysis as a
+       *  "user was typing" signal. */
+      type: "keystroke_batch";
+      ts: number;
+      file: string;
+      chars: number;
     }
   | Iq3NewEvent;
 
