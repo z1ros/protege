@@ -18,8 +18,27 @@ export interface Iq3ChatTurnEvent {
   containsStackTraceOrLineRef: boolean;
   /** producer-classified: prompt expresses a constraint or requirement */
   containsConstraintWords: boolean;
-  /** whether this turn produced an "accept" downstream */
-  acceptedAi: boolean;
+  /** producer-classified: prompt contains a `?` and is long enough to
+   *  carry a real question (vs. trailing punctuation in a vague turn).
+   *  Feeds Comprehension::asksClarifyingQuestions. */
+  containsQuestionMark?: boolean;
+  /** producer-classified: prompt contains explain / how-does-this-work /
+   *  walk-me-through patterns. Feeds AI Partnership::explainsAfterAccept
+   *  correlation matchers when the turn lands within ~15min of an AI
+   *  accept. */
+  containsExplainKeyword?: boolean;
+  /** Whether this turn produced an "accept" downstream.
+   *
+   *  Optional + deprecated. The chat producer cannot know this at
+   *  emit time — acceptance happens later. The matcher layer instead
+   *  correlates chat_turn ↔ ai_suggestion_accepted via temporal
+   *  proximity in `ctx.recent` (e.g.
+   *  `ai_suggestion_accepted.then.chat_turn.intent=debug.in_window=15min`),
+   *  which is the actual signal feeding AI Partnership.
+   *
+   *  Kept on the type so existing test fixtures and persona generators
+   *  still type-check, but new emitters should not set it. */
+  acceptedAi?: boolean;
 }
 
 export interface Iq3TestRunResultEvent {

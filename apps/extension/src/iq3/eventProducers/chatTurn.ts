@@ -13,6 +13,9 @@ function classifyIntent(text: string): Iq3ChatTurnEvent["intent"] {
 
 const STACK_RX = /\b(line\s+\d|stack\s+trace|error|exception|undefined|null|crash)\b/i;
 const CONSTRAINT_RX = /\b(must|should|cannot|requires|constraint)\b/i;
+const QUESTION_RX = /\?/;
+const EXPLAIN_RX =
+  /\b(explain|why does|why is|how does|how do|walk me through|what does this|i don'?t understand|can you explain|teach me)\b/i;
 
 /**
  * Build a chat_turn event from an outgoing user message. The raw prompt
@@ -27,6 +30,14 @@ export function buildChatTurnEvent(text: string, ts = Date.now()): Iq3ChatTurnEv
     charCount: text.length,
     containsStackTraceOrLineRef: STACK_RX.test(text),
     containsConstraintWords: CONSTRAINT_RX.test(text),
-    acceptedAi: false,
+    // Real question with substance (not a trailing "?" in a vague
+    // turn) — feeds Comprehension::asksClarifyingQuestions.
+    containsQuestionMark: QUESTION_RX.test(text) && text.length >= 60,
+    // Explain/walk-me-through phrasing — feeds AI Partnership::
+    // explainsAfterAccept when correlated with a recent AI accept.
+    containsExplainKeyword: EXPLAIN_RX.test(text),
+    // acceptedAi intentionally omitted — see events.ts. The chat
+    // producer can't know if an AI accept will follow; matchers
+    // correlate via temporal proximity in ctx.recent instead.
   };
 }
