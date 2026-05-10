@@ -1,0 +1,26 @@
+{
+  "id": "cpp-database-engine",
+  "description": "Embedded C++17 database storage engine with custom B-tree, WAL, and LSM compaction",
+  "expectedDominantField": "systems",
+  "repoSignals": {
+    "fileExtensions": {
+      ".cpp": 412,
+      ".h": 286,
+      ".hpp": 124,
+      ".cc": 38,
+      ".c": 14,
+      ".cmake": 18,
+      ".md": 6,
+      ".sh": 8
+    },
+    "infraFiles": [
+      "CMakeLists.txt",
+      "conanfile.txt",
+      "Dockerfile",
+      ".clang-format",
+      ".clang-tidy",
+      ".github/workflows/build.yml",
+      "Makefile"
+    ]
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "id": "real-mrdoob-three.js",
+  "description": "three.js: JavaScript 3D library for rendering interactive WebGL graphics.",
+  "expectedDominantField": "game",
+  "repoSignals": {
+    "fileExtensions": {
+      ".yml": 10,
+      ".js": 1615,
+      ".html": 1852,
+      ".css": 27
+    },
+    "infraFiles": [
+      ".github/workflows/ci.yml",
+      ".github/workflows/codeql-code-scanning.yml",
+      ".github/workflows/protected-folders.yml",
+      ".github/workflows/read-size.yml",
+      ".github/workflows/report-size.yml"
+    ],
+    "packageJsonDeps": [
+      "@eslint/js",
+      "@rollup/plugin-node-resolve",
+      "@rollup/plugin-terser",
+      "eslint",
+      "eslint-config-mdcs",
+      "eslint-plugin-compat",
+      "eslint-plugin-html",
+      "eslint-plugin-jsdoc",
+      "globals",
+      "jpeg-js",
+      "jsdoc",
+      "magic-string",
+      "pngjs",
+      "puppeteer",
+      "qunit",
+      "rollup",
+      "turndown"
+    ]
+  }
+}

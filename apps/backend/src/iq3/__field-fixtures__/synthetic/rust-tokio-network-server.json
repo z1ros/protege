@@ -1,0 +1,37 @@
+{
+  "id": "rust-tokio-network-server",
+  "description": "Async Rust network server using Tokio, Hyper, Tower, and a custom protocol implementation",
+  "expectedDominantField": "systems",
+  "repoSignals": {
+    "cargoToml": [
+      "tokio",
+      "hyper",
+      "tower",
+      "tonic",
+      "prost",
+      "bytes",
+      "futures",
+      "tracing",
+      "tracing-subscriber",
+      "serde",
+      "serde_json",
+      "anyhow",
+      "thiserror",
+      "clap",
+      "rocksdb"
+    ],
+    "fileExtensions": {
+      ".rs": 184,
+      ".toml": 6,
+      ".proto": 12,
+      ".md": 4
+    },
+    "infraFiles": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "rust-toolchain.toml",
+      "Dockerfile",
+      ".github/workflows/rust-ci.yml"
+    ]
+  }
+}

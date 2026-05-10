@@ -1,0 +1,42 @@
+{
+  "id": "nextjs-marketing-site",
+  "description": "Next.js 14 App Router marketing site with Tailwind, MDX blog, and Vercel deploy",
+  "expectedDominantField": "web",
+  "repoSignals": {
+    "packageJsonDeps": [
+      "next",
+      "react",
+      "react-dom",
+      "tailwindcss",
+      "@tailwindcss/typography",
+      "postcss",
+      "autoprefixer",
+      "framer-motion",
+      "lucide-react",
+      "clsx",
+      "@vercel/analytics",
+      "next-mdx-remote",
+      "gray-matter",
+      "remark-gfm",
+      "@radix-ui/react-dialog",
+      "zod"
+    ],
+    "fileExtensions": {
+      ".tsx": 184,
+      ".ts": 42,
+      ".css": 6,
+      ".mdx": 31,
+      ".json": 12,
+      ".svg": 28,
+      ".md": 4
+    },
+    "infraFiles": [
+      "next.config.mjs",
+      "tailwind.config.ts",
+      "postcss.config.js",
+      "tsconfig.json",
+      "vercel.json",
+      ".github/workflows/preview.yml"
+    ]
+  }
+}

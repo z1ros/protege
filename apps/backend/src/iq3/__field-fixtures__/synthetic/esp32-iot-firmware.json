@@ -1,0 +1,24 @@
+{
+  "id": "esp32-iot-firmware",
+  "description": "ESP32 IoT firmware using ESP-IDF with FreeRTOS tasks, Wi-Fi, MQTT, and OTA updates",
+  "expectedDominantField": "embedded",
+  "repoSignals": {
+    "fileExtensions": {
+      ".c": 184,
+      ".h": 142,
+      ".cpp": 28,
+      ".cmake": 18,
+      ".ld": 4,
+      ".sh": 6,
+      ".md": 4
+    },
+    "infraFiles": [
+      "CMakeLists.txt",
+      "sdkconfig",
+      "sdkconfig.defaults",
+      "partitions.csv",
+      "main/CMakeLists.txt",
+      "platformio.ini"
+    ]
+  }
+}

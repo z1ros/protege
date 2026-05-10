@@ -1,0 +1,38 @@
+{
+  "id": "vue-spa-dashboard",
+  "description": "Vue 3 + Vite admin dashboard SPA with Pinia, Vue Router, and shadcn-vue",
+  "expectedDominantField": "web",
+  "repoSignals": {
+    "packageJsonDeps": [
+      "vue",
+      "vue-router",
+      "pinia",
+      "vite",
+      "@vitejs/plugin-vue",
+      "tailwindcss",
+      "axios",
+      "vee-validate",
+      "@tanstack/vue-query",
+      "lucide-vue-next",
+      "vitest",
+      "@vue/test-utils",
+      "typescript",
+      "eslint",
+      "prettier"
+    ],
+    "fileExtensions": {
+      ".vue": 142,
+      ".ts": 88,
+      ".js": 12,
+      ".css": 9,
+      ".html": 2,
+      ".json": 8
+    },
+    "infraFiles": [
+      "vite.config.ts",
+      "tailwind.config.js",
+      "tsconfig.json",
+      ".github/workflows/ci.yml"
+    ]
+  }
+}

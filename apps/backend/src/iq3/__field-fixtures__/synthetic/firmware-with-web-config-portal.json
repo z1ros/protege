@@ -1,0 +1,31 @@
+{
+  "id": "firmware-with-web-config-portal",
+  "description": "ESP32 firmware that serves a small Vue config portal over Wi-Fi — overwhelmingly C/C++ with a small web bundle",
+  "expectedDominantField": "embedded",
+  "repoSignals": {
+    "packageJsonDeps": [
+      "vue",
+      "vite",
+      "@vitejs/plugin-vue"
+    ],
+    "fileExtensions": {
+      ".c": 312,
+      ".h": 248,
+      ".cpp": 64,
+      ".vue": 12,
+      ".ts": 8,
+      ".html": 1,
+      ".css": 2,
+      ".cmake": 14,
+      ".md": 2
+    },
+    "infraFiles": [
+      "CMakeLists.txt",
+      "sdkconfig.defaults",
+      "platformio.ini",
+      "partitions.csv",
+      "web/vite.config.ts",
+      "web/package.json"
+    ]
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "id": "go-grpc-microservice",
+  "description": "Go gRPC microservice with protobuf, etcd discovery, and Prometheus metrics",
+  "expectedDominantField": "systems",
+  "repoSignals": {
+    "goMod": [
+      "google.golang.org/grpc",
+      "google.golang.org/protobuf",
+      "github.com/prometheus/client_golang",
+      "go.etcd.io/etcd/client/v3",
+      "go.uber.org/zap",
+      "github.com/spf13/cobra",
+      "github.com/spf13/viper",
+      "github.com/stretchr/testify",
+      "google.golang.org/grpc/health"
+    ],
+    "fileExtensions": {
+      ".go": 152,
+      ".proto": 22,
+      ".yaml": 8,
+      ".sh": 4,
+      ".md": 3
+    },
+    "infraFiles": [
+      "go.mod",
+      "go.sum",
+      "Dockerfile",
+      "Makefile",
+      "buf.yaml",
+      "buf.gen.yaml",
+      ".github/workflows/go-ci.yml"
+    ]
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "id": "flutter-cross-platform-app",
+  "description": "Flutter cross-platform mobile app with Riverpod, Dio, Hive local storage",
+  "expectedDominantField": "mobile",
+  "repoSignals": {
+    "fileExtensions": {
+      ".dart": 312,
+      ".yaml": 6,
+      ".swift": 4,
+      ".kt": 4,
+      ".gradle": 3,
+      ".plist": 2,
+      ".md": 2
+    },
+    "infraFiles": [
+      "pubspec.yaml",
+      "pubspec.lock",
+      "analysis_options.yaml",
+      "android/build.gradle",
+      "ios/Podfile",
+      ".github/workflows/flutter-ci.yml"
+    ]
+  }
+}

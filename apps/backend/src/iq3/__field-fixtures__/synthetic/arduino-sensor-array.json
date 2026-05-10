@@ -1,0 +1,19 @@
+{
+  "id": "arduino-sensor-array",
+  "description": "Arduino sketch suite for multi-sensor data logger with SD card and LoRa radio",
+  "expectedDominantField": "embedded",
+  "repoSignals": {
+    "fileExtensions": {
+      ".ino": 32,
+      ".cpp": 48,
+      ".h": 64,
+      ".c": 12,
+      ".md": 3
+    },
+    "infraFiles": [
+      "platformio.ini",
+      "library.properties",
+      "library.json"
+    ]
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "id": "airflow-etl-warehouse",
+  "description": "Apache Airflow DAGs orchestrating Snowflake ETL with dbt transformations",
+  "expectedDominantField": "dataEng",
+  "repoSignals": {
+    "requirementsTxt": [
+      "apache-airflow",
+      "apache-airflow-providers-snowflake",
+      "apache-airflow-providers-amazon",
+      "apache-airflow-providers-postgres",
+      "dbt-core",
+      "dbt-snowflake",
+      "snowflake-connector-python",
+      "boto3",
+      "pandas",
+      "great-expectations",
+      "pendulum",
+      "sqlalchemy"
+    ],
+    "fileExtensions": {
+      ".py": 64,
+      ".sql": 138,
+      ".yml": 41,
+      ".yaml": 8,
+      ".json": 12,
+      ".md": 4
+    },
+    "infraFiles": [
+      "Dockerfile",
+      "docker-compose.yml",
+      "dbt_project.yml",
+      "profiles.yml",
+      "airflow.cfg",
+      ".github/workflows/dbt-ci.yml"
+    ]
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "id": "real-flutter-flutter",
+  "description": "Flutter: Google's SDK for crafting beautiful, natively compiled multi-platform mobile apps.",
+  "expectedDominantField": "mobile",
+  "repoSignals": {
+    "fileExtensions": {
+      ".sh": 65,
+      ".dart": 6401,
+      ".yaml": 256,
+      ".yml": 34,
+      ".js": 22,
+      ".kt": 61,
+      ".swift": 131,
+      ".h": 1740,
+      ".cc": 1695,
+      ".html": 25,
+      ".cpp": 65,
+      ".m": 124,
+      ".java": 304,
+      ".css": 3,
+      ".c": 8,
+      ".py": 104,
+      ".mm": 223,
+      ".glsl": 23,
+      ".frag": 196,
+      ".vert": 39,
+      ".hlsl": 2,
+      ".hpp": 1,
+      ".ts": 1
+    },
+    "infraFiles": [
+      ".github/workflows/cicd.yml",
+      ".github/workflows/content-aware-hash.yml",
+      ".github/workflows/coverage.yml",
+      ".github/workflows/cut-release-branch.yml",
+      ".github/workflows/easy-cp.yml",
+      ".github/workflows/freeze.yml",
+      ".github/workflows/labeler.yml",
+      ".github/workflows/lock.yaml",
+      ".github/workflows/merge-changelog.yml",
+      ".github/workflows/mirror.yml",
+      ".github/workflows/no-response.yaml",
+      ".github/workflows/release-tracker.yml",
+      ".github/workflows/revert.yml",
+      ".github/workflows/roll-dart-dependencies.yml",
+      ".github/workflows/sync-engine-version.yml",
+      ".github/workflows/tool-test-general.yml",
+      "engine/src/flutter/.github/workflows/engine-cp.yml",
+      "engine/src/flutter/.github/workflows/labeler.yml",
+      "engine/src/flutter/.github/workflows/third_party_scan.yml"
+    ]
+  }
+}

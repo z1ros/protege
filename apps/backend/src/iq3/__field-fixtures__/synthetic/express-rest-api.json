@@ -1,0 +1,40 @@
+{
+  "id": "express-rest-api",
+  "description": "Node.js Express REST API with Prisma, Zod validation, and JWT auth",
+  "expectedDominantField": "web",
+  "repoSignals": {
+    "packageJsonDeps": [
+      "express",
+      "cors",
+      "helmet",
+      "morgan",
+      "@prisma/client",
+      "prisma",
+      "zod",
+      "jsonwebtoken",
+      "bcryptjs",
+      "dotenv",
+      "pino",
+      "pino-http",
+      "supertest",
+      "jest",
+      "ts-node",
+      "typescript",
+      "nodemon"
+    ],
+    "fileExtensions": {
+      ".ts": 96,
+      ".js": 4,
+      ".json": 5,
+      ".prisma": 1,
+      ".sql": 6,
+      ".md": 2
+    },
+    "infraFiles": [
+      "Dockerfile",
+      "docker-compose.yml",
+      ".github/workflows/test.yml",
+      "tsconfig.json"
+    ]
+  }
+}

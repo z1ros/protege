@@ -1,0 +1,24 @@
+{
+  "id": "dotfiles-config-grab-bag",
+  "description": "Dotfiles repo — shell scripts, lua/vim configs, a bit of everything, no dominant field",
+  "expectedDominantField": "generalist",
+  "repoSignals": {
+    "fileExtensions": {
+      ".sh": 64,
+      ".lua": 38,
+      ".vim": 18,
+      ".zsh": 12,
+      ".bash": 8,
+      ".toml": 14,
+      ".yaml": 10,
+      ".conf": 22,
+      ".md": 6,
+      ".json": 8
+    },
+    "infraFiles": [
+      "Makefile",
+      "install.sh",
+      ".stow-local-ignore"
+    ]
+  }
+}

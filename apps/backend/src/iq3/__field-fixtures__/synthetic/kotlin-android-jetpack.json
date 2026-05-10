@@ -1,0 +1,25 @@
+{
+  "id": "kotlin-android-jetpack",
+  "description": "Android app in Kotlin using Jetpack Compose, Hilt DI, Room, Retrofit",
+  "expectedDominantField": "mobile",
+  "repoSignals": {
+    "fileExtensions": {
+      ".kt": 286,
+      ".java": 12,
+      ".xml": 84,
+      ".gradle": 6,
+      ".kts": 8,
+      ".pro": 2,
+      ".md": 2
+    },
+    "infraFiles": [
+      "build.gradle.kts",
+      "settings.gradle.kts",
+      "gradle.properties",
+      "AndroidManifest.xml",
+      "proguard-rules.pro",
+      "fastlane/Fastfile",
+      ".github/workflows/android.yml"
+    ]
+  }
+}

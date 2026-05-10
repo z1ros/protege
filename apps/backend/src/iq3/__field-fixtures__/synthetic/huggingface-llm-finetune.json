@@ -1,0 +1,39 @@
+{
+  "id": "huggingface-llm-finetune",
+  "description": "LLM fine-tuning repo using HuggingFace transformers + PEFT/LoRA + DeepSpeed",
+  "expectedDominantField": "ml",
+  "repoSignals": {
+    "requirementsTxt": [
+      "torch",
+      "transformers",
+      "datasets",
+      "accelerate",
+      "peft",
+      "bitsandbytes",
+      "deepspeed",
+      "trl",
+      "sentencepiece",
+      "tokenizers",
+      "evaluate",
+      "wandb",
+      "numpy",
+      "scipy",
+      "tiktoken"
+    ],
+    "fileExtensions": {
+      ".py": 52,
+      ".ipynb": 8,
+      ".json": 14,
+      ".yaml": 6,
+      ".sh": 4,
+      ".md": 5
+    },
+    "infraFiles": [
+      "Dockerfile",
+      "requirements.txt",
+      "pyproject.toml",
+      "scripts/train.sh",
+      "scripts/eval.sh"
+    ]
+  }
+}

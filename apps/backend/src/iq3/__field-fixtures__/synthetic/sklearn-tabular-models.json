@@ -1,0 +1,35 @@
+{
+  "id": "sklearn-tabular-models",
+  "description": "Classical ML on tabular data: scikit-learn, XGBoost, LightGBM with MLflow tracking",
+  "expectedDominantField": "ml",
+  "repoSignals": {
+    "requirementsTxt": [
+      "scikit-learn",
+      "xgboost",
+      "lightgbm",
+      "catboost",
+      "pandas",
+      "numpy",
+      "scipy",
+      "mlflow",
+      "optuna",
+      "shap",
+      "matplotlib",
+      "seaborn",
+      "joblib",
+      "pyarrow"
+    ],
+    "fileExtensions": {
+      ".py": 41,
+      ".ipynb": 22,
+      ".csv": 8,
+      ".pkl": 5,
+      ".md": 2
+    },
+    "infraFiles": [
+      "requirements.txt",
+      "setup.py",
+      "Makefile"
+    ]
+  }
+}

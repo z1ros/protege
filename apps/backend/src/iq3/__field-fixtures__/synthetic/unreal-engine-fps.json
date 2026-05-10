@@ -1,0 +1,27 @@
+{
+  "id": "unreal-engine-fps",
+  "description": "Unreal Engine 5 first-person shooter with C++ gameplay framework and Blueprint integration",
+  "expectedDominantField": "game",
+  "repoSignals": {
+    "fileExtensions": {
+      ".cpp": 286,
+      ".h": 312,
+      ".cs": 18,
+      ".uasset": 1840,
+      ".umap": 28,
+      ".uproject": 1,
+      ".ini": 22,
+      ".usf": 14,
+      ".ush": 8,
+      ".md": 2
+    },
+    "infraFiles": [
+      "MyGame.uproject",
+      "Source/MyGame.Target.cs",
+      "Source/MyGameEditor.Target.cs",
+      "Config/DefaultEngine.ini",
+      "Config/DefaultGame.ini",
+      ".gitattributes"
+    ]
+  }
+}

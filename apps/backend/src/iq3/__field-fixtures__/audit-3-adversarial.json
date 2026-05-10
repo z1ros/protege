@@ -1,0 +1,366 @@
+{
+  "auditor": "adversarial-edge-case-hunter",
+  "framing": "actively challenge labels; flag arbitrary or sloppy classifications",
+  "verdicts": [
+    {
+      "id": "real-espressif-arduino-esp32",
+      "expected": "embedded",
+      "myLabel": "embedded",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "360 .ino + 660 .h + 247 .cpp on ESP32 microcontrollers — textbook embedded; no contestable alternative."
+    },
+    {
+      "id": "real-facebook-react",
+      "expected": "web",
+      "myLabel": "web",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "React itself — the canonical web library; deps are babel/rollup/eslint web tooling, no realistic competing label."
+    },
+    {
+      "id": "real-flutter-flutter",
+      "expected": "mobile",
+      "myLabel": "mobile",
+      "verdict": "defensible-multiple",
+      "confidence": "medium",
+      "reason": "Flutter is mobile-primary but the engine is 1740 .h + 1695 .cc with shaders — could plausibly read as systems/game-engine; mobile is correct intent but not landslide on file mass."
+    },
+    {
+      "id": "real-hashicorp-terraform",
+      "expected": "devOps",
+      "myLabel": "devOps",
+      "verdict": "defensible-multiple",
+      "confidence": "medium",
+      "reason": "1927 .go vs 1682 .tf — by mass it's a Go systems project that produces a devOps tool; intent is devOps but a pure file-signal classifier could legitimately call it systems."
+    },
+    {
+      "id": "real-mrdoob-three.js",
+      "expected": "game",
+      "myLabel": "ambiguous",
+      "verdict": "defensible-multiple",
+      "confidence": "high",
+      "reason": "three.js is a general WebGL/3D library — used heavily for non-game viz, AR, product demos; web is at least as defensible as game, and nothing in deps (puppeteer, qunit, jsdoc) screams game."
+    },
+    {
+      "id": "real-pytorch-pytorch",
+      "expected": "ml",
+      "myLabel": "ml",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "PyTorch — the canonical ml library; despite huge .cpp/.h surface for kernels, intent is unambiguously ml."
+    },
+    {
+      "id": "real-tokio-rs-tokio",
+      "expected": "systems",
+      "myLabel": "systems",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "Pure Rust async runtime — 777 .rs files, loom/stress workflows; systems is precisely what tokio is."
+    },
+    {
+      "id": "airflow-etl-warehouse",
+      "expected": "dataEng",
+      "myLabel": "dataEng",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "Airflow + Snowflake + dbt + 138 .sql — clean dataEng; no ambiguity."
+    },
+    {
+      "id": "ansible-bare-metal-fleet",
+      "expected": "devOps",
+      "myLabel": "devOps",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "Ansible playbooks + molecule + inventory.ini + Vagrantfile — pure config-mgmt devOps."
+    },
+    {
+      "id": "arduino-sensor-array",
+      "expected": "embedded",
+      "myLabel": "embedded",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "Arduino .ino + platformio.ini + library.properties — embedded by every signal."
+    },
+    {
+      "id": "cpp-database-engine",
+      "expected": "systems",
+      "myLabel": "systems",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "Custom B-tree/WAL/LSM in C++17 — quintessential systems work."
+    },
+    {
+      "id": "crypto-ctf-writeups",
+      "expected": "sec",
+      "myLabel": "sec",
+      "verdict": "agree",
+      "confidence": "medium",
+      "reason": "96 .md + 142 .py + sage/pwntools/z3 — sec is correct, though heavy markdown ratio means this is borderline 'writeups not tooling'; still defensibly sec."
+    },
+    {
+      "id": "dagster-prefect-pipelines",
+      "expected": "dataEng",
+      "myLabel": "dataEng",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "Dagster + dbt + DuckDB/Trino + 96 .sql — unambiguous dataEng."
+    },
+    {
+      "id": "dotfiles-config-grab-bag",
+      "expected": "generalist",
+      "myLabel": "generalist",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "Pure dotfiles (zsh/vim/lua/conf) is exactly the generalist case; arguably devOps-adjacent but generalist is the cleaner call."
+    },
+    {
+      "id": "esp32-iot-firmware",
+      "expected": "embedded",
+      "myLabel": "embedded",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "ESP-IDF + sdkconfig + partitions.csv + 184 .c — textbook embedded."
+    },
+    {
+      "id": "express-rest-api",
+      "expected": "web",
+      "myLabel": "web",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "Express + Prisma + Zod + JWT — backend web service, no ambiguity."
+    },
+    {
+      "id": "firmware-with-web-config-portal",
+      "expected": "embedded",
+      "myLabel": "embedded",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "312 .c + 248 .h vs 12 .vue — file mass dominates; the vue portal is clearly an accessory."
+    },
+    {
+      "id": "flutter-cross-platform-app",
+      "expected": "mobile",
+      "myLabel": "mobile",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "312 .dart + pubspec + ios/Podfile + android/build.gradle — pure mobile."
+    },
+    {
+      "id": "go-grpc-microservice",
+      "expected": "systems",
+      "myLabel": "ambiguous",
+      "verdict": "defensible-multiple",
+      "confidence": "medium",
+      "reason": "A Go gRPC microservice is just as easily web (backend service) — Prometheus/etcd/cobra are infra-y but a service that serves RPCs is a backend; systems vs web is a coin flip here."
+    },
+    {
+      "id": "godot-pixel-roguelike",
+      "expected": "game",
+      "myLabel": "game",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "Godot project with .gd/.tscn/.tres/.gdshader — unambiguous game."
+    },
+    {
+      "id": "huggingface-llm-finetune",
+      "expected": "ml",
+      "myLabel": "ml",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "transformers + peft + deepspeed + trl — canonical ml fine-tuning stack."
+    },
+    {
+      "id": "k8s-helm-argocd-platform",
+      "expected": "devOps",
+      "myLabel": "devOps",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "Helm + Kustomize + ArgoCD + 486 .yaml — pure platform devOps."
+    },
+    {
+      "id": "kotlin-android-jetpack",
+      "expected": "mobile",
+      "myLabel": "mobile",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "Kotlin + Jetpack Compose + AndroidManifest + fastlane — no contest."
+    },
+    {
+      "id": "ml-research-notebooks",
+      "expected": "ml",
+      "myLabel": "ml",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "68 .ipynb + torch/sklearn — clearly ml research; sparse infra is normal for this archetype."
+    },
+    {
+      "id": "network-pentest-toolkit",
+      "expected": "sec",
+      "myLabel": "sec",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "scapy + impacket + nuclei + httpx — offensive sec tooling, unambiguous."
+    },
+    {
+      "id": "nextjs-marketing-site",
+      "expected": "web",
+      "myLabel": "web",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "Next.js + tailwind + MDX + Vercel — canonical web."
+    },
+    {
+      "id": "personal-learning-monorepo",
+      "expected": "generalist",
+      "myLabel": "generalist",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "Mixed langs with no surface dominating — generalist is the right archetype."
+    },
+    {
+      "id": "polyglot-staff-engineer",
+      "expected": "generalist",
+      "myLabel": "generalist",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "Real surface in web/ml/devOps/systems with infra spanning all — generalist by construction."
+    },
+    {
+      "id": "programming-exercises-collection",
+      "expected": "generalist",
+      "myLabel": "generalist",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "10+ langs with relatively even distribution — exactly the generalist case."
+    },
+    {
+      "id": "pure-ipynb-jupyter-tutorial",
+      "expected": "ml",
+      "myLabel": "ambiguous",
+      "verdict": "defensible-multiple",
+      "confidence": "medium",
+      "reason": "124 .ipynb is signal for data/ml work, but the description says 'book-style tutorial' with no requirementsTxt content — could be teaching general Python; ml is plausible but not clearly more correct than dataEng or even generalist."
+    },
+    {
+      "id": "pwntools-binary-exploitation",
+      "expected": "sec",
+      "myLabel": "sec",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "pwntools + ropper + angr + .asm/.S — pure binary-exploitation sec."
+    },
+    {
+      "id": "pytorch-vision-training",
+      "expected": "ml",
+      "myLabel": "ml",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "torch + lightning + wandb + albumentations — canonical ml training pipeline."
+    },
+    {
+      "id": "rust-tokio-network-server",
+      "expected": "systems",
+      "myLabel": "systems",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "Rust + tokio + hyper + tower + custom protocol — systems-y; though it is also a network server (web-adjacent), 'custom protocol' tilts it firmly to systems."
+    },
+    {
+      "id": "saas-startup-monorepo",
+      "expected": "web",
+      "myLabel": "web",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "Next/tRPC/Prisma/Stripe dominate; tf and dbt are present but the .tsx/.ts file mass is overwhelming — web is correctly dominant."
+    },
+    {
+      "id": "sklearn-tabular-models",
+      "expected": "ml",
+      "myLabel": "ml",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "sklearn + xgboost + lightgbm + mlflow — classical ml, clean."
+    },
+    {
+      "id": "spark-streaming-kafka",
+      "expected": "dataEng",
+      "myLabel": "dataEng",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "PySpark + Kafka + Delta Lake — canonical dataEng streaming."
+    },
+    {
+      "id": "stm32-zephyr-rtos",
+      "expected": "embedded",
+      "myLabel": "embedded",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "STM32 + Zephyr + .dts/.overlay + west.yml + Kconfig — pure embedded RTOS."
+    },
+    {
+      "id": "swiftui-ios-app",
+      "expected": "mobile",
+      "myLabel": "mobile",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "218 .swift + storyboard + Podfile + fastlane — pure iOS mobile."
+    },
+    {
+      "id": "terraform-aws-platform",
+      "expected": "devOps",
+      "myLabel": "devOps",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "312 .tf + terragrunt + atlantis — pure IaC devOps."
+    },
+    {
+      "id": "unity-3d-platformer",
+      "expected": "game",
+      "myLabel": "game",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "Unity .unity/.prefab/.asset/.shader — unambiguous game."
+    },
+    {
+      "id": "unreal-engine-fps",
+      "expected": "game",
+      "myLabel": "game",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "UE5 .uasset/.umap/.uproject/.usf — unambiguous game."
+    },
+    {
+      "id": "vibecoder-shopify-clone",
+      "expected": "web",
+      "myLabel": "web",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "Next.js + drizzle + stripe — clearly web; description's 'half-built' framing is noise, signals are clean."
+    },
+    {
+      "id": "vue-spa-dashboard",
+      "expected": "web",
+      "myLabel": "web",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "Vue + Vite + Pinia + tailwind — canonical web SPA."
+    },
+    {
+      "id": "webgl-game-engine",
+      "expected": "game",
+      "myLabel": "game",
+      "verdict": "agree",
+      "confidence": "medium",
+      "reason": "three + cannon-es + phaser + howler + .glsl/.gltf — phaser/cannon/howler tilt it firmly to game over web; defensible call but not landslide since stack is also web-native."
+    },
+    {
+      "id": "yara-malware-analysis",
+      "expected": "sec",
+      "myLabel": "sec",
+      "verdict": "agree",
+      "confidence": "high",
+      "reason": "184 .yar + frida + volatility3 + capstone — pure malware/RE sec."
+    }
+  ]
+}

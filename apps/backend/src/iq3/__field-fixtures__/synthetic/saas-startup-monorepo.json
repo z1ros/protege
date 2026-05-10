@@ -1,0 +1,54 @@
+{
+  "id": "saas-startup-monorepo",
+  "description": "Typical seed-stage SaaS monorepo — Next.js + Node API dominates, but real devOps and dataEng surfaces too",
+  "expectedDominantField": "web",
+  "repoSignals": {
+    "packageJsonDeps": [
+      "next",
+      "react",
+      "react-dom",
+      "tailwindcss",
+      "@tanstack/react-query",
+      "trpc",
+      "@trpc/server",
+      "@trpc/client",
+      "prisma",
+      "@prisma/client",
+      "zod",
+      "stripe",
+      "@clerk/nextjs",
+      "resend",
+      "react-email",
+      "turbo",
+      "typescript",
+      "vitest",
+      "playwright"
+    ],
+    "requirementsTxt": [
+      "dbt-core",
+      "dbt-postgres"
+    ],
+    "fileExtensions": {
+      ".tsx": 312,
+      ".ts": 264,
+      ".css": 14,
+      ".sql": 38,
+      ".yaml": 22,
+      ".tf": 18,
+      ".md": 8,
+      ".prisma": 1
+    },
+    "infraFiles": [
+      "Dockerfile",
+      "docker-compose.yml",
+      "turbo.json",
+      "pnpm-workspace.yaml",
+      "terraform/main.tf",
+      "terraform/variables.tf",
+      ".github/workflows/ci.yml",
+      ".github/workflows/deploy.yml",
+      "vercel.json",
+      "dbt_project.yml"
+    ]
+  }
+}

@@ -1,0 +1,321 @@
+{
+  "auditor": "domain-meaning",
+  "framing": "what is this repo FOR; what would a peer call the person who works in it",
+  "verdicts": [
+    {
+      "id": "airflow-etl-warehouse",
+      "expected": "dataEng",
+      "myLabel": "dataEng",
+      "verdict": "agree",
+      "reason": "Airflow + dbt + Snowflake is the canonical analytics-engineering stack — author is a data engineer."
+    },
+    {
+      "id": "ansible-bare-metal-fleet",
+      "expected": "devOps",
+      "myLabel": "devOps",
+      "verdict": "agree",
+      "reason": "Ansible playbooks/roles + inventory + molecule = config-management/SRE work, classic devOps."
+    },
+    {
+      "id": "arduino-sensor-array",
+      "expected": "embedded",
+      "myLabel": "embedded",
+      "verdict": "agree",
+      "reason": ".ino sketches + platformio.ini + library.properties is unmistakably an Arduino firmware/embedded repo."
+    },
+    {
+      "id": "cpp-database-engine",
+      "expected": "systems",
+      "myLabel": "systems",
+      "verdict": "agree",
+      "reason": "Custom B-tree/WAL/LSM in C++17 with CMake/conan is core systems-software engineering."
+    },
+    {
+      "id": "crypto-ctf-writeups",
+      "expected": "sec",
+      "myLabel": "sec",
+      "verdict": "agree",
+      "reason": "SageMath + pwntools + z3 + CTF lattice attacks — author is a crypto/CTF security person."
+    },
+    {
+      "id": "dagster-prefect-pipelines",
+      "expected": "dataEng",
+      "myLabel": "dataEng",
+      "verdict": "agree",
+      "reason": "Dagster + dbt + DuckDB + Trino is analytics-pipeline territory — data engineer."
+    },
+    {
+      "id": "dotfiles-config-grab-bag",
+      "expected": "generalist",
+      "myLabel": "generalist",
+      "verdict": "agree",
+      "reason": "Shell + lua + vim + zsh dotfiles is personal config grab-bag, no single domain."
+    },
+    {
+      "id": "esp32-iot-firmware",
+      "expected": "embedded",
+      "myLabel": "embedded",
+      "verdict": "agree",
+      "reason": "ESP-IDF + sdkconfig + partitions.csv + FreeRTOS is firmware/embedded by definition."
+    },
+    {
+      "id": "express-rest-api",
+      "expected": "web",
+      "myLabel": "web",
+      "verdict": "agree",
+      "reason": "Express + Prisma + Zod + JWT is a textbook Node web-backend project."
+    },
+    {
+      "id": "firmware-with-web-config-portal",
+      "expected": "embedded",
+      "myLabel": "embedded",
+      "verdict": "agree",
+      "reason": "ESP32 firmware with a tiny Vue captive portal — purpose is the firmware; the web bundle is incidental."
+    },
+    {
+      "id": "flutter-cross-platform-app",
+      "expected": "mobile",
+      "myLabel": "mobile",
+      "verdict": "agree",
+      "reason": "Flutter + Riverpod + Dio with pubspec.yaml and android/ios scaffolding is a mobile app."
+    },
+    {
+      "id": "go-grpc-microservice",
+      "expected": "systems",
+      "myLabel": "defensible-multiple",
+      "verdict": "defensible-multiple",
+      "reason": "Go gRPC backend service straddles systems and web/backend — both labels fit a Go service author."
+    },
+    {
+      "id": "godot-pixel-roguelike",
+      "expected": "game",
+      "myLabel": "game",
+      "verdict": "agree",
+      "reason": "project.godot + .gd + .tscn + .tres + export_presets.cfg is a Godot game project."
+    },
+    {
+      "id": "huggingface-llm-finetune",
+      "expected": "ml",
+      "myLabel": "ml",
+      "verdict": "agree",
+      "reason": "transformers + PEFT + DeepSpeed + accelerate + trl — LLM fine-tuning is core ML work."
+    },
+    {
+      "id": "k8s-helm-argocd-platform",
+      "expected": "devOps",
+      "myLabel": "devOps",
+      "verdict": "agree",
+      "reason": "Helm Charts + Kustomize + ArgoCD ApplicationSets is platform/devOps engineering."
+    },
+    {
+      "id": "kotlin-android-jetpack",
+      "expected": "mobile",
+      "myLabel": "mobile",
+      "verdict": "agree",
+      "reason": "Kotlin + Jetpack Compose + AndroidManifest + fastlane is an Android mobile app."
+    },
+    {
+      "id": "ml-research-notebooks",
+      "expected": "ml",
+      "myLabel": "ml",
+      "verdict": "agree",
+      "reason": "torch + sklearn + jupyter + .ipynb dominance is research-ML notebook work."
+    },
+    {
+      "id": "network-pentest-toolkit",
+      "expected": "sec",
+      "myLabel": "sec",
+      "verdict": "agree",
+      "reason": "scapy + impacket + mitmproxy + nuclei is network/offensive-security tooling."
+    },
+    {
+      "id": "nextjs-marketing-site",
+      "expected": "web",
+      "myLabel": "web",
+      "verdict": "agree",
+      "reason": "Next.js App Router + Tailwind + MDX + Vercel is a web/frontend marketing site."
+    },
+    {
+      "id": "personal-learning-monorepo",
+      "expected": "generalist",
+      "myLabel": "generalist",
+      "verdict": "agree",
+      "reason": "Mixes web, scripting, systems, ML — explicit polyglot learning monorepo, generalist fits."
+    },
+    {
+      "id": "polyglot-staff-engineer",
+      "expected": "generalist",
+      "myLabel": "generalist",
+      "verdict": "agree",
+      "reason": "Real surface in web, ML, devOps, and systems — staff-engineer breadth = generalist."
+    },
+    {
+      "id": "programming-exercises-collection",
+      "expected": "generalist",
+      "myLabel": "generalist",
+      "verdict": "agree",
+      "reason": "Polyglot LeetCode/exercism solutions across 10+ languages, no dominant stack."
+    },
+    {
+      "id": "pure-ipynb-jupyter-tutorial",
+      "expected": "ml",
+      "myLabel": "ml",
+      "verdict": "defensible-multiple",
+      "reason": "All-notebook tutorial defaults to ml; could also read as data/teaching but ml is the closest peer label."
+    },
+    {
+      "id": "pwntools-binary-exploitation",
+      "expected": "sec",
+      "myLabel": "sec",
+      "verdict": "agree",
+      "reason": "pwntools + ROP + angr + capstone + GDB is binary-exploitation/offensive-sec work."
+    },
+    {
+      "id": "pytorch-vision-training",
+      "expected": "ml",
+      "myLabel": "ml",
+      "verdict": "agree",
+      "reason": "torch + Lightning + albumentations + W&B + hydra is a CV training pipeline — ML engineer."
+    },
+    {
+      "id": "rust-tokio-network-server",
+      "expected": "systems",
+      "myLabel": "systems",
+      "verdict": "agree",
+      "reason": "Async Rust with Tokio/Hyper/Tower + custom protocol + rocksdb is systems/network work."
+    },
+    {
+      "id": "saas-startup-monorepo",
+      "expected": "web",
+      "myLabel": "web",
+      "verdict": "agree",
+      "reason": "Next.js + tRPC + Prisma + Stripe + Clerk dominates; dbt/Terraform are side surfaces — author is web/full-stack."
+    },
+    {
+      "id": "sklearn-tabular-models",
+      "expected": "ml",
+      "myLabel": "ml",
+      "verdict": "agree",
+      "reason": "sklearn + XGBoost + LightGBM + MLflow + Optuna is classical-ML modeling work."
+    },
+    {
+      "id": "spark-streaming-kafka",
+      "expected": "dataEng",
+      "myLabel": "dataEng",
+      "verdict": "agree",
+      "reason": "PySpark Structured Streaming + Kafka + Delta Lake on S3 is canonical data engineering."
+    },
+    {
+      "id": "stm32-zephyr-rtos",
+      "expected": "embedded",
+      "myLabel": "embedded",
+      "verdict": "agree",
+      "reason": "STM32 + Zephyr RTOS + .dts/.overlay + west.yml + Kconfig is firmware/embedded."
+    },
+    {
+      "id": "swiftui-ios-app",
+      "expected": "mobile",
+      "myLabel": "mobile",
+      "verdict": "agree",
+      "reason": "SwiftUI + Combine + Core Data + Podfile + fastlane is an iOS mobile app."
+    },
+    {
+      "id": "terraform-aws-platform",
+      "expected": "devOps",
+      "myLabel": "devOps",
+      "verdict": "agree",
+      "reason": "Multi-region Terraform/Terragrunt + EKS + atlantis is platform/devOps engineering."
+    },
+    {
+      "id": "unity-3d-platformer",
+      "expected": "game",
+      "myLabel": "game",
+      "verdict": "agree",
+      "reason": "Unity assets — .unity, .prefab, .asset, .meta, ProjectSettings — is a game project."
+    },
+    {
+      "id": "unreal-engine-fps",
+      "expected": "game",
+      "myLabel": "game",
+      "verdict": "agree",
+      "reason": ".uproject + .uasset + .umap + Source/MyGame.Target.cs is an Unreal game."
+    },
+    {
+      "id": "vibecoder-shopify-clone",
+      "expected": "web",
+      "myLabel": "web",
+      "verdict": "agree",
+      "reason": "Next.js + shadcn + Stripe + drizzle + next-auth — vibecoder solo full-stack web dev."
+    },
+    {
+      "id": "vue-spa-dashboard",
+      "expected": "web",
+      "myLabel": "web",
+      "verdict": "agree",
+      "reason": "Vue 3 + Vite + Pinia + shadcn-vue admin SPA — frontend/web dev."
+    },
+    {
+      "id": "webgl-game-engine",
+      "expected": "game",
+      "myLabel": "game",
+      "verdict": "agree",
+      "reason": "three.js + cannon-es + pixi + phaser + howler with shaders — browser game, author is a game dev."
+    },
+    {
+      "id": "yara-malware-analysis",
+      "expected": "sec",
+      "myLabel": "sec",
+      "verdict": "agree",
+      "reason": "Yara rules + Frida + volatility3 + pefile/lief is malware-analysis/reverse-engineering security work."
+    },
+    {
+      "id": "real-espressif-arduino-esp32",
+      "expected": "embedded",
+      "myLabel": "embedded",
+      "verdict": "agree",
+      "reason": "Arduino core for ESP32: .ino + .h/.cpp dominate — author maintains an embedded SDK."
+    },
+    {
+      "id": "real-facebook-react",
+      "expected": "web",
+      "myLabel": "web",
+      "verdict": "agree",
+      "reason": "React itself is the JS UI library for the web — web is the only honest peer label."
+    },
+    {
+      "id": "real-flutter-flutter",
+      "expected": "mobile",
+      "myLabel": "mobile",
+      "verdict": "agree",
+      "reason": "Flutter SDK source — Dart engine + iOS/Android native shims — mobile platform engineering."
+    },
+    {
+      "id": "real-hashicorp-terraform",
+      "expected": "devOps",
+      "myLabel": "defensible-multiple",
+      "verdict": "defensible-multiple",
+      "reason": "Terraform is a Go program (1927 .go files) authored by systems/infra-tooling engineers; devOps is the user community, systems fits the author."
+    },
+    {
+      "id": "real-mrdoob-three.js",
+      "expected": "game",
+      "myLabel": "defensible-multiple",
+      "verdict": "defensible-multiple",
+      "reason": "three.js is a WebGL JS library — its author is a graphics/web dev; game is one downstream use, web is the other."
+    },
+    {
+      "id": "real-pytorch-pytorch",
+      "expected": "ml",
+      "myLabel": "ml",
+      "verdict": "agree",
+      "reason": "PyTorch source: tensor/autograd library written in C++/Python — ml is the field this repo embodies."
+    },
+    {
+      "id": "real-tokio-rs-tokio",
+      "expected": "systems",
+      "myLabel": "systems",
+      "verdict": "agree",
+      "reason": "Tokio: async Rust runtime, pure systems-software engineering."
+    }
+  ]
+}

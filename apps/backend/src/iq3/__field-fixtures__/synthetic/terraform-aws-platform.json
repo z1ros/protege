@@ -1,0 +1,28 @@
+{
+  "id": "terraform-aws-platform",
+  "description": "Multi-region Terraform/Terragrunt platform repo for AWS with EKS, RDS, networking modules",
+  "expectedDominantField": "devOps",
+  "repoSignals": {
+    "fileExtensions": {
+      ".tf": 312,
+      ".hcl": 78,
+      ".yaml": 42,
+      ".sh": 36,
+      ".tpl": 18,
+      ".md": 12,
+      ".json": 22
+    },
+    "infraFiles": [
+      "terragrunt.hcl",
+      "main.tf",
+      "variables.tf",
+      "outputs.tf",
+      "versions.tf",
+      "Makefile",
+      ".github/workflows/terraform-plan.yml",
+      ".github/workflows/terraform-apply.yml",
+      ".pre-commit-config.yaml",
+      "atlantis.yaml"
+    ]
+  }
+}

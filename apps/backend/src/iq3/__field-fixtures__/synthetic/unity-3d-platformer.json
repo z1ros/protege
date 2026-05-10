@@ -1,0 +1,25 @@
+{
+  "id": "unity-3d-platformer",
+  "description": "Unity 2022 LTS 3D platformer game with C# scripts, prefabs, and HDRP shaders",
+  "expectedDominantField": "game",
+  "repoSignals": {
+    "fileExtensions": {
+      ".cs": 248,
+      ".shader": 32,
+      ".hlsl": 18,
+      ".unity": 24,
+      ".prefab": 184,
+      ".asset": 312,
+      ".meta": 1240,
+      ".mat": 96,
+      ".png": 412,
+      ".md": 2
+    },
+    "infraFiles": [
+      "ProjectSettings/ProjectVersion.txt",
+      "Packages/manifest.json",
+      ".gitattributes",
+      "Assembly-CSharp.csproj"
+    ]
+  }
+}

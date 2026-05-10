@@ -1,0 +1,24 @@
+{
+  "id": "programming-exercises-collection",
+  "description": "Polyglot LeetCode/exercism solutions across many languages — no dominant stack",
+  "expectedDominantField": "generalist",
+  "repoSignals": {
+    "fileExtensions": {
+      ".py": 38,
+      ".js": 32,
+      ".go": 28,
+      ".rs": 24,
+      ".java": 22,
+      ".cpp": 18,
+      ".rb": 12,
+      ".ts": 14,
+      ".kt": 8,
+      ".swift": 6,
+      ".md": 22
+    },
+    "infraFiles": [
+      "README.md",
+      ".gitignore"
+    ]
+  }
+}

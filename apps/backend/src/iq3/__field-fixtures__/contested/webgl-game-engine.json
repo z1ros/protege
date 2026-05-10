@@ -1,0 +1,36 @@
+{
+  "id": "webgl-game-engine",
+  "description": "Browser-based 3D game built on Three.js + Pixi UI overlays — web stack but unmistakably a game",
+  "expectedDominantField": "game",
+  "repoSignals": {
+    "packageJsonDeps": [
+      "three",
+      "@react-three/fiber",
+      "@react-three/drei",
+      "cannon-es",
+      "pixi.js",
+      "phaser",
+      "howler",
+      "vite",
+      "typescript",
+      "react",
+      "zustand"
+    ],
+    "fileExtensions": {
+      ".ts": 142,
+      ".tsx": 38,
+      ".glsl": 64,
+      ".vert": 22,
+      ".frag": 22,
+      ".js": 14,
+      ".gltf": 18,
+      ".png": 142,
+      ".md": 2
+    },
+    "infraFiles": [
+      "vite.config.ts",
+      "tsconfig.json",
+      "package.json"
+    ]
+  }
+}

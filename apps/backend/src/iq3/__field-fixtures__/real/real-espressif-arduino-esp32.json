@@ -1,0 +1,48 @@
+{
+  "id": "real-espressif-arduino-esp32",
+  "description": "Arduino core for the ESP32 microcontroller family.",
+  "expectedDominantField": "embedded",
+  "repoSignals": {
+    "fileExtensions": {
+      ".yml": 311,
+      ".js": 3,
+      ".sh": 28,
+      ".py": 48,
+      ".yaml": 2,
+      ".h": 660,
+      ".c": 42,
+      ".cpp": 247,
+      ".css": 3,
+      ".html": 2,
+      ".ino": 360
+    },
+    "infraFiles": [
+      ".github/workflows/allboards.yml",
+      ".github/workflows/backlog-bot.yml",
+      ".github/workflows/boards.yml",
+      ".github/workflows/build_component.yml",
+      ".github/workflows/build_py_tools.yml",
+      ".github/workflows/codeql.yml",
+      ".github/workflows/dangerjs.yml",
+      ".github/workflows/docs_build.yml",
+      ".github/workflows/docs_deploy.yml",
+      ".github/workflows/gh-pages.yml",
+      ".github/workflows/lib.json",
+      ".github/workflows/lib.yml",
+      ".github/workflows/pre-commit-status.yml",
+      ".github/workflows/pre-commit.yml",
+      ".github/workflows/publishlib.yml",
+      ".github/workflows/publishsizes-2.x.yml",
+      ".github/workflows/publishsizes.yml",
+      ".github/workflows/push.yml",
+      ".github/workflows/release.yml",
+      ".github/workflows/tests.yml",
+      ".github/workflows/tests_build.yml",
+      ".github/workflows/tests_hw_wokwi.yml",
+      ".github/workflows/tests_qemu.yml",
+      ".github/workflows/tests_results.yml",
+      ".github/workflows/upload-idf-component.yml"
+    ],
+    "packageJsonDeps": []
+  }
+}

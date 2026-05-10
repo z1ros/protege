@@ -1,0 +1,20 @@
+{
+  "id": "real-tokio-rs-tokio",
+  "description": "Tokio: an asynchronous runtime for the Rust programming language.",
+  "expectedDominantField": "systems",
+  "repoSignals": {
+    "fileExtensions": {
+      ".yml": 11,
+      ".rs": 777
+    },
+    "infraFiles": [
+      ".github/workflows/audit.yml",
+      ".github/workflows/ci.yml",
+      ".github/workflows/labeler.yml",
+      ".github/workflows/loom.yml",
+      ".github/workflows/pr-audit.yml",
+      ".github/workflows/stress-test.yml",
+      ".github/workflows/uring-kernel-version-test.yml"
+    ]
+  }
+}

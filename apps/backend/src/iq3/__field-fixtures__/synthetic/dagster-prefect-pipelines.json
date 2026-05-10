@@ -1,0 +1,36 @@
+{
+  "id": "dagster-prefect-pipelines",
+  "description": "Dagster asset graph for analytics ELT with DuckDB and Trino federation",
+  "expectedDominantField": "dataEng",
+  "repoSignals": {
+    "requirementsTxt": [
+      "dagster",
+      "dagster-webserver",
+      "dagster-dbt",
+      "dagster-duckdb",
+      "dagster-aws",
+      "dbt-core",
+      "dbt-duckdb",
+      "duckdb",
+      "trino",
+      "polars",
+      "pandas",
+      "pyarrow",
+      "pydantic"
+    ],
+    "fileExtensions": {
+      ".py": 88,
+      ".sql": 96,
+      ".yaml": 24,
+      ".yml": 6,
+      ".md": 3
+    },
+    "infraFiles": [
+      "Dockerfile",
+      "dagster.yaml",
+      "workspace.yaml",
+      "dbt_project.yml",
+      "pyproject.toml"
+    ]
+  }
+}

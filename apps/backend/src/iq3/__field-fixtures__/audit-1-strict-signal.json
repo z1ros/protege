@@ -1,0 +1,321 @@
+{
+  "auditor": "strict-majority-signal",
+  "framing": "what does the dominant signal in the fixture say, ignoring intent",
+  "verdicts": [
+    {
+      "id": "airflow-etl-warehouse",
+      "expected": "dataEng",
+      "myLabel": "dataEng",
+      "verdict": "agree",
+      "reason": "138 .sql + 64 .py with airflow/dbt/snowflake deps and dbt_project.yml — textbook dataEng signal."
+    },
+    {
+      "id": "ansible-bare-metal-fleet",
+      "expected": "devOps",
+      "myLabel": "devOps",
+      "verdict": "agree",
+      "reason": "248 .yml + 96 .j2 + ansible.cfg + inventory.ini — overwhelmingly Ansible/devOps."
+    },
+    {
+      "id": "arduino-sensor-array",
+      "expected": "embedded",
+      "myLabel": "embedded",
+      "verdict": "agree",
+      "reason": "32 .ino + 64 .h + platformio.ini + library.properties — Arduino embedded signature."
+    },
+    {
+      "id": "cpp-database-engine",
+      "expected": "systems",
+      "myLabel": "systems",
+      "verdict": "agree",
+      "reason": "412 .cpp + 286 .h + CMakeLists + clang-format — pure C++ systems code, no firmware/embedded artifacts."
+    },
+    {
+      "id": "crypto-ctf-writeups",
+      "expected": "sec",
+      "myLabel": "sec",
+      "verdict": "agree",
+      "reason": "pwntools/pycryptodome/z3/sage deps + .sage files + 96 .md writeups — CTF/sec signal."
+    },
+    {
+      "id": "dagster-prefect-pipelines",
+      "expected": "dataEng",
+      "myLabel": "dataEng",
+      "verdict": "agree",
+      "reason": "dagster/dbt/duckdb/trino/polars deps with 96 .sql + 88 .py — orchestration dataEng."
+    },
+    {
+      "id": "dotfiles-config-grab-bag",
+      "expected": "generalist",
+      "myLabel": "generalist",
+      "verdict": "agree",
+      "reason": ".sh/.lua/.vim/.zsh/.conf spread with no field-specific deps — pure config grab-bag."
+    },
+    {
+      "id": "esp32-iot-firmware",
+      "expected": "embedded",
+      "myLabel": "embedded",
+      "verdict": "agree",
+      "reason": "184 .c + sdkconfig + partitions.csv + platformio.ini — ESP-IDF firmware."
+    },
+    {
+      "id": "express-rest-api",
+      "expected": "web",
+      "myLabel": "web",
+      "verdict": "agree",
+      "reason": "express/prisma/jsonwebtoken/jest deps with 96 .ts — Node web API."
+    },
+    {
+      "id": "firmware-with-web-config-portal",
+      "expected": "embedded",
+      "myLabel": "embedded",
+      "verdict": "agree",
+      "reason": "312 .c + 248 .h + 64 .cpp dwarfs the 12 .vue + sdkconfig + partitions.csv — overwhelmingly firmware."
+    },
+    {
+      "id": "flutter-cross-platform-app",
+      "expected": "mobile",
+      "myLabel": "mobile",
+      "verdict": "agree",
+      "reason": "312 .dart + pubspec.yaml + android/ios scaffolding — Flutter mobile."
+    },
+    {
+      "id": "go-grpc-microservice",
+      "expected": "systems",
+      "myLabel": "systems",
+      "verdict": "defensible-multiple",
+      "reason": "152 .go + grpc/protobuf/etcd is classic backend systems but also reads as web/services — systems or web defensible."
+    },
+    {
+      "id": "godot-pixel-roguelike",
+      "expected": "game",
+      "myLabel": "game",
+      "verdict": "agree",
+      "reason": "184 .gd + .tscn + .tres + project.godot + .gdshader — unmistakably Godot game."
+    },
+    {
+      "id": "huggingface-llm-finetune",
+      "expected": "ml",
+      "myLabel": "ml",
+      "verdict": "agree",
+      "reason": "torch/transformers/peft/deepspeed/trl deps + train.sh — LLM finetune ml."
+    },
+    {
+      "id": "k8s-helm-argocd-platform",
+      "expected": "devOps",
+      "myLabel": "devOps",
+      "verdict": "agree",
+      "reason": "486 .yaml + .tpl + Chart.yaml + ArgoCD ApplicationSet — k8s platform devOps."
+    },
+    {
+      "id": "kotlin-android-jetpack",
+      "expected": "mobile",
+      "myLabel": "mobile",
+      "verdict": "agree",
+      "reason": "286 .kt + AndroidManifest + build.gradle.kts + fastlane — Android mobile."
+    },
+    {
+      "id": "ml-research-notebooks",
+      "expected": "ml",
+      "myLabel": "ml",
+      "verdict": "agree",
+      "reason": "68 .ipynb dominates with torch/sklearn requirements — research ml."
+    },
+    {
+      "id": "network-pentest-toolkit",
+      "expected": "sec",
+      "myLabel": "sec",
+      "verdict": "agree",
+      "reason": "scapy/impacket/mitmproxy + nuclei/httpx in go.mod — pentest sec toolkit."
+    },
+    {
+      "id": "nextjs-marketing-site",
+      "expected": "web",
+      "myLabel": "web",
+      "verdict": "agree",
+      "reason": "184 .tsx + next/react/tailwind + vercel.json — Next.js web."
+    },
+    {
+      "id": "personal-learning-monorepo",
+      "expected": "generalist",
+      "myLabel": "generalist",
+      "verdict": "agree",
+      "reason": ".py/.ts/.js/.go/.rs roughly balanced (28/22/18/14/16) — no dominant field."
+    },
+    {
+      "id": "polyglot-staff-engineer",
+      "expected": "generalist",
+      "myLabel": "generalist",
+      "verdict": "agree",
+      "reason": ".tsx/.ts/.py/.rs/.go/.tf all meaningful (64/58/72/48/42/28) with deps across web/ml/systems — multi-field."
+    },
+    {
+      "id": "programming-exercises-collection",
+      "expected": "generalist",
+      "myLabel": "generalist",
+      "verdict": "agree",
+      "reason": "10+ langs spread (.py/.js/.go/.rs/.java/.cpp/.rb/.ts/.kt/.swift) with no infra/deps — exercises generalist."
+    },
+    {
+      "id": "pure-ipynb-jupyter-tutorial",
+      "expected": "ml",
+      "myLabel": "ml",
+      "verdict": "defensible-multiple",
+      "reason": "124 .ipynb + environment.yml suggests ml but no ml deps shown — could be ml or generalist tutorial."
+    },
+    {
+      "id": "pwntools-binary-exploitation",
+      "expected": "sec",
+      "myLabel": "sec",
+      "verdict": "agree",
+      "reason": "pwntools/ropper/angr/capstone + .asm/.S files — binary exploitation sec."
+    },
+    {
+      "id": "pytorch-vision-training",
+      "expected": "ml",
+      "myLabel": "ml",
+      "verdict": "agree",
+      "reason": "torch/lightning/wandb/transformers + 78 .py + 14 .ipynb — vision training ml."
+    },
+    {
+      "id": "rust-tokio-network-server",
+      "expected": "systems",
+      "myLabel": "systems",
+      "verdict": "agree",
+      "reason": "184 .rs + tokio/hyper/tower/tonic + Cargo.toml — async Rust systems."
+    },
+    {
+      "id": "saas-startup-monorepo",
+      "expected": "web",
+      "myLabel": "web",
+      "verdict": "agree",
+      "reason": "312 .tsx + 264 .ts dominates with next/react/trpc/prisma despite some tf/sql — web majority."
+    },
+    {
+      "id": "sklearn-tabular-models",
+      "expected": "ml",
+      "myLabel": "ml",
+      "verdict": "agree",
+      "reason": "sklearn/xgboost/lightgbm/mlflow + 41 .py + 22 .ipynb — tabular ml."
+    },
+    {
+      "id": "spark-streaming-kafka",
+      "expected": "dataEng",
+      "myLabel": "dataEng",
+      "verdict": "agree",
+      "reason": "pyspark/delta-spark/kafka deps + 52 .py + 24 .sql — streaming dataEng."
+    },
+    {
+      "id": "stm32-zephyr-rtos",
+      "expected": "embedded",
+      "myLabel": "embedded",
+      "verdict": "agree",
+      "reason": "312 .c + .dts + .overlay + prj.conf + west.yml + Kconfig — Zephyr RTOS embedded."
+    },
+    {
+      "id": "swiftui-ios-app",
+      "expected": "mobile",
+      "myLabel": "mobile",
+      "verdict": "agree",
+      "reason": "218 .swift + Package.swift + Podfile + fastlane + iOS-ci — iOS mobile."
+    },
+    {
+      "id": "terraform-aws-platform",
+      "expected": "devOps",
+      "myLabel": "devOps",
+      "verdict": "agree",
+      "reason": "312 .tf + 78 .hcl + terragrunt.hcl + atlantis.yaml — Terraform devOps."
+    },
+    {
+      "id": "unity-3d-platformer",
+      "expected": "game",
+      "myLabel": "game",
+      "verdict": "agree",
+      "reason": ".unity/.prefab/.asset/.meta/.shader + ProjectSettings + Assembly-CSharp.csproj — Unity game."
+    },
+    {
+      "id": "unreal-engine-fps",
+      "expected": "game",
+      "myLabel": "game",
+      "verdict": "agree",
+      "reason": ".uproject + .uasset (1840) + .umap + Source/*.Target.cs + .usf shaders — Unreal game."
+    },
+    {
+      "id": "vibecoder-shopify-clone",
+      "expected": "web",
+      "myLabel": "web",
+      "verdict": "agree",
+      "reason": "248 .tsx + 96 .ts + next/react/tailwind/stripe/drizzle + vercel.json — web."
+    },
+    {
+      "id": "vue-spa-dashboard",
+      "expected": "web",
+      "myLabel": "web",
+      "verdict": "agree",
+      "reason": "142 .vue + vue/pinia/vite/tailwind + vite.config — Vue SPA web."
+    },
+    {
+      "id": "webgl-game-engine",
+      "expected": "game",
+      "myLabel": "game",
+      "verdict": "defensible-multiple",
+      "reason": "three/pixi/phaser/cannon-es deps with .glsl/.vert/.frag/.gltf says game; but 142 .ts + react + vite is strong web — game or web defensible."
+    },
+    {
+      "id": "yara-malware-analysis",
+      "expected": "sec",
+      "myLabel": "sec",
+      "verdict": "agree",
+      "reason": "184 .yar + 26 .yara + frida/pefile/lief/volatility3/capstone — malware analysis sec."
+    },
+    {
+      "id": "real-espressif-arduino-esp32",
+      "expected": "embedded",
+      "myLabel": "embedded",
+      "verdict": "agree",
+      "reason": "660 .h + 360 .ino + 247 .cpp + 42 .c — ESP32 Arduino core, embedded."
+    },
+    {
+      "id": "real-facebook-react",
+      "expected": "web",
+      "myLabel": "web",
+      "verdict": "agree",
+      "reason": "3835 .js + 399 .ts + 120 .tsx + 112 .css + babel deps — React, web."
+    },
+    {
+      "id": "real-flutter-flutter",
+      "expected": "mobile",
+      "myLabel": "mobile",
+      "verdict": "defensible-multiple",
+      "reason": "6401 .dart dominates count but 1740 .h + 1695 .cc + .frag/.vert show heavy engine systems — mobile or systems defensible."
+    },
+    {
+      "id": "real-hashicorp-terraform",
+      "expected": "devOps",
+      "myLabel": "devOps",
+      "verdict": "defensible-multiple",
+      "reason": "1927 .go (the implementation) edges out 1682 .tf (test fixtures); deps are pure go libs — devOps the product, but signal also reads systems."
+    },
+    {
+      "id": "real-mrdoob-three.js",
+      "expected": "game",
+      "myLabel": "web",
+      "verdict": "disagree",
+      "reason": "1852 .html + 1615 .js + puppeteer/qunit/eslint deps with no .glsl/.gltf shader assets in signal — looks like a JS web library, not a game project."
+    },
+    {
+      "id": "real-pytorch-pytorch",
+      "expected": "ml",
+      "myLabel": "ml",
+      "verdict": "defensible-multiple",
+      "reason": "4452 .py + sympy/networkx + many Dockerfiles points ml; but 2279 .h + 2073 .cpp + 116 .glsl is huge C++/systems surface — ml or systems."
+    },
+    {
+      "id": "real-tokio-rs-tokio",
+      "expected": "systems",
+      "myLabel": "systems",
+      "verdict": "agree",
+      "reason": "777 .rs + only .yml CI — pure async Rust runtime, systems."
+    }
+  ]
+}

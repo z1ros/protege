@@ -1,0 +1,40 @@
+{
+  "id": "pytorch-vision-training",
+  "description": "PyTorch Lightning image classification training pipeline with Weights & Biases logging",
+  "expectedDominantField": "ml",
+  "repoSignals": {
+    "requirementsTxt": [
+      "torch==2.3.0",
+      "torchvision",
+      "pytorch-lightning",
+      "transformers",
+      "datasets",
+      "accelerate",
+      "wandb",
+      "numpy",
+      "pandas",
+      "scikit-learn",
+      "matplotlib",
+      "Pillow",
+      "albumentations",
+      "tensorboard",
+      "hydra-core",
+      "omegaconf",
+      "tqdm"
+    ],
+    "fileExtensions": {
+      ".py": 78,
+      ".ipynb": 14,
+      ".yaml": 22,
+      ".md": 3,
+      ".txt": 2
+    },
+    "infraFiles": [
+      "Dockerfile",
+      "requirements.txt",
+      "pyproject.toml",
+      ".github/workflows/lint.yml",
+      "Makefile"
+    ]
+  }
+}

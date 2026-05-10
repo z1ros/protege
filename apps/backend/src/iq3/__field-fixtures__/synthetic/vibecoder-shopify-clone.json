@@ -1,0 +1,44 @@
+{
+  "id": "vibecoder-shopify-clone",
+  "description": "Solo dev cloning Shopify in a weekend — heavy Next.js + scattered concerns, lots of half-built features",
+  "expectedDominantField": "web",
+  "repoSignals": {
+    "packageJsonDeps": [
+      "next",
+      "react",
+      "react-dom",
+      "tailwindcss",
+      "shadcn-ui",
+      "@radix-ui/react-dialog",
+      "@radix-ui/react-dropdown-menu",
+      "lucide-react",
+      "framer-motion",
+      "stripe",
+      "next-auth",
+      "drizzle-orm",
+      "drizzle-kit",
+      "postgres",
+      "zustand",
+      "react-hook-form",
+      "zod",
+      "openai",
+      "ai",
+      "uploadthing"
+    ],
+    "fileExtensions": {
+      ".tsx": 248,
+      ".ts": 96,
+      ".css": 8,
+      ".js": 12,
+      ".json": 6,
+      ".md": 1,
+      ".sql": 4
+    },
+    "infraFiles": [
+      "next.config.js",
+      "tailwind.config.ts",
+      "drizzle.config.ts",
+      "vercel.json"
+    ]
+  }
+}

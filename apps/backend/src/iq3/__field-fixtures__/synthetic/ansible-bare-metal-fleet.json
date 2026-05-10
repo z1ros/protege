@@ -1,0 +1,30 @@
+{
+  "id": "ansible-bare-metal-fleet",
+  "description": "Ansible playbooks and roles for bare-metal Linux fleet provisioning and config management",
+  "expectedDominantField": "devOps",
+  "repoSignals": {
+    "requirementsTxt": [
+      "ansible",
+      "ansible-lint",
+      "molecule",
+      "jmespath",
+      "netaddr"
+    ],
+    "fileExtensions": {
+      ".yml": 248,
+      ".yaml": 42,
+      ".j2": 96,
+      ".sh": 32,
+      ".py": 18,
+      ".md": 6
+    },
+    "infraFiles": [
+      "ansible.cfg",
+      "inventory.ini",
+      "playbook.yml",
+      "requirements.yml",
+      "Vagrantfile",
+      ".github/workflows/molecule.yml"
+    ]
+  }
+}

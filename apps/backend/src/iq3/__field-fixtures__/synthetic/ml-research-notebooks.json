@@ -1,0 +1,25 @@
+{
+  "id": "ml-research-notebooks",
+  "description": "Research lab repo — heavy on Jupyter notebooks, light scaffolding, sparse deps file",
+  "expectedDominantField": "ml",
+  "repoSignals": {
+    "requirementsTxt": [
+      "torch",
+      "numpy",
+      "matplotlib",
+      "jupyter",
+      "scikit-learn"
+    ],
+    "fileExtensions": {
+      ".ipynb": 68,
+      ".py": 14,
+      ".md": 4,
+      ".csv": 6,
+      ".pkl": 3
+    },
+    "infraFiles": [
+      "requirements.txt",
+      "README.md"
+    ]
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "id": "crypto-ctf-writeups",
+  "description": "Crypto CTF writeups — SageMath/Python solver scripts, lattice attacks, pwn-adjacent, lots of markdown",
+  "expectedDominantField": "sec",
+  "repoSignals": {
+    "requirementsTxt": [
+      "pycryptodome",
+      "cryptography",
+      "sympy",
+      "gmpy2",
+      "pwntools",
+      "z3-solver",
+      "sage"
+    ],
+    "fileExtensions": {
+      ".py": 142,
+      ".sage": 38,
+      ".md": 96,
+      ".sh": 12,
+      ".c": 18
+    },
+    "infraFiles": [
+      "requirements.txt",
+      "Makefile",
+      "README.md"
+    ]
+  }
+}

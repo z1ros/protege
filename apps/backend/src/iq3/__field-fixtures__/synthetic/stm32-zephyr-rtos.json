@@ -1,0 +1,26 @@
+{
+  "id": "stm32-zephyr-rtos",
+  "description": "STM32 motor controller firmware on Zephyr RTOS with HAL drivers and CAN bus",
+  "expectedDominantField": "embedded",
+  "repoSignals": {
+    "fileExtensions": {
+      ".c": 312,
+      ".h": 248,
+      ".cpp": 14,
+      ".dts": 22,
+      ".overlay": 12,
+      ".conf": 18,
+      ".cmake": 8,
+      ".ld": 6,
+      ".md": 3
+    },
+    "infraFiles": [
+      "CMakeLists.txt",
+      "prj.conf",
+      "west.yml",
+      "Kconfig",
+      "boards/arm/stm32_custom.dts",
+      ".github/workflows/build-fw.yml"
+    ]
+  }
+}

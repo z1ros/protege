@@ -1,0 +1,52 @@
+{
+  "id": "polyglot-staff-engineer",
+  "description": "Staff engineer's playground — meaningful surface in web, ml, devOps, and systems",
+  "expectedDominantField": "generalist",
+  "repoSignals": {
+    "packageJsonDeps": [
+      "next",
+      "react",
+      "tailwindcss",
+      "express",
+      "vite",
+      "typescript"
+    ],
+    "requirementsTxt": [
+      "torch",
+      "transformers",
+      "pandas",
+      "scikit-learn",
+      "fastapi",
+      "uvicorn"
+    ],
+    "cargoToml": [
+      "tokio",
+      "serde",
+      "axum"
+    ],
+    "goMod": [
+      "google.golang.org/grpc",
+      "github.com/spf13/cobra"
+    ],
+    "fileExtensions": {
+      ".tsx": 64,
+      ".ts": 58,
+      ".py": 72,
+      ".rs": 48,
+      ".go": 42,
+      ".yaml": 36,
+      ".tf": 28,
+      ".md": 24,
+      ".sh": 18
+    },
+    "infraFiles": [
+      "Dockerfile",
+      "docker-compose.yml",
+      "k8s/deployment.yaml",
+      "terraform/main.tf",
+      ".github/workflows/ci.yml",
+      "Makefile",
+      "pnpm-workspace.yaml"
+    ]
+  }
+}

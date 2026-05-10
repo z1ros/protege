@@ -1,0 +1,17 @@
+{
+  "id": "pure-ipynb-jupyter-tutorial",
+  "description": "A book-style tutorial composed almost entirely of Jupyter notebooks, no real code outside .ipynb",
+  "expectedDominantField": "ml",
+  "repoSignals": {
+    "fileExtensions": {
+      ".ipynb": 124,
+      ".md": 8,
+      ".png": 42,
+      ".csv": 4
+    },
+    "infraFiles": [
+      "environment.yml",
+      "README.md"
+    ]
+  }
+}

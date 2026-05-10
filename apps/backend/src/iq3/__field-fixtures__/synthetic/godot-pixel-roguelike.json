@@ -1,0 +1,24 @@
+{
+  "id": "godot-pixel-roguelike",
+  "description": "Godot 4 pixel-art roguelike with GDScript and a few C# tools",
+  "expectedDominantField": "game",
+  "repoSignals": {
+    "fileExtensions": {
+      ".gd": 184,
+      ".cs": 12,
+      ".tscn": 96,
+      ".tres": 142,
+      ".gdshader": 18,
+      ".import": 412,
+      ".png": 312,
+      ".ogg": 28,
+      ".md": 2
+    },
+    "infraFiles": [
+      "project.godot",
+      "icon.svg",
+      "export_presets.cfg",
+      ".gitattributes"
+    ]
+  }
+}

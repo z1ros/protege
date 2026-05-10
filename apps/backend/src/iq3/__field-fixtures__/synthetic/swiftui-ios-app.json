@@ -1,0 +1,24 @@
+{
+  "id": "swiftui-ios-app",
+  "description": "Native iOS app in SwiftUI with Combine, Core Data, and SPM dependencies",
+  "expectedDominantField": "mobile",
+  "repoSignals": {
+    "fileExtensions": {
+      ".swift": 218,
+      ".storyboard": 4,
+      ".xib": 2,
+      ".plist": 6,
+      ".xcconfig": 4,
+      ".strings": 8,
+      ".md": 3
+    },
+    "infraFiles": [
+      "Package.swift",
+      "Podfile",
+      "Podfile.lock",
+      "fastlane/Fastfile",
+      "fastlane/Appfile",
+      ".github/workflows/ios-ci.yml"
+    ]
+  }
+}

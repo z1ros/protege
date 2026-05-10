@@ -1,0 +1,33 @@
+{
+  "id": "spark-streaming-kafka",
+  "description": "PySpark Structured Streaming jobs reading from Kafka, writing to Delta Lake on S3",
+  "expectedDominantField": "dataEng",
+  "repoSignals": {
+    "requirementsTxt": [
+      "pyspark",
+      "delta-spark",
+      "kafka-python",
+      "confluent-kafka",
+      "boto3",
+      "pyarrow",
+      "fastavro",
+      "pandas",
+      "pydantic"
+    ],
+    "fileExtensions": {
+      ".py": 52,
+      ".sql": 24,
+      ".scala": 11,
+      ".yaml": 14,
+      ".sh": 6,
+      ".json": 9
+    },
+    "infraFiles": [
+      "Dockerfile",
+      "docker-compose.yml",
+      "k8s/spark-operator.yaml",
+      "Makefile",
+      ".github/workflows/spark-test.yml"
+    ]
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "id": "personal-learning-monorepo",
+  "description": "Personal learning monorepo: small projects across web, scripting, systems — no field dominates",
+  "expectedDominantField": "generalist",
+  "repoSignals": {
+    "packageJsonDeps": [
+      "express",
+      "react",
+      "vite"
+    ],
+    "requirementsTxt": [
+      "requests",
+      "flask",
+      "numpy"
+    ],
+    "cargoToml": [
+      "clap",
+      "serde"
+    ],
+    "goMod": [
+      "github.com/spf13/cobra"
+    ],
+    "fileExtensions": {
+      ".py": 28,
+      ".ts": 22,
+      ".js": 18,
+      ".go": 14,
+      ".rs": 16,
+      ".sh": 12,
+      ".md": 18
+    },
+    "infraFiles": [
+      "README.md",
+      "Makefile"
+    ]
+  }
+}
