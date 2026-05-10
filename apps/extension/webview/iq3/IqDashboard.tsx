@@ -3,13 +3,18 @@ import type { Iq3Headline } from "@protege/types";
 import { PILLAR_FLOOR_FALLBACK, PILLAR_IDS } from "@protege/types";
 import { HeadlineCard } from "./HeadlineCard.js";
 import { PillarBar } from "./PillarBar.js";
-import { FieldVector } from "./FieldVector.js";
+import {
+  FieldVector,
+  FIELD_VECTOR_MIN_SIGNAL,
+  topFieldWeight,
+} from "./FieldVector.js";
 import { OnboardingProbes } from "./OnboardingProbes.js";
 import {
   SelfRatingPrompt,
   shouldShowSelfRating,
   markSelfRatingShown,
 } from "./SelfRatingPrompt.js";
+import { WeirdFeedbackPrompt } from "./WeirdFeedbackPrompt.js";
 import { vscode } from "../vscode.js";
 
 /**
@@ -46,6 +51,16 @@ export function IqDashboard() {
       }
     };
     window.addEventListener("message", handler);
+    // Nudge the host for a fresh `/iq/me` so we don't sit on
+    // "Loading IQ…" for up to 30s waiting for the next poll. The host
+    // also replays its last cached headline on webview mount, so the
+    // common reopen path hydrates synchronously; this ask covers the
+    // first-mount-before-any-poll-succeeded case.
+    try {
+      vscode.postMessage({ type: "iq/refresh" });
+    } catch {
+      // Webview shell unavailable (storybook-style preview). Fine.
+    }
     return () => window.removeEventListener("message", handler);
   }, []);
 
@@ -80,10 +95,28 @@ export function IqDashboard() {
     );
   }
   const floor = PILLAR_FLOOR_FALLBACK[headline.rank.uncappedRank];
+  // Hide the FieldVector until at least one field has a real signal.
+  // Below the threshold the bar is just a uniform-ish stripe that
+  // doesn't carry information — and worse, it implies "the system
+  // thinks you're equally everything," which is misleading. Once a
+  // field crosses ~20% (typically after onboarding probes or ~20
+  // tagged events), we've got something worth showing.
+  const showFieldVector =
+    topFieldWeight(headline.field) >= FIELD_VECTOR_MIN_SIGNAL;
   return (
     <div className="iq3-dashboard">
       <HeadlineCard h={headline} />
-      <FieldVector v={headline.field} />
+      {showFieldVector ? (
+        <FieldVector v={headline.field} />
+      ) : (
+        <div className="iq3-field-pending">
+          <div className="iq3-field-pending-bar" aria-hidden="true" />
+          <div className="iq3-field-pending-msg">
+            We're still learning your style. Keep coding to see your domain
+            breakdown!
+          </div>
+        </div>
+      )}
       <div className="iq3-pillars">
         {PILLAR_IDS.map((p) => (
           <PillarBar
@@ -94,7 +127,9 @@ export function IqDashboard() {
           />
         ))}
       </div>
-      {headline.rank.floorViolation ? (
+      {headline.rank.floorViolation &&
+       headline.rank.uncappedRank === "senior" &&
+       headline.rank.rank !== "senior" ? (
         <div className="iq3-floor-note">
           {`Senior gated by ${headline.rank.floorViolation.pillar} floor (${headline.rank.floorViolation.score} < ${headline.rank.floorViolation.floor}). Lift it to advance.`}
         </div>
@@ -120,6 +155,7 @@ export function IqDashboard() {
           }}
         />
       ) : null}
+      <WeirdFeedbackPrompt />
     </div>
   );
 }

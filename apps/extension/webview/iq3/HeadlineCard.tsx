@@ -10,7 +10,13 @@ const RANK_LABEL: Record<string, string> = {
 
 export function HeadlineCard({ h }: { h: Iq3Headline }) {
   const rank = RANK_LABEL[h.rank.rank] ?? h.rank.rank;
-  const cap = h.rank.floorViolation
+  // Only show the cap label when an actual demotion happened. The
+  // floorViolation field is recorded any time a pillar is below the
+  // computed rank's floor, but the rank logic only demotes seniors.
+  // For non-senior tiers the violation is informational and should
+  // not be presented as a cap.
+  const wasCapped = h.rank.rank !== h.rank.uncappedRank;
+  const cap = wasCapped && h.rank.floorViolation
     ? ` (capped: ${h.rank.floorViolation.pillar} below floor)`
     : "";
   return (
@@ -22,9 +28,6 @@ export function HeadlineCard({ h }: { h: Iq3Headline }) {
       <div className="iq3-rank">
         {rank}
         {cap}
-      </div>
-      <div className="iq3-confidence">
-        {Math.round(h.confidence * 100)}% confident · {h.maturity}
       </div>
     </div>
   );
