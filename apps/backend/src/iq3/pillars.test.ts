@@ -7,20 +7,20 @@ describe("Iq3 pillar projection", () => {
     const s = initialUserState("u1");
     const p = computePillars(s);
     expect(Object.keys(p)).toEqual([
-      "comprehension",
-      "execution",
-      "diagnostics",
-      "verification",
-      "stewardship",
-      "aiPartnership",
+      "reading",
+      "writing",
+      "debugging",
+      "testing",
+      "maintainability",
+      "aiLiteracy",
     ]);
   });
 
   it("uniform prior maps to ~500 calibrated pillar score (with low confidence)", () => {
     const s = initialUserState("u1");
     const p = computePillars(s);
-    expect(p.comprehension.score).toBeGreaterThan(450);
-    expect(p.comprehension.score).toBeLessThan(550);
+    expect(p.reading.score).toBeGreaterThan(450);
+    expect(p.reading.score).toBeLessThan(550);
   });
 
   it("strong positive evidence raises pillar score above 700", () => {
@@ -31,14 +31,14 @@ describe("Iq3 pillar projection", () => {
       ]);
     }
     const p = computePillars(s);
-    expect(p.comprehension.score).toBeGreaterThan(700);
+    expect(p.reading.score).toBeGreaterThan(700);
   });
 
   it("AI Partnership is pending when ai_event_count is 0", () => {
     const s = initialUserState("u1");
     const p = computePillars(s);
-    expect(p.aiPartnership.pending).toBe(true);
-    expect(p.aiPartnership.score).toBe(500);
+    expect(p.aiLiteracy.pending).toBe(true);
+    expect(p.aiLiteracy.score).toBe(500);
   });
 
   it("AI Partnership is non-pending after enough AI events", () => {
@@ -49,6 +49,6 @@ describe("Iq3 pillar projection", () => {
       });
     }
     const p = computePillars(s);
-    expect(p.aiPartnership.pending).toBe(false);
+    expect(p.aiLiteracy.pending).toBe(false);
   });
 });

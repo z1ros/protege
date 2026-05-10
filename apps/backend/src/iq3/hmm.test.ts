@@ -10,21 +10,26 @@ describe("Iq3 HMM Bayesian update", () => {
     expect(t.high).toBeCloseTo(1 / 3, 5);
   });
 
-  it("shifts toward 'high' on a strong positive match", () => {
+  it("shifts toward 'high' on a positive match", () => {
+    // Likelihoods softened in the reading calibration pass
+    // (0.05/0.30/0.70 → 0.15/0.35/0.50). Single-event posterior is
+    // therefore 0.15/0.35/0.50 — assertion expresses the directional
+    // shift (high goes UP from 0.333) rather than a hard magnitude.
     const s = initialUserState("u1");
     const after = applyMatchKeys(s, [
       "file_opened.then.navigations>=2.then.first_text_change.afterMs>30s",
     ]);
-    expect(after.traits.readsBeforeWrites.high).toBeGreaterThan(0.5);
-    expect(after.traits.readsBeforeWrites.low).toBeLessThan(0.15);
+    expect(after.traits.readsBeforeWrites.high).toBeGreaterThan(1 / 3);
+    expect(after.traits.readsBeforeWrites.low).toBeLessThan(1 / 3);
   });
 
-  it("shifts toward 'low' on a strong negative match", () => {
+  it("shifts toward 'low' on a negative match", () => {
     const s = initialUserState("u1");
     const after = applyMatchKeys(s, [
       "file_opened.then.first_text_change.withinMs<5s",
     ]);
-    expect(after.traits.readsBeforeWrites.low).toBeGreaterThan(0.55);
+    expect(after.traits.readsBeforeWrites.low).toBeGreaterThan(1 / 3);
+    expect(after.traits.readsBeforeWrites.high).toBeLessThan(1 / 3);
   });
 
   it("is monotonic across consecutive same-direction matches", () => {
