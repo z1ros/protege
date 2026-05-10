@@ -376,6 +376,29 @@ export function mountProtegeWebview(
   webview.html = renderHtml(webview, context.extensionUri, context.extensionMode);
   mountedWebviews.add(webview);
 
+  // Replay the last cached IQ headline so the dashboard hydrates
+  // instantly instead of sitting on "Loading IQ…" until the next 30s
+  // poll lands. Dynamic import avoids the activation-order coupling we
+  // already swallow elsewhere when the bridge isn't started yet.
+  void (async () => {
+    try {
+      const { getIq3Bridge } = await import("../extension.js");
+      const last = getIq3Bridge?.()?.getLast?.();
+      if (last) {
+        try {
+          webview.postMessage({
+            type: "iq/headline",
+            payload: last,
+          } satisfies HostToWebview);
+        } catch {
+          /* webview disposed between mount and replay */
+        }
+      }
+    } catch {
+      /* bridge not yet started — webview will hydrate on next poll */
+    }
+  })();
+
   // Login-first: track the userId in a let-binding kept in sync with the
   // GitHub session via the authState change feed. Pre-auth it's "" — every
   // backend-touching handler MUST gate on `requireUserIdOrToast()` (or its
@@ -1139,11 +1162,31 @@ export function mountProtegeWebview(
       // branch on the next render.
       const id = currentUserIdOrNull();
       if (!id) return;
+      // Whitelist payload shape before forwarding (security audit H2).
+      // The webview is the authoritative source for onboarding answers
+      // but we still bound the array and reject non-string entries so
+      // a compromised webview script can't hand the backend a million
+      // keys to chew on.
+      const rawPayload = (msg as any).payload;
+      const rawKeys = Array.isArray(rawPayload?.matchKeys)
+        ? rawPayload.matchKeys
+        : [];
+      const safeKeys: string[] = [];
+      for (const k of rawKeys) {
+        if (typeof k !== "string" || k.length > 200) continue;
+        safeKeys.push(k);
+        if (safeKeys.length >= 50) break;
+      }
+      const safeField =
+        typeof rawPayload?.field === "string" && rawPayload.field.length <= 64
+          ? rawPayload.field
+          : undefined;
+      const safePayload = { matchKeys: safeKeys, field: safeField };
       try {
         await authedFetch(`${BACKEND_URL}/iq/onboarding`, {
           method: "POST",
           headers: { "content-type": "application/json", "x-user-id": id },
-          body: JSON.stringify(msg.payload),
+          body: JSON.stringify(safePayload),
         });
       } catch {
         // Backend offline / not signed in. Silent — webview already
@@ -1176,6 +1219,37 @@ export function mountProtegeWebview(
           note: msg.payload.note,
         }),
       }).catch(() => {});
+    } else if (msg.type === "iq/feedback") {
+      // Anonymous "found something weird?" feedback on Code IQ scoring.
+      // Auth gate cuts spam, but the body intentionally omits userId —
+      // the backend route refuses to persist any caller-supplied id and
+      // stores text + server timestamp only. Errors swallowed: the
+      // webview already showed a confirmation toast.
+      const id = currentUserIdOrNull();
+      if (!id) return;
+      const text =
+        typeof msg.payload?.text === "string"
+          ? msg.payload.text.slice(0, 1000)
+          : "";
+      if (!text.trim()) return;
+      await authedFetch(`${BACKEND_URL}/iq/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-user-id": id },
+        body: JSON.stringify({ text }),
+      }).catch(() => {});
+    } else if (msg.type === "iq/refresh") {
+      // Webview asked for a fresh /iq/me fetch — typically the IQ
+      // dashboard on mount. Mount-time replay above already covers the
+      // common case (host has a cached headline); this path covers
+      // first-ever mount before any successful poll, post-sign-in
+      // hydration, and any user action that should jump the cadence.
+      try {
+        const { getIq3Bridge } = await import("../extension.js");
+        await getIq3Bridge?.()?.refresh();
+      } catch {
+        // Bridge not yet started (activation race) — next 30s poll
+        // will hydrate the dashboard.
+      }
     } else if (msg.type === "learning/forkChosen") {
       if (msg.choice === "learn") {
         // Fire Learning Mode with the user's original ask as the
@@ -1574,8 +1648,10 @@ async function handleChat(
 ) {
   // --- IQ3 chat_turn event (Task 19) ---
   // Observe the prompt BEFORE any short-circuits or LLM calls so the HMM
-  // sees every user turn regardless of downstream outcome. Backend
-  // rewrites `acceptedAi` after the fact.
+  // sees every user turn regardless of downstream outcome. The chat→
+  // accept correlation is handled in the backend matcher layer via
+  // temporal-proximity matchKeys (see iq3Hook.ts), not via a flag on
+  // the event itself.
   getBatcher()?.push(buildChatTurnEvent(message));
 
   // --- Explicit "teach me X" short-circuit (fork chip redundant) ---
@@ -2417,6 +2493,23 @@ function renderHtml(
 </head>
 <body>
 <div id="root"></div>
+<!-- Cache acquireVsCodeApi() to make it idempotent. The React bundle
+     calls it; VS Code throws on the second call. Wrapping here lets
+     any other inline scripts share the same handle without crashing. -->
+<script nonce="${nonce}">
+(function(){
+  try {
+    if (typeof acquireVsCodeApi === 'function') {
+      var orig = acquireVsCodeApi;
+      var cached;
+      window.acquireVsCodeApi = function(){
+        if (!cached) cached = orig();
+        return cached;
+      };
+    }
+  } catch (_) { /* ignore */ }
+})();
+</script>
 <script nonce="${nonce}" type="module" src="${scriptUri}"></script>
 </body>
 </html>`;

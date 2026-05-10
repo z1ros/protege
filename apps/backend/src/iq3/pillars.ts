@@ -10,11 +10,18 @@ import { PILLAR_IDS, TRAIT_TO_PILLAR } from "@protege/types";
 const AI_THRESHOLD_PROPORTION = 0.05;
 const AI_THRESHOLD_MIN_COUNT = 5;
 
-/** Map E[posterior] ∈ [0,1] to score ∈ [0, 1000+] via shifted sigmoid. */
+/** Map E[posterior] ∈ [0,1] to score ∈ [0, 1000+] via shifted sigmoid.
+ *
+ * Calibration note (Comprehension polish, iteration 3): slope was 12.
+ * Empirically too gentle given that most pillars have 2-3 truly-active
+ * traits while the others sit at uniform-prior 0.5. Effective range
+ * of the pillar mean is roughly [0.4, 0.7] — outside that range
+ * requires structural changes (new event producers) we can't ship
+ * today. A steeper sigmoid (slope 16) better differentiates inside
+ * the reachable mean band: 0.4 → ~170, 0.5 → 500, 0.6 → 832, 0.7 → 970.
+ */
 function calibrate(rawMean: number): number {
-  // Centered at 0.5, slope tuned so 0.7 → ~700, 0.9 → ~900.
-  // f(x) = 1000 / (1 + exp(-12 * (x - 0.5)))
-  return Math.round(1000 / (1 + Math.exp(-12 * (rawMean - 0.5))));
+  return Math.round(1000 / (1 + Math.exp(-16 * (rawMean - 0.5))));
 }
 
 /** E[trait_state] using midpoint encoding 0 / 0.5 / 1. */
@@ -27,12 +34,12 @@ export function computePillars(
 ): Record<Iq3PillarId, Iq3PillarScore> {
   // Group traits by pillar.
   const pillarTraits: Record<Iq3PillarId, Iq3TraitId[]> = {
-    comprehension: [],
-    execution: [],
-    diagnostics: [],
-    verification: [],
-    stewardship: [],
-    aiPartnership: [],
+    reading: [],
+    writing: [],
+    debugging: [],
+    testing: [],
+    maintainability: [],
+    aiLiteracy: [],
   };
   for (const [trait, pillar] of Object.entries(TRAIT_TO_PILLAR)) {
     pillarTraits[pillar as Iq3PillarId].push(trait as Iq3TraitId);
@@ -60,7 +67,7 @@ export function computePillars(
     const aiProportion =
       state.eventCount > 0 ? state.aiEventCount / state.eventCount : 0;
     const isAiPending =
-      pillar === "aiPartnership" &&
+      pillar === "aiLiteracy" &&
       (state.aiEventCount < AI_THRESHOLD_MIN_COUNT ||
         aiProportion < AI_THRESHOLD_PROPORTION);
 

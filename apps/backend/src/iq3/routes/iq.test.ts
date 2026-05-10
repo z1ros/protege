@@ -193,10 +193,39 @@ describe("/iq/onboarding — auth + IDOR", () => {
         Authorization: `Bearer ${TOKEN}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ matchKeys: ["foo"] }),
+      body: JSON.stringify({
+        matchKeys: ["file_opened.then.first_text_change.withinMs<5s"],
+      }),
     });
     expect(res.status).toBe(200);
     expect(memStates.has(VERIFIED_USER)).toBe(true);
+  });
+
+  it("400 when matchKeys contains an unknown key", async () => {
+    const app = await buildApp();
+    const res = await app.request("/iq/onboarding", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ matchKeys: ["not-a-real-key"] }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("400 when matchKeys exceeds the 50-entry limit", async () => {
+    const app = await buildApp();
+    const realKey = "file_opened.then.first_text_change.withinMs<5s";
+    const res = await app.request("/iq/onboarding", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ matchKeys: Array(51).fill(realKey) }),
+    });
+    expect(res.status).toBe(400);
   });
 });
 

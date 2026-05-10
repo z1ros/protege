@@ -20,6 +20,10 @@ function fieldEntropy(v: Iq3FieldVector): number {
   return h / Math.log(FIELD_IDS.length);
 }
 
+// Spec §4.2: pending AI Partnership contributes neutral 500 at 0.5× weight.
+const PENDING_PILLAR_SCORE = 500;
+const PENDING_PILLAR_WEIGHT = 0.5;
+
 function maturityBucket(eventCount: number): "cold" | "warm" | "mature" {
   if (eventCount < 300) return "cold";
   if (eventCount < 1800) return "warm";
@@ -33,15 +37,18 @@ export function computeHeadline(
   const pillars = computePillars(state);
 
   // Per-field headline = Σ pillar.score · weight[pillar][field]
+  // Pending pillars (currently only AI Partnership when AI usage < 5%)
+  // contribute neutral 500 at 0.5× weight per spec §4.2.
   const headlinePerField = {} as Record<Iq3FieldId, number>;
   for (const f of FIELD_IDS) {
     let total = 0;
     let weightSum = 0;
     for (const p of PILLAR_IDS) {
-      // Skip pending pillars to avoid pulling toward the neutral 500.
-      if (pillars[p].pending) continue;
-      const w = PILLAR_WEIGHTS[f][p];
-      total += pillars[p].score * w;
+      const baseWeight = PILLAR_WEIGHTS[f][p];
+      const isPending = pillars[p].pending;
+      const w = isPending ? baseWeight * PENDING_PILLAR_WEIGHT : baseWeight;
+      const score = isPending ? PENDING_PILLAR_SCORE : pillars[p].score;
+      total += score * w;
       weightSum += w;
     }
     headlinePerField[f] = weightSum > 0 ? total / weightSum : 0;

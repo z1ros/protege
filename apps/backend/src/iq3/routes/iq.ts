@@ -3,25 +3,17 @@ import type { Iq3FieldId, Iq3UserState } from "@protege/types";
 import { FIELD_IDS } from "@protege/types";
 import { computeHeadline } from "../composite.js";
 import { applyMatchKeys, initialUserState } from "../hmm.js";
+import { MATCHKEY_TO_TRAITS } from "../likelihoods.js";
 import { applySelfDeclaration } from "../fieldVector.js";
 import { FALLBACK_DISTRIBUTION } from "../cohort.js";
 import { githubAuth, resolveUserId } from "../../middleware/auth.js";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { getIq3UserStateRepo, setIq3UserStateRepo } from "../repo.js";
 
-interface UserStateRepo {
-  load(userId: string): Promise<Iq3UserState | null>;
-  save(state: Iq3UserState): Promise<void>;
-}
+export { setIq3UserStateRepo };
 
-let _repo: UserStateRepo | null = null;
-export function setIq3UserStateRepo(repo: UserStateRepo) {
-  _repo = repo;
-}
-function repo(): UserStateRepo {
-  if (!_repo) throw new Error("iq3 user-state repo not initialized");
-  return _repo;
-}
+const repo = getIq3UserStateRepo;
 
 const app = new Hono();
 
@@ -59,6 +51,12 @@ app.get("/me", async (c) => {
   return c.json({ headline });
 });
 
+// Onboarding accepts a small fixed set of probe-derived matchKeys.
+// Uncapped + unvalidated input would let any authenticated caller burn
+// CPU on `applyMatchKeys` or push arbitrary keys into a future-added
+// likelihood entry (security audit H1).
+const ONBOARDING_MAX_MATCHKEYS = 50;
+
 app.post("/onboarding", async (c) => {
   const body = await c.req.json().catch(() => null);
   // Accept body.userId for back-compat but resolveUserId enforces it
@@ -66,9 +64,23 @@ app.post("/onboarding", async (c) => {
   const claimedUserId =
     typeof body?.userId === "string" ? (body.userId as string) : undefined;
   const userId = resolveUserId(c, claimedUserId);
-  const matchKeys: string[] = Array.isArray(body?.matchKeys)
-    ? body.matchKeys
-    : [];
+  const rawKeys: unknown = body?.matchKeys;
+  if (!Array.isArray(rawKeys)) {
+    return c.json({ error: "matchKeys must be an array of strings" }, 400);
+  }
+  if (rawKeys.length > ONBOARDING_MAX_MATCHKEYS) {
+    return c.json(
+      { error: `matchKeys exceeds limit of ${ONBOARDING_MAX_MATCHKEYS}` },
+      400,
+    );
+  }
+  const matchKeys: string[] = [];
+  for (const k of rawKeys) {
+    if (typeof k !== "string" || !MATCHKEY_TO_TRAITS.has(k)) {
+      return c.json({ error: "unknown matchKey" }, 400);
+    }
+    matchKeys.push(k);
+  }
   const field = body?.field;
 
   let state = (await repo().load(userId)) ?? initialUserState(userId);

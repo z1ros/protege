@@ -2,7 +2,7 @@ import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
-import { githubAuth } from "./middleware/auth.js";
+import { githubAuth, logAuthModeOnce } from "./middleware/auth.js";
 import { chatRoute } from "./routes/chat.js";
 import { analyzeRoute } from "./routes/analyze.js";
 import { conceptRoute } from "./routes/concept.js";
@@ -22,6 +22,7 @@ import { notesRoute } from "./routes/notes.js";
 import { chatHistoryRoute } from "./routes/chatHistory.js";
 import iqRouter, { setIq3UserStateRepo } from "./iq3/routes/iq.js";
 import selfRatingRouter from "./iq3/routes/selfRating.js";
+import feedbackRouter from "./iq3/routes/feedback.js";
 import { autoRepo } from "./iq3/persistence.js";
 
 const app = new Hono();
@@ -120,6 +121,7 @@ app.route("/notes", notesRoute);
 app.route("/chat-history", chatHistoryRoute);
 app.route("/iq", iqRouter);
 app.route("/iq/self-rating", selfRatingRouter);
+app.route("/iq/feedback", feedbackRouter);
 
 // Echo nightly jobs — rollup, archetypeClassifier.
 // Scaffolding only; widget agents fill in the real aggregation logic.
@@ -128,6 +130,11 @@ registerEchoJobs();
 const port = Number(process.env.PORT ?? 8787);
 serve({ fetch: app.fetch, port });
 console.log(`[protege] backend listening on :${port}`);
+// Log auth mode so a misconfigured prod deploy with auth disabled
+// shows up in startup logs (rather than silently flipping into
+// open-IDOR mode). Production hard-codes auth=ON regardless of env,
+// so this is informational there; the warning only fires in dev.
+logAuthModeOnce();
 
 // Quota subsystem startup probe. Logs explicitly whether Supabase is
 // reachable, whether the `user_quotas` table exists, and whether
