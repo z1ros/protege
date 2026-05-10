@@ -30,7 +30,8 @@ export function SelfRatingPrompt({
   return (
     <div className="iq3-selfrate">
       <div className="iq3-selfrate-prompt">
-        Rate your seniority on this codebase (1 = beginner, 10 = senior).
+        We'd love to hear from you — rate your seniority on this codebase
+        (1 = beginner, 10 = senior).
       </div>
       <div className="iq3-selfrate-buttons">
         {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (

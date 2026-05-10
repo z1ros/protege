@@ -55,6 +55,29 @@
   gap: 6px;
 }
 
+/* Shown in place of the FieldVector when the system doesn't have
+   enough signal to classify the user's domain mix yet. Mirrors the
+   real bar's vertical rhythm: a flat gray line where the colored
+   stacked bar would be, plus a quiet caption underneath. Keeps the
+   layout stable across the threshold transition. */
+.iq3-field-pending {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.iq3-field-pending-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.iq3-field-pending-msg {
+  font-size: 12px;
+  color: rgba(245, 246, 250, 0.55);
+  font-style: italic;
+}
+
 .iq3-field-bar {
   display: flex;
   height: 8px;
@@ -99,6 +122,103 @@
   display: flex;
   justify-content: space-between;
   font-size: 13px;
+}
+
+.iq3-pillar-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* `?` marker next to each pillar name. The styled tooltip popup
+   (`.iq3-pillar-help-tip`) is a sibling, revealed via `:hover` /
+   `:focus-within` on the wrapper. No JS required. */
+.iq3-pillar-help-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.iq3-pillar-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(245, 246, 250, 0.62);
+  font-size: 9.5px;
+  font-weight: 600;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  line-height: 1;
+  cursor: help;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+  user-select: none;
+}
+
+.iq3-pillar-help-wrap:hover .iq3-pillar-help,
+.iq3-pillar-help:focus-visible {
+  color: var(--text, #f5f6fa);
+  border-color: rgba(74, 158, 255, 0.7);
+  background: rgba(74, 158, 255, 0.16);
+  outline: none;
+}
+
+/* Styled hover/focus tooltip. Positioned above the `?` icon, centered
+   on it. Hidden by default — visible only when the wrapper is hovered
+   or contains a focused element (keyboard support via `:focus-within`).
+   `pointer-events: none` so the tooltip itself can't intercept clicks
+   or trap hover. */
+.iq3-pillar-help-tip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  width: 240px;
+  padding: 10px 12px;
+  background: rgba(13, 11, 24, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  color: rgba(245, 246, 250, 0.92);
+  font-size: 11.5px;
+  font-weight: 400;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  line-height: 1.5;
+  letter-spacing: 0;
+  text-align: left;
+  text-transform: none;
+  white-space: normal;
+  box-shadow:
+    0 10px 28px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(74, 158, 255, 0.08) inset;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 140ms ease, transform 140ms ease, visibility 140ms;
+  z-index: 100;
+}
+
+/* Small arrow under the tooltip pointing down to the `?`. */
+.iq3-pillar-help-tip::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 6px solid rgba(13, 11, 24, 0.97);
+}
+
+.iq3-pillar-help-wrap:hover .iq3-pillar-help-tip,
+.iq3-pillar-help-wrap:focus-within .iq3-pillar-help-tip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
 }
 
 .iq3-pillar-track {
@@ -205,3 +325,83 @@
 .iq3-selfrate-note { padding: 6px; font-size: 12px; resize: vertical; min-height: 32px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.08); color: inherit; font-family: inherit; border-radius: 4px; }
 .iq3-selfrate-actions { display: flex; gap: 8px; }
 .iq3-selfrate-actions button { padding: 6px 12px; cursor: pointer; font-size: 12px; }
+
+/*
+ * "Found something weird?" feedback prompt — anonymous, text only.
+ * Persistent low-friction link at the bottom of the dashboard. Click
+ * expands to a textarea + send/cancel; submit shows a transient
+ * confirmation then collapses back to the link.
+ */
+.iq3-weirdfb-link {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px 10px;
+  background: transparent;
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.55);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: center;
+  cursor: pointer;
+  transition: color 120ms, border-color 120ms, background 120ms;
+}
+.iq3-weirdfb-link:hover {
+  color: rgba(255, 255, 255, 0.85);
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.03);
+}
+.iq3-weirdfb {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+}
+.iq3-weirdfb-label { font-size: 12px; color: rgba(255, 255, 255, 0.75); }
+.iq3-weirdfb-textarea {
+  padding: 8px;
+  font-size: 12px;
+  font-family: inherit;
+  color: inherit;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  resize: vertical;
+  min-height: 56px;
+}
+.iq3-weirdfb-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.iq3-weirdfb-submit,
+.iq3-weirdfb-cancel {
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  border-radius: 4px;
+}
+.iq3-weirdfb-submit {
+  background: rgba(59, 130, 246, 0.35);
+  border: 1px solid rgba(59, 130, 246, 0.6);
+  color: inherit;
+}
+.iq3-weirdfb-submit:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.iq3-weirdfb-cancel {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.7);
+}
+.iq3-weirdfb-sent {
+  padding: 8px 10px;
+  font-size: 12px;
+  text-align: center;
+  color: rgba(134, 239, 172, 0.95);
+  background: rgba(34, 197, 94, 0.08);
+  border: 1px solid rgba(34, 197, 94, 0.25);
+  border-radius: 6px;
+}

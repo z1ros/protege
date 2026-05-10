@@ -44,6 +44,19 @@ create table if not exists iq3_self_ratings (
 create index if not exists iq3_self_ratings_user_idx
   on iq3_self_ratings (user_id, rated_at desc);
 
+-- Anonymous "found something weird?" feedback on Code IQ scoring.
+-- Endpoint is auth-gated against spam, but the row deliberately stores
+-- only the trimmed text + a server timestamp — no user_id, so a flag
+-- cannot be tied back to the caller's GitHub identity.
+create table if not exists iq3_feedback (
+  id            uuid primary key default gen_random_uuid(),
+  text          text not null check (length(text) between 1 and 1000),
+  submitted_at  timestamptz not null default now()
+);
+
+create index if not exists iq3_feedback_submitted_idx
+  on iq3_feedback (submitted_at desc);
+
 -- Materialized cohort percentiles per (field, headline). Rebuilt nightly.
 create table if not exists iq3_cohort_stats (
   field            text not null,
@@ -58,3 +71,4 @@ create table if not exists iq3_cohort_stats (
 -- alter table iq3_user_state     enable row level security;
 -- alter table iq3_pillar_history enable row level security;
 -- alter table iq3_self_ratings   enable row level security;
+≈

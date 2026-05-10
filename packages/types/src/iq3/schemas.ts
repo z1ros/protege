@@ -30,3 +30,20 @@ export const SelfRatingSchema = z.object({
 });
 
 export type SelfRating = z.infer<typeof SelfRatingSchema>;
+
+/**
+ * Anonymous "found something weird" feedback on Code IQ scoring.
+ *
+ * No userId — endpoint is auth-gated to prevent spam, but the persisted
+ * row stores only the free-text and a server-stamped timestamp. Used to
+ * surface scoring issues from real users without tying complaints to
+ * identities.
+ */
+export const FEEDBACK_TEXT_MAX = 1000;
+
+export const Iq3FeedbackSchema = z.object({
+  text: z.string().min(1).max(FEEDBACK_TEXT_MAX),
+  submittedAt: z.string().datetime(),
+});
+
+export type Iq3Feedback = z.infer<typeof Iq3FeedbackSchema>;

@@ -30,9 +30,16 @@ export function computeRank(input: ComputeRankInput): Iq3Rank {
   );
 
   const uncapped: Iq3RankId = (() => {
-    for (const r of RANK_ORDER) {
+    // Bands are half-open `[lo, hi)` except the last one, which we
+    // treat as fully closed `[lo, hi]` so a percentile of exactly 100
+    // lands on senior instead of falling through to the fallback. The
+    // fallback below is a defense-in-depth — tests still cover it, but
+    // shouldn't fire on legitimate input.
+    for (let i = 0; i < RANK_ORDER.length; i++) {
+      const r = RANK_ORDER[i];
       const [lo, hi] = RANK_PERCENTILE_BANDS[r];
-      if (pct >= lo && pct < hi) return r;
+      const isLast = i === RANK_ORDER.length - 1;
+      if (pct >= lo && (isLast ? pct <= hi : pct < hi)) return r;
     }
     return "senior";
   })();

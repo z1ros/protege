@@ -14,6 +14,38 @@ const FIELD_COLORS: Record<string, string> = {
   generalist: "#9ca3af",
 };
 
+// Human-readable labels. Field IDs are camelCase / lowercase tokens
+// for the API, but the UI surfaces them in proper case so the legend
+// reads like a domain name instead of a code identifier.
+const FIELD_LABEL: Record<string, string> = {
+  web: "Web",
+  ml: "ML",
+  dataEng: "Data Eng",
+  devOps: "DevOps",
+  sec: "Security",
+  mobile: "Mobile",
+  systems: "Systems",
+  game: "Game Dev",
+  embedded: "Embedded",
+  generalist: "Generalist",
+};
+
+/** Minimum top-field weight to consider the vector "informative". Below
+ *  this the distribution is too uniform to convey signal — most likely
+ *  the user is new and the prior hasn't moved yet. The dashboard hides
+ *  the bar entirely below this threshold (see IqDashboard.tsx). */
+export const FIELD_VECTOR_MIN_SIGNAL = 0.2;
+
+/** Returns the highest-weight field's probability. Used by the
+ *  dashboard's gate. */
+export function topFieldWeight(v: Iq3FieldVector): number {
+  let max = 0;
+  for (const p of Object.values(v)) {
+    if (p > max) max = p;
+  }
+  return max;
+}
+
 export function FieldVector({ v }: { v: Iq3FieldVector }) {
   const entries = Object.entries(v).sort((a, b) => b[1] - a[1]);
   return (
@@ -24,7 +56,7 @@ export function FieldVector({ v }: { v: Iq3FieldVector }) {
             key={f}
             className="iq3-field-segment"
             style={{ width: `${p * 100}%`, background: FIELD_COLORS[f] ?? "#9ca3af" }}
-            title={`${f}: ${(p * 100).toFixed(0)}%`}
+            title={`${FIELD_LABEL[f] ?? f}: ${(p * 100).toFixed(0)}%`}
           />
         ))}
       </div>
@@ -35,7 +67,7 @@ export function FieldVector({ v }: { v: Iq3FieldVector }) {
               style={{ background: FIELD_COLORS[f] ?? "#9ca3af" }}
               className="iq3-field-swatch"
             />
-            {f} {(p * 100).toFixed(0)}%
+            {FIELD_LABEL[f] ?? f} {(p * 100).toFixed(0)}%
           </span>
         ))}
       </div>

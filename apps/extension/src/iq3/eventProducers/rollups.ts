@@ -211,7 +211,19 @@ export function startRollupProducers(
             d.uri.fsPath === file ||
             d.fileName === file,
         );
-        const pastedAtVersion = doc?.version ?? 0;
+        // No live doc → version unknown. Drop the paste rather than
+        // queue it with `pastedAtVersion=0`: a fallback of 0 makes
+        // *every* future text_change on a freshly-opened/reloaded copy
+        // of this file look like an "edit during the post-paste
+        // window," over-counting `iterated` outcomes. Better to lose
+        // one paste signal than to bias authorship classification.
+        // (`return` exits this onPush callback for this event; the
+        // `ai_suggestion_accepted` block below can't match `e` whose
+        // type is `paste_classified` so nothing else is skipped.)
+        if (!doc) {
+          return;
+        }
+        const pastedAtVersion = doc.version;
         const pending: PendingPaste = {
           pasteTs: (e as any).ts,
           uri,
@@ -270,7 +282,14 @@ export function startRollupProducers(
             d.uri.fsPath === file ||
             d.fileName === file,
         );
-        const acceptedAtVersion = doc?.version ?? 0;
+        // Same rationale as the paste branch above: a `0` fallback
+        // makes every future text_change on a reopened doc look like a
+        // post-accept edit, biasing authorship classification toward
+        // "iterated." Drop the accept rather than queue with bad data.
+        if (!doc) {
+          return;
+        }
+        const acceptedAtVersion = doc.version;
         const pending: PendingAccept = {
           acceptTs: (e as any).ts,
           uri,

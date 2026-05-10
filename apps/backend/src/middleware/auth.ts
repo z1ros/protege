@@ -45,10 +45,39 @@ export function _resetAuthCacheForTests(): void {
 }
 
 export function isAuthRequired(): boolean {
+  // Production refuses to disable auth no matter what env vars say.
+  // The opt-out is dev-only: a misconfigured Railway deploy with
+  // `PROTEGE_AUTH_REQUIRED=false` left over from local testing must
+  // not silently flip the server into open-IDOR mode. Treat NODE_ENV
+  // === "production" as the hard gate; explicitly-disabled auth in
+  // any other environment respects the env flag.
+  if (process.env.NODE_ENV === "production") return true;
   const v = process.env.PROTEGE_AUTH_REQUIRED;
   // Default ON. Only an explicit "false" or "0" disables auth — for local
   // single-user dev. Absent / anything else → enforce.
   return v !== "false" && v !== "0";
+}
+
+/** Print a one-time banner if dev-mode auth opt-out is detected so the
+ *  operator sees the open-mode state in startup logs. Idempotent — safe
+ *  to call multiple times. */
+let devBannerPrinted = false;
+export function logAuthModeOnce(): void {
+  if (devBannerPrinted) return;
+  devBannerPrinted = true;
+  const env = process.env.NODE_ENV ?? "(unset)";
+  if (process.env.NODE_ENV !== "production" && !isAuthRequired()) {
+    const allowDevUser = process.env.PROTEGE_ALLOW_DEV_USER === "true";
+    console.warn(
+      `[auth] DEV MODE — authentication is OFF (NODE_ENV=${env}). ` +
+        `Anyone can hit protected routes. ` +
+        (allowDevUser
+          ? "PROTEGE_ALLOW_DEV_USER=true: header/query userIds will be trusted."
+          : "PROTEGE_ALLOW_DEV_USER unset: requests without an explicit userId fall back to 'local-dev'."),
+    );
+  } else {
+    console.log(`[auth] auth ${isAuthRequired() ? "ENFORCED" : "OFF"} (NODE_ENV=${env})`);
+  }
 }
 
 async function verifyGitHubToken(token: string): Promise<CacheEntry | null> {

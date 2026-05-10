@@ -1729,12 +1729,20 @@ async function computeSnapshot(
     nowMs: now,
   });
 
+  // totalConcepts is displayed as `X / RULE_COUNT` in the webview, so
+  // the numerator must only count concepts the current rule set knows
+  // about. `rows` can include orphan names from prior taxonomy versions
+  // (renamed/removed concepts that still exist on the user record),
+  // which used to push the numerator above the denominator (e.g. 44/41).
+  const ruleSetNames = new Set(CONCEPT_META.map((m) => m.name));
+  const totalConceptsInRuleset = rows.filter((r) => ruleSetNames.has(r.name)).length;
+
   return {
     user,
     codeIq: pillarIq,
     baseIq: pillars.composite,
     bonusIq,
-    totalConcepts: rows.length,
+    totalConcepts: totalConceptsInRuleset,
     rows,
     clusters,
     recentGains,

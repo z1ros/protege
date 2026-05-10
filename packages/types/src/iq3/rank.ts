@@ -14,15 +14,21 @@ export const RANK_PERCENTILE_BANDS: Record<Iq3RankId, [number, number]> = {
 
 /**
  * Pillar floor: rank caps at Mid if any pillar < this floor for the rank.
- * Floor is expressed as the 15th percentile within the rank's expected
- * pillar score distribution. For Phase A, until cohort data exists, use
- * the static fallbacks below.
+ *
+ * v2 calibration note: senior floor was 580 (the 15th percentile of an
+ * idealized senior distribution). With v2's full producer set wired,
+ * Diagnostics still tops out around 550 for typical seniors because
+ * several Diagnostics traits remain dormant (need static analysis we
+ * don't yet ship). 580 was therefore blocking valid senior personas
+ * whose other pillars were 800+. Lowered to 500 — the neutral
+ * uniform-prior baseline. Anyone scoring below 500 has *negative*
+ * signal in that pillar (a real deficit), which still blocks senior.
  */
 export const PILLAR_FLOOR_FALLBACK: Record<Iq3RankId, number> = {
   learner: 0,
   junior:  150,
   mid:     350,
-  senior:  580,
+  senior:  500,
 };
 
 export interface Iq3Rank {
