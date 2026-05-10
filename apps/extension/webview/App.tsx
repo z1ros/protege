@@ -522,6 +522,55 @@ async function playExplainAudio(
   }
 }
 
+/**
+ * Catches render errors inside the overlay so the user sees the failure
+ * instead of a silently-blank panel. Without this, any throw inside
+ * ProfilePage / IqDashboard / their dependencies just unmounts the
+ * subtree and the user gets an empty overlay with no clue what went
+ * wrong. Logs to console too so DevTools picks it up.
+ */
+class OverlayErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error("[overlay] render error:", error, info);
+  }
+  render() {
+    if (this.state.error) {
+      const e = this.state.error;
+      return (
+        <div className="page" style={{ padding: 24, color: "#ff8a8a" }}>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>
+            Overlay render failed
+          </div>
+          <div style={{ fontFamily: "monospace", fontSize: 12, opacity: 0.85 }}>
+            {String(e.message || e)}
+          </div>
+          {e.stack && (
+            <pre
+              style={{
+                fontFamily: "monospace",
+                fontSize: 11,
+                opacity: 0.7,
+                marginTop: 12,
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              {e.stack}
+            </pre>
+          )}
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export function App() {
   const [mode, setMode] = useState<Mode>("chat");
   const [chatInputMode, setChatInputMode] = useState<ChatInputMode>("text");
@@ -1819,6 +1868,7 @@ export function App() {
         onClose={() => setOverlay(null)}
       >
         <div className="overlay-panel" key={overlay ?? "none"}>
+          <OverlayErrorBoundary>
           <Suspense fallback={<div className="page-loading microcaps">Loading…</div>}>
             {overlay === "profile" && (
               <ProfilePage
@@ -1836,6 +1886,7 @@ export function App() {
             {/* `overlay === "subscription"` branch removed — the
                 SubscriptionPage no longer renders as an overlay. */}
           </Suspense>
+          </OverlayErrorBoundary>
         </div>
       </Overlay>
 

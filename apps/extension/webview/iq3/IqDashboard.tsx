@@ -18,6 +18,32 @@ import { WeirdFeedbackPrompt } from "./WeirdFeedbackPrompt.js";
 import { vscode } from "../vscode.js";
 
 /**
+ * Back-compat: pillar IDs were renamed. The local-dev backend returns
+ * the new keys, but the production deployment still ships the old
+ * names. Map them in so the dashboard shows real data instead of
+ * crashing on undefined access.
+ */
+const LEGACY_PILLAR_KEY_MAP: Record<string, string> = {
+  comprehension: "reading",
+  execution: "writing",
+  diagnostics: "debugging",
+  verification: "testing",
+  stewardship: "maintainability",
+  aiPartnership: "aiLiteracy",
+};
+function normalizePillars(
+  pillars: Record<string, unknown> | undefined | null,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...(pillars ?? {}) };
+  for (const [legacy, current] of Object.entries(LEGACY_PILLAR_KEY_MAP)) {
+    if (out[current] === undefined && out[legacy] !== undefined) {
+      out[current] = out[legacy];
+    }
+  }
+  return out;
+}
+
+/**
  * IQ dashboard — Phase A surface for the Iq3 HMM.
  *
  * Subscribes to `iq/headline` host→webview broadcasts (extension polls
@@ -118,14 +144,23 @@ export function IqDashboard() {
         </div>
       )}
       <div className="iq3-pillars">
-        {PILLAR_IDS.map((p) => (
-          <PillarBar
-            key={p}
-            pillar={p}
-            data={headline.pillars[p]}
-            floorMark={floor}
-          />
-        ))}
+        {(() => {
+          const normalized = normalizePillars(
+            headline.pillars as unknown as Record<string, unknown>,
+          );
+          return PILLAR_IDS.map((p) => {
+            const data = (normalized[p] ??
+              normalized[
+                Object.entries(LEGACY_PILLAR_KEY_MAP).find(
+                  ([, v]) => v === p,
+                )?.[0] ?? p
+              ]) as Iq3Headline["pillars"][typeof p] | undefined;
+            if (!data) return null;
+            return (
+              <PillarBar key={p} pillar={p} data={data} floorMark={floor} />
+            );
+          });
+        })()}
       </div>
       {headline.rank.floorViolation &&
        headline.rank.uncappedRank === "senior" &&

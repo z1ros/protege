@@ -31,9 +31,24 @@ export function PillarBar({
   floorMark,
 }: {
   pillar: string;
-  data: Iq3PillarScore;
+  data: Iq3PillarScore | undefined;
   floorMark?: number;
 }) {
+  // Defensive render — earlier shape mismatches (pillar IDs renamed in
+  // types but old keys returned by the deployed backend) caused the
+  // entire profile overlay to silently blank because PillarBar threw on
+  // `data.pending` when data was undefined. Render an explicit
+  // unavailable state instead so the rest of the dashboard survives.
+  if (!data) {
+    return (
+      <div className="iq3-pillar iq3-pillar--pending">
+        <div className="iq3-pillar-label">
+          <span className="iq3-pillar-name">{PILLAR_LABEL[pillar] ?? pillar}</span>
+        </div>
+        <div className="iq3-pillar-pending">data unavailable</div>
+      </div>
+    );
+  }
   const label = PILLAR_LABEL[pillar] ?? pillar;
   const description = PILLAR_DESCRIPTION[pillar];
   // `?` info marker. Uses the native `title` attribute so the tooltip
