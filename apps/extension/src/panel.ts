@@ -12,12 +12,18 @@ let current: vscode.WebviewPanel | undefined;
 // makes the second caller await the first instead of starting its own
 // group-creation sequence.
 let opening: Promise<vscode.WebviewPanel> | undefined;
+// Track when `opening` was last set. The original guard assumes the
+// IIFE's `finally` always clears `opening` — but in practice we've
+// observed the promise getting stuck (e.g., a hung newGroupRight call
+// or an unhandled exception in a path the finally doesn't catch),
+// after which EVERY subsequent caller short-circuits to the dead
+// promise and no panel is ever created. If openingStartedAt is more
+// than this many ms ago AND `current` is still empty, treat the
+// promise as stale and force a fresh create.
+let openingStartedAt = 0;
+const OPENING_STALE_MS = 5000;
 
 export async function openProtegePanel(context: vscode.ExtensionContext) {
-  log(
-    "reopen-debug",
-    `openProtegePanel: entered. currentPanel exists? ${current !== undefined} opening? ${opening !== undefined}`
-  );
   if (current) {
     // Re-reveal in whatever column it's already living in. The lock
     // applied at first-create persists with the group, so we don't
@@ -27,34 +33,56 @@ export async function openProtegePanel(context: vscode.ExtensionContext) {
     // Defensive: closing the panel via the tab's X button (or closing
     // the entire editor GROUP) doesn't always cleanly fire
     // `onDidDispose` before the user clicks the launcher again — the
-    // ref can outlive the real panel. The previous `cspSource` probe
-    // didn't actually throw on disposed panels in current Cursor/VS
-    // Code, so reveal() would silently no-op and the launcher click
-    // appeared dead. Wrap reveal() itself in try/catch: a disposed
-    // panel will throw, we clear the stale ref, and fall through to
-    // build a fresh panel.
-    log("reopen-debug", "openProtegePanel: trying to reveal existing panel");
+    // ref can outlive the real panel.
+    //
+    // In Cursor specifically, `reveal()` and `viewColumn` getter both
+    // silently no-op on a disposed panel instead of throwing — so the
+    // earlier "wrap reveal in try/catch" approach never tripped, the
+    // function returned the dead panel, and the launcher's post-await
+    // `panel.viewType` access threw "Webview is disposed" (which IS
+    // the one accessor that DOES throw on disposed panels in Cursor).
+    //
+    // Probe `viewType` directly here as our liveness check, BEFORE
+    // calling reveal. If the panel is disposed, this throws, we clear
+    // the stale ref, and fall through to build a fresh panel.
+    let alive = false;
     try {
-      current.reveal(current.viewColumn ?? vscode.ViewColumn.Beside, false);
-      log("reopen-debug", "openProtegePanel: reveal succeeded; returning existing panel");
-      return current;
-    } catch (e) {
-      log(
-        "reopen-debug",
-        `openProtegePanel: reveal threw, clearing stale ref: ${e instanceof Error ? e.message : String(e)}`
-      );
-      console.log("[protege] panel: stale current ref, rebuilding");
+      void current.viewType;
+      alive = true;
+    } catch {
+      console.log("[protege] panel: stale current ref (probe failed), rebuilding");
       current = undefined;
+    }
+    if (alive && current) {
+      try {
+        current.reveal(current.viewColumn ?? vscode.ViewColumn.Beside, false);
+        return current;
+      } catch {
+        console.log("[protege] panel: stale current ref (reveal failed), rebuilding");
+        current = undefined;
+      }
     }
   }
   if (opening) {
-    log("reopen-debug", "openProtegePanel: returning in-flight opening promise");
-    return opening;
+    // Detect a stale `opening` promise. Symptom: every call sees
+    // `opening? true currentPanel? false`, and the launcher's
+    // `await openProtegePanel` resolves to `panel=present` ~1ms later
+    // (i.e., the promise has settled but `finally` never cleared it
+    // AND `current` was never set — broken state). Force a rebuild
+    // rather than handing back the dead promise forever.
+    const ageMs = Date.now() - openingStartedAt;
+    if (!current && ageMs > OPENING_STALE_MS) {
+      console.log(`[protege] panel: stale opening promise (age=${ageMs}ms), rebuilding`);
+      opening = undefined;
+      openingStartedAt = 0;
+    } else {
+      return opening;
+    }
   }
 
+  openingStartedAt = Date.now();
   opening = (async () => {
     try {
-      log("reopen-debug", "openProtegePanel: creating new webview panel — picking column");
       console.log("[protege] panel: opening — picking target column");
       // Reuse an existing empty editor group if one's lying around — Cursor
       // restores empty groups across sessions (close Protege → group stays
@@ -81,10 +109,16 @@ export async function openProtegePanel(context: vscode.ExtensionContext) {
           // 6th"). workbench.action.newGroupRight is a built-in command
           // available in both VS Code and Cursor.
           await vscode.commands.executeCommand("workbench.action.newGroupRight");
-          // ViewColumn.Active = the now-empty group we just created, since
-          // newGroupRight focused it.
-          targetColumn = vscode.ViewColumn.Active;
-          console.log("[protege] panel: created new group right");
+          // Capture the actual column number of the newly-focused group
+          // rather than passing ViewColumn.Active (-1). The Active enum
+          // is resolved lazily by createWebviewPanel, and during the
+          // post-newGroupRight transition the resolution can land on
+          // the source column momentarily, which then triggers the
+          // viewState transient that the lockOnce guard now rejects.
+          // Using the explicit column makes both paths deterministic.
+          const newCol = vscode.window.tabGroups.activeTabGroup.viewColumn;
+          targetColumn = newCol ?? vscode.ViewColumn.Beside;
+          console.log(`[protege] panel: created new group right at column ${targetColumn}`);
         }
       } catch (err) {
         // Group selection failed (newGroupRight rejected, tabGroups api
@@ -98,11 +132,22 @@ export async function openProtegePanel(context: vscode.ExtensionContext) {
       }
 
       console.log(`[protege] panel: createWebviewPanel column=${targetColumn}`);
-      log("reopen-debug", `openProtegePanel: createWebviewPanel column=${targetColumn}`);
       const panel = vscode.window.createWebviewPanel(
-        "protege.panel",
+        // viewType bumped to v2 to clear stale per-viewType state
+        // Cursor may have persisted under "protege.panel" (saved
+        // column layout, serializer hooks, etc.) during the dispose
+        // cascade investigation. Once Cursor has had a clean reopen
+        // cycle on v2, this can be reverted.
+        "protege.panel.v2",
         "Protege",
-        { viewColumn: targetColumn, preserveFocus: false },
+        // preserveFocus: true — preventing the webview from aggressively
+        // stealing focus during creation. With preserveFocus:false,
+        // Cursor flips focus through the panel's column, fires multiple
+        // viewState transitions, and the panel cascades into dispose
+        // when other text editors are open. preserveFocus:true keeps
+        // the editor that had focus before, and we trigger an explicit
+        // reveal AFTER the panel has fully mounted (see below).
+        { viewColumn: targetColumn, preserveFocus: true },
         {
           enableScripts: true,
           retainContextWhenHidden: true,
@@ -113,7 +158,6 @@ export async function openProtegePanel(context: vscode.ExtensionContext) {
         }
       );
       current = panel;
-      log("reopen-debug", `openProtegePanel: panel created; viewType=${panel.viewType}`);
       console.log("[protege] panel: created");
 
       panel.iconPath = vscode.Uri.joinPath(
@@ -122,50 +166,48 @@ export async function openProtegePanel(context: vscode.ExtensionContext) {
         "icon.svg"
       );
 
-      log("reopen-debug", "openProtegePanel: about to mountProtegeWebview");
       mountProtegeWebview(panel.webview, context);
-      log("reopen-debug", "openProtegePanel: mountProtegeWebview returned");
 
-      // Lock the Protege editor group so opening files from the explorer
-      // (or via go-to-definition, search, etc.) doesn't drop them into
-      // the Protege column and shove the panel around.
-      //
-      // `workbench.action.lockEditorGroup` is a TOGGLE that operates on
-      // whichever group is *active* at fire time. A fixed setTimeout
-      // races the focus-shift after createWebviewPanel — fires too
-      // early and the toggle lands on the wrong group (or no-ops).
-      // Instead, gate on the panel becoming active: onDidChangeViewState
-      // emits with `active=true` exactly when VS Code marks our column
-      // focused, which is the same signal lockEditorGroup uses to pick
-      // its target. Self-disposes after the first fire so the toggle
-      // runs once, not on every re-focus.
-      const lockOnce = panel.onDidChangeViewState((e) => {
-        if (!e.webviewPanel.active) return;
-        lockOnce.dispose();
-        vscode.commands
-          .executeCommand("workbench.action.lockEditorGroup")
-          .then(() => undefined, () => undefined);
-      });
-      context.subscriptions.push(lockOnce);
-      // Kick a reveal to guarantee the active state fires even if the
-      // user clicked away during the brief creation window.
-      panel.reveal(panel.viewColumn ?? vscode.ViewColumn.Beside, false);
+      // NOTE: previously we ran `workbench.action.lockEditorGroup` here
+      // to prevent opening files from the explorer / go-to-definition
+      // from landing in the Protege column. In Cursor specifically,
+      // executing that toggle against a webview-only editor group
+      // disposes the webview ~13ms later (panel transitions
+      // active→inactive→active→dispose after the lock command lands).
+      // Removing the lock restores open-with-other-files behavior;
+      // the Protege-column-pollution tradeoff is a smaller bug than
+      // "panel never opens." If/when we want pollution prevention back,
+      // replace the toggle with a declarative API or a Cursor-version
+      // gate.
+      // Defer the reveal to the next tick so it fires after the
+      // createWebviewPanel(preserveFocus:true) lifecycle has fully
+      // committed. Direct `panel.reveal(...)` synchronously after
+      // create+mount destabilizes the panel in Cursor (multiple
+      // viewState transitions inside one tick → dispose cascade).
+      setTimeout(() => {
+        try {
+          panel.reveal(panel.viewColumn ?? vscode.ViewColumn.Beside, false);
+        } catch {
+          // Reveal can race against panel disposal in Cursor; the
+          // user will see the panel via the create-time placement
+          // either way. Swallow.
+        }
+      }, 0);
 
       panel.onDidDispose(() => {
         log("panel", "disposed — clearing current ref");
-        log("reopen-debug", "panel.onDidDispose fired");
         if (current === panel) {
           current = undefined;
-          log("reopen-debug", "currentPanel ref cleared by onDidDispose");
-        } else {
-          log("reopen-debug", "currentPanel ref already differs (skipping clear)");
         }
       });
 
-      log("reopen-debug", "openProtegePanel: returning new panel from creation closure");
       return panel;
+    } catch (err) {
+      console.error("[protege] panel: IIFE threw:", err);
+      throw err;
     } finally {
       opening = undefined;
+      openingStartedAt = 0;
     }
   })();
   return opening;

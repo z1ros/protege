@@ -123,53 +123,35 @@ export class LauncherProvider implements vscode.WebviewViewProvider {
     });
 
     log("launcher.host", "resolveWebviewView: provider mounted, listeners attached");
-    log("reopen-debug", "launcher.resolveWebviewView fired — registering onDidReceiveMessage handler");
-    console.log("[protege/launcher.host] provider mounted, listeners attached");
-    console.log("[reopen-debug] launcher.resolveWebviewView fired");
 
     view.webview.onDidReceiveMessage(async (msg: { type: string }) => {
       log("launcher.host", `RECEIVED msg=${JSON.stringify(msg)}`);
-      log("reopen-debug", `host received message: ${JSON.stringify(msg)}`);
-      console.log("[protege/launcher.host] RECEIVED:", JSON.stringify(msg));
-      console.log("[reopen-debug] host received:", JSON.stringify(msg));
       if (msg.type === "open") {
         log(
           "launcher.host",
           `'open' click — isPanelOpen=${isPanelOpen()} viewVisible=${view.visible}`
         );
-        log(
-          "reopen-debug",
-          `type=open; isPanelOpen=${isPanelOpen()} viewVisible=${view.visible} — calling openProtegePanel`
-        );
-        console.log("[protege/launcher.host] 'open' click received");
         try {
           log("launcher.host", "calling openProtegePanel...");
           const panel = await openProtegePanel(this.ctx);
+          // Don't read panel.viewType here — accessing the viewType
+          // getter on a disposed panel throws "Webview is disposed"
+          // synchronously, which would surface as a spurious error to
+          // the user even when openProtegePanel actually succeeded
+          // earlier in this turn. Just log existence + column.
           log(
             "launcher.host",
-            `openProtegePanel resolved — panel=${panel ? `viewType=${panel.viewType} col=${panel.viewColumn}` : "undefined"}`
+            `openProtegePanel resolved — panel=${panel ? "present" : "undefined"}`
           );
-          log(
-            "reopen-debug",
-            `openProtegePanel returned without throw — panel=${panel ? `viewType=${panel.viewType} col=${panel.viewColumn}` : "undefined"}`
-          );
-          console.log("[protege/launcher.host] openProtegePanel resolved");
         } catch (err) {
           log(
             "launcher.host",
             `openProtegePanel REJECTED: ${err instanceof Error ? err.stack ?? err.message : String(err)}`
           );
-          log(
-            "reopen-debug",
-            `openProtegePanel THREW: ${err instanceof Error ? err.message : String(err)}`
-          );
-          console.error("[protege/launcher.host] openProtegePanel rejected:", err);
           void vscode.window.showErrorMessage(
             `Couldn't open Protege panel: ${err instanceof Error ? err.message : String(err)}`
           );
         }
-      } else {
-        log("reopen-debug", `ignoring message type: ${msg?.type}`);
       }
       if (msg.type === "auth/login") {
         // Pop the GitHub OAuth dialog ONLY if we don't already have a
@@ -629,33 +611,21 @@ export class LauncherProvider implements vscode.WebviewViewProvider {
   </section>
 
   <script nonce="${nonce}">
-    console.log('[reopen-debug] script loaded; about to acquireVsCodeApi');
     const vscode = acquireVsCodeApi();
-    console.log('[reopen-debug] acquireVsCodeApi succeeded');
     console.log('[protege/launcher.webview] script booted, attaching click handler');
-    console.log('[reopen-debug] script booted; wiring click handlers');
     const openBtn = document.getElementById('open');
     if (!openBtn) {
       console.error('[protege/launcher.webview] #open button NOT FOUND in DOM');
-      console.error('[reopen-debug] #open button NOT FOUND in DOM');
     } else {
       console.log('[protege/launcher.webview] #open button found, listener attaching');
-      console.log('[reopen-debug] #open button found; binding click', {
-        disabled: openBtn.disabled,
-        hidden: openBtn.hidden,
-        offsetParent: !!openBtn.offsetParent,
-      });
     }
     openBtn && openBtn.addEventListener('click', (e) => {
       console.log('[protege/launcher.webview] CLICK fired, posting {type:open}');
-      console.log('[reopen-debug] click fired on #open button');
       try {
         vscode.postMessage({ type: 'open' });
         console.log('[protege/launcher.webview] postMessage RETURNED');
-        console.log('[reopen-debug] postMessage sent');
       } catch (err) {
         console.error('[protege/launcher.webview] postMessage THREW:', err);
-        console.error('[reopen-debug] postMessage threw:', err);
       }
     });
     const signinBtn = document.getElementById('signin');
