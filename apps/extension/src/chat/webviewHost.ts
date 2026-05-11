@@ -560,13 +560,27 @@ export function mountProtegeWebview(
       }
       const sendId = requireUserIdOrToast();
       if (!sendId) return;
-      await handleChat(
-        webview,
-        sendId,
-        msg.message,
-        msg.mode ?? "text",
-        msg.contextMessages
-      );
+      // Wire up cancel for the composer Stop button. activeAbort was
+      // declared above but historically nothing assigned to it, so
+      // chat/abort silently no-op'd and the response landed anyway.
+      // We pre-empt any prior in-flight turn (defensive — UI usually
+      // disables send) so a fresh request always owns activeAbort.
+      if (activeAbort) activeAbort.abort();
+      const ac = new AbortController();
+      activeAbort = ac;
+      try {
+        await handleChat(
+          webview,
+          sendId,
+          msg.message,
+          msg.mode ?? "text",
+          msg.contextMessages,
+          msg.userMsgId,
+          ac.signal
+        );
+      } finally {
+        if (activeAbort === ac) activeAbort = null;
+      }
     } else if (msg.type === "ready") {
       sendInitialState(webview, resolveUserId());
 
@@ -1644,7 +1658,19 @@ async function handleChat(
   userId: string,
   message: string,
   mode: "text" | "voice" | "voice-dialogue" | "teaching" | "teaching-text",
-  contextMessages?: ChatMessage[]
+  contextMessages?: ChatMessage[],
+  // ID the originating webview already used for its optimistic user
+  // message append. When voice turns broadcast `chat/append` back to
+  // every mounted panel (sidebar + editor tab), the originating panel
+  // dedupes by id so the message doesn't appear twice. Host-originated
+  // turns (wake-word, orb-tap, synthetic) leave this undefined and a
+  // fresh id is minted.
+  userMsgId?: string,
+  // Abort signal from the composer Stop button (chat/send path only).
+  // When fired, runChat's in-flight fetch throws AbortError and the
+  // catch below swaps the would-be reply for an "interrupted" placeholder
+  // (ChatGPT-style: user message stays, response area shows the cancel).
+  signal?: AbortSignal
 ) {
   // --- IQ3 chat_turn event (Task 19) ---
   // Observe the prompt BEFORE any short-circuits or LLM calls so the HMM
@@ -1684,7 +1710,7 @@ async function handleChat(
     // Learning panel takes over the sidebar content, but the chat is
     // still there behind it.
     const userMsg: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: userMsgId ?? crypto.randomUUID(),
       role: "user",
       content: message,
       createdAt: new Date().toISOString(),
@@ -1834,8 +1860,10 @@ async function handleChat(
   // ORIGINAL mode (not effectiveMode) so voice-dialogue promotions don't
   // mislabel a typed message as "voice" in the chat history — the mic
   // glyph should only appear when the user actually spoke.
+  // Reuse the webview's optimistic id when present so voice broadcasts
+  // dedupe in the originating panel (see param doc on `userMsgId`).
   const userMsg: ChatMessage = {
-    id: crypto.randomUUID(),
+    id: userMsgId ?? crypto.randomUUID(),
     role: "user",
     content: message,
     createdAt: new Date().toISOString(),
@@ -1845,11 +1873,17 @@ async function handleChat(
         : "text",
   };
 
-  // Broadcast the user message ONLY for voice turns. In text mode, the
-  // webview already appended the user's message optimistically when
-  // sendMessage() was called — broadcasting here would duplicate it.
-  // Voice transcripts originate host-side with no local append, so the
-  // webview needs this broadcast to show them.
+  // Broadcast the user message for voice turns so wake-word and orb-tap
+  // transcripts (which originate host-side with no webview optimistic
+  // append) become visible. For chat/send-originated turns the webview
+  // already appended optimistically; the broadcast still fires because
+  // OTHER mounted panels (sidebar + editor tab) need it. The originating
+  // panel dedupes by id — the host reuses `userMsgId` when present so
+  // both copies share the same id (see chat/append handler in App.tsx).
+  // Text mode skips the broadcast entirely: text-mode chats only
+  // originate from chat/send, so the optimistic append already covers
+  // the originating panel and any other open panels stay in sync via
+  // the periodic chat-history hydration.
   //
   // Use `broadcast` (not `post` to a single webview) because voice can
   // originate without the user having any specific panel in focus —
@@ -2045,7 +2079,7 @@ async function handleChat(
           setLessonActive(state?.phase === "TEACHING");
         },
       },
-      { mode: effectiveMode, history: recentHistory }
+      { mode: effectiveMode, history: recentHistory, signal }
     );
     // Voice / voice-dialogue always speak the terminal reply. Teaching
     // mode normally drives TTS per teach_step, but if the original turn
@@ -2387,6 +2421,28 @@ async function handleChat(
       // Router failures are non-fatal — chat still works fine
     }
   } catch (err) {
+    // User clicked the composer Stop button: signal aborted mid-fetch (or
+    // between tool rounds). Don't render a red chat/error — that would
+    // look like the bot crashed. ChatGPT-style: user message stays put,
+    // a quiet italic line takes the response slot. Also persist it so
+    // the chat thread reads coherently when the user scrolls back.
+    if (
+      signal?.aborted ||
+      (err instanceof Error && err.name === "AbortError")
+    ) {
+      const interrupted: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: "_Response interrupted._",
+        createdAt: new Date().toISOString(),
+        source: "text",
+      };
+      broadcast({ type: "chat/append", message: interrupted });
+      appendMessage(interrupted);
+      if (isWakeWordListening()) setVoiceState("idle");
+      else setVoiceState("off");
+      return;
+    }
     // Daily-quota 429s carry structured fields (kind/used/limit/resetAt)
     // — pass them through so the webview renders a friendly limit-reached
     // banner with a countdown instead of the generic red error line.

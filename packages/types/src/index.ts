@@ -638,6 +638,12 @@ export type WebviewToHost =
        *  clears its local view → context becomes empty → AI sees no
        *  prior turns, but the history panel still has old sessions. */
       contextMessages?: ChatMessage[];
+      /** ID the webview already used for the optimistic user-message
+       *  append. Voice turns broadcast `chat/append` back to all
+       *  webviews so other open panels see the message; the host reuses
+       *  this id so the originating webview dedupes by id and doesn't
+       *  show the message twice. */
+      userMsgId?: string;
     }
   | { type: "chat/clear" }
   | { type: "chat/abort" }

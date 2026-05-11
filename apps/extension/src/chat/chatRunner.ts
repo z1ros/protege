@@ -85,6 +85,11 @@ export interface RunChatOptions {
    *  ("yes, do that"), follow-up questions, and carry context across voice
    *  turns where the user can't see what was just said. */
   history?: OAITurn[];
+  /** Abort signal for user-initiated cancel (composer Stop button). When
+   *  fired mid-fetch, native fetch throws AbortError; between rounds the
+   *  loop check below throws synchronously so we don't kick off another
+   *  /chat call after the user already said stop. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -126,6 +131,13 @@ export async function runChat(
   const backend = resolveCloudBackend();
 
   for (let round = 0; ; round++) {
+    // Honor an aborted signal between rounds so we don't fire the next
+    // /chat call after the user clicked Stop while a tool was running.
+    if (opts.signal?.aborted) {
+      throw opts.signal.reason instanceof Error
+        ? opts.signal.reason
+        : new DOMException("Aborted", "AbortError");
+    }
     if (round > 0 && round % HEARTBEAT_ROUNDS === 0) {
       cb.log?.(
         `[protege] chat still running at round ${round} — reload window if stuck`
@@ -151,6 +163,7 @@ export async function runChat(
       res = await authedFetch(`${BACKEND_URL}/chat`, {
         method: "POST",
         body: JSON.stringify(body),
+        signal: opts.signal,
       });
     } catch (err) {
       if (err instanceof NotAuthenticatedError) {

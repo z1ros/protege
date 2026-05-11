@@ -732,7 +732,14 @@ export function App() {
         // even when the current chat view has been cleared.
         setHistoryPanelMessages(msg.messages);
       } else if (msg.type === "chat/append") {
-        setMessages((m) => [...m, msg.message]);
+        // Dedupe by id. Voice turns originating from chat/send already
+        // appended the user message optimistically inside sendMessage;
+        // the host re-broadcasts so other open panels (sidebar + editor
+        // tab) also see it. Without this guard, the originating panel
+        // shows the same message twice.
+        setMessages((m) =>
+          m.some((x) => x.id === msg.message.id) ? m : [...m, msg.message],
+        );
         setToolActivity([]);
       } else if (msg.type === "chat/loading") {
         setLoading(msg.loading);
@@ -990,6 +997,7 @@ export function App() {
       message: trimmed,
       mode: effectiveMode,
       contextMessages,
+      userMsgId: user.id,
     });
   };
 

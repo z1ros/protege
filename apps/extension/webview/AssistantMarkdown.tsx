@@ -34,8 +34,12 @@ export function AssistantMarkdown({ content }: { content: string }) {
           strong: ({ children }) => <strong className="md-strong">{children}</strong>,
           em: ({ children }) => <em className="md-em">{children}</em>,
           ul: ({ children }) => <ul className="md-ul">{children}</ul>,
-          ol: ({ children }) => <ol className="md-ol">{children}</ol>,
-          li: ({ children }) => <li className="md-li">{children}</li>,
+          ol: ({ children, start }) => (
+            <ol className="md-ol" start={start as number | undefined}>{children}</ol>
+          ),
+          li: ({ children, value }) => (
+            <li className="md-li" value={value as number | undefined}>{children}</li>
+          ),
           blockquote: ({ children }) => (
             <blockquote className="md-quote">{children}</blockquote>
           ),
