@@ -20,7 +20,10 @@ export function AssistantMarkdown({ content }: { content: string }) {
   // in its prose is a symbol, filename, flag, etc. Rendering them as
   // plain text with visible quotes (as we used to) made replies look
   // stilted vs. real mentor writing.
-  const processed = useMemo(() => preprocessCodeQuotes(content), [content]);
+  const processed = useMemo(
+    () => preprocessCodeQuotes(nestLooseBulletsUnderNumbered(content)),
+    [content]
+  );
   return (
     <div className="md">
       <ReactMarkdown
@@ -108,6 +111,59 @@ export function AssistantMarkdown({ content }: { content: string }) {
    ========================================================== */
 const CODE_QUOTE_RE =
   /(['"])([A-Za-z_$@.<\/][\w$.\-/@()<>:#]{0,39})\1/g;
+
+/* ==========================================================
+   Numbered-outline normalizer.
+
+   LLMs frequently emit outlines like:
+
+       3. Errors and structure
+       - Return codes…
+       - Headers…
+
+       4. Modern features
+       - auto, smart pointers
+
+   The bullets are not indented under the numbered parent, so the
+   CommonMark parser sees each `N.` line as a separate single-item
+   `<ol>` with an intervening unindented `<ul>`. That produces
+   "1. …" "1. …" in the rendered chat instead of "3. …" "4. …".
+
+   This pass re-indents loose bullets that follow a top-level
+   numbered item so they nest as the item's children. Both the
+   correctly-numbered case (3, 4) and the lazy-LLM "1, 1" case
+   collapse to a single `<ol>` with sequential rendering.
+
+   Guarded against:
+   - Code fences (handled by the outer split below).
+   - Paragraphs / headings between (block resets the chain).
+   - Already-indented bullets (left untouched → idempotent).
+   ========================================================== */
+function nestLooseBulletsUnderNumbered(content: string): string {
+  const parts = content.split(/(```[\s\S]*?```)/g);
+  return parts
+    .map((part, i) => (i % 2 === 1 ? part : nestLooseBulletsInBlock(part)))
+    .join("");
+}
+
+function nestLooseBulletsInBlock(text: string): string {
+  const lines = text.split("\n");
+  const topNum = (l: string) => /^\d+\.\s+/.test(l);
+  const topBul = (l: string) => /^[-*+]\s+/.test(l);
+  const isBlank = (l: string) => l.trim() === "";
+  const indented = (l: string) => /^\s+\S/.test(l);
+  const out = [...lines];
+  for (let i = 0; i < out.length; i++) {
+    if (!topNum(out[i])) continue;
+    for (let j = i + 1; j < out.length; j++) {
+      const l = out[j];
+      if (isBlank(l) || indented(l)) continue;
+      if (topBul(l)) { out[j] = "   " + l; continue; }
+      break;
+    }
+  }
+  return out.join("\n");
+}
 
 function preprocessCodeQuotes(content: string): string {
   // Split on fenced code blocks so we DO NOT rewrite anything inside
