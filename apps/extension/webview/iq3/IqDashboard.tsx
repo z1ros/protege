@@ -18,6 +18,48 @@ import { WeirdFeedbackPrompt } from "./WeirdFeedbackPrompt.js";
 import { vscode } from "../vscode.js";
 
 /**
+ * Error boundary so a thrown render in any iq3 child (HeadlineCard,
+ * FieldVector, PillarBar, OnboardingProbes, etc.) doesn't unmount the
+ * entire ProfilePage. A schema-drifted backend response or a missing
+ * field on the headline payload used to take the whole profile blank
+ * with no error surface; this catches the throw and shows a benign
+ * fallback inside the dashboard slot instead.
+ */
+class IqErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    // Surface to the webview console so a developer inspecting the
+    // EDH window can still see the underlying throw, even though
+    // the user-facing UI is shielded from it.
+    console.error("[iq3] dashboard render threw:", error, info);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="iq3-dashboard-empty">
+          IQ unavailable — schema mismatch with backend. Reload to retry.
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export function IqDashboard() {
+  return (
+    <IqErrorBoundary>
+      <IqDashboardInner />
+    </IqErrorBoundary>
+  );
+}
+
+/**
  * Back-compat: pillar IDs were renamed. The local-dev backend returns
  * the new keys, but the production deployment still ships the old
  * names. Map them in so the dashboard shows real data instead of
@@ -59,7 +101,7 @@ function normalizePillars(
  * (Task 22 settled on `type`, but keeping the channel branch costs
  * nothing and removes a coupling point).
  */
-export function IqDashboard() {
+function IqDashboardInner() {
   const [headline, setHeadline] = useState<Iq3Headline | null>(null);
   const [doneOnboarding, setDoneOnboarding] = useState(false);
   // Compute eligibility once at mount so the prompt doesn't blink in
@@ -120,19 +162,26 @@ export function IqDashboard() {
       />
     );
   }
-  const floor = PILLAR_FLOOR_FALLBACK[headline.rank.uncappedRank];
+  // Defensive: payloads from older backend deployments may omit `rank`
+  // entirely. Use the same fallback as HeadlineCard so the floor mark
+  // computation doesn't crash on undefined access.
+  const uncappedRank = headline.rank?.uncappedRank ?? "junior";
+  const floor = PILLAR_FLOOR_FALLBACK[uncappedRank];
   // Hide the FieldVector until at least one field has a real signal.
   // Below the threshold the bar is just a uniform-ish stripe that
   // doesn't carry information — and worse, it implies "the system
   // thinks you're equally everything," which is misleading. Once a
   // field crosses ~20% (typically after onboarding probes or ~20
   // tagged events), we've got something worth showing.
+  // topFieldWeight is now nullish-safe — returns 0 for missing fields
+  // so this gate falls through to the "still learning" branch.
   const showFieldVector =
+    headline.field !== undefined &&
     topFieldWeight(headline.field) >= FIELD_VECTOR_MIN_SIGNAL;
   return (
     <div className="iq3-dashboard">
       <HeadlineCard h={headline} />
-      {showFieldVector ? (
+      {showFieldVector && headline.field ? (
         <FieldVector v={headline.field} />
       ) : (
         <div className="iq3-field-pending">
@@ -162,7 +211,7 @@ export function IqDashboard() {
           });
         })()}
       </div>
-      {headline.rank.floorViolation &&
+      {headline.rank?.floorViolation &&
        headline.rank.uncappedRank === "senior" &&
        headline.rank.rank !== "senior" ? (
         <div className="iq3-floor-note">

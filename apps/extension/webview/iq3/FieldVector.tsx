@@ -37,11 +37,14 @@ const FIELD_LABEL: Record<string, string> = {
 export const FIELD_VECTOR_MIN_SIGNAL = 0.2;
 
 /** Returns the highest-weight field's probability. Used by the
- *  dashboard's gate. */
-export function topFieldWeight(v: Iq3FieldVector): number {
+ *  dashboard's gate. Returns 0 for nullish vectors so the dashboard
+ *  hides the FieldVector + falls through to the "still learning"
+ *  branch instead of throwing on Object.values(undefined). */
+export function topFieldWeight(v: Iq3FieldVector | undefined | null): number {
+  if (!v) return 0;
   let max = 0;
   for (const p of Object.values(v)) {
-    if (p > max) max = p;
+    if (typeof p === "number" && p > max) max = p;
   }
   return max;
 }
