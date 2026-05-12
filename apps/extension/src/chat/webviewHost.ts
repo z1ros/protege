@@ -12,7 +12,16 @@ import { runChat } from "./chatRunner.js";
 import { isTeachingMessage } from "../intent/teachingTrigger.js";
 import { getActiveFileEditor } from "../workspace/activeFile.js";
 import { classifyResponse, dispatchRouterActions } from "./responseRouter.js";
-import { getHistory, appendMessage, searchHistory, clearHistory } from "./chatHistory.js";
+import { getAllMessages, getMessagesForSession, appendMessage, searchHistory, clearHistory } from "./chatHistory.js";
+import {
+  createSession,
+  deleteSession,
+  getCachedSessions,
+  getCurrentSessionId,
+  setCurrentSessionId,
+  renameSession,
+  rehydrateChatSessions,
+} from "./chatSessions.js";
 import { clearAllHighlights, setLessonActive, resetConversationLineMemory } from "../ai/tools.js";
 import { decideShouldSpeak } from "./shouldSpeak.js";
 import { isLiveReviewActive } from "../review/liveReview.js";
@@ -319,7 +328,7 @@ function stripCodeForVoice(text: string): string {
 }
 
 function findLastAssistantReply(): string | null {
-  const hist = getHistory();
+  const hist = getAllMessages();
   for (let i = hist.length - 1; i >= 0; i--) {
     if (hist[i].role === "assistant") return hist[i].content;
   }
@@ -778,8 +787,62 @@ export function mountProtegeWebview(
       // After "New chat" the local state is empty but globalState
       // still carries the full record; this round-trip is what makes
       // the panel honest about that.
-      post(webview, { type: "chat/fullHistory", messages: getHistory() });
+      post(webview, { type: "chat/fullHistory", messages: getAllMessages() });
+    } else if (msg.type === "chat/listSessions") {
+      await rehydrateChatSessions();
+      post(webview, {
+        type: "chat/sessions",
+        sessions: getCachedSessions(),
+        currentSessionId: getCurrentSessionId(),
+      });
+    } else if (msg.type === "chat/newSession") {
+      // Lazy session creation: do not mint a row yet. The next outgoing
+      // message in handleChat() will create the session with a real
+      // title. We just reset the active id so the webview's live view
+      // clears and the next user message starts fresh.
+      setCurrentSessionId(null);
+      post(webview, {
+        type: "chat/sessionSwitched",
+        sessionId: "",
+        messages: [],
+      });
+    } else if (msg.type === "chat/switchSession") {
+      setCurrentSessionId(msg.sessionId);
+      post(webview, {
+        type: "chat/sessionSwitched",
+        sessionId: msg.sessionId,
+        messages: getMessagesForSession(msg.sessionId),
+      });
+    } else if (msg.type === "chat/renameSession") {
+      await renameSession(msg.sessionId, msg.title);
+      post(webview, {
+        type: "chat/sessionRenamed",
+        sessionId: msg.sessionId,
+        title: msg.title,
+      });
+    } else if (msg.type === "chat/deleteSession") {
+      await deleteSession(msg.sessionId);
+      const remaining = getCachedSessions();
+      const nextId = remaining[0]?.id ?? null;
+      if (getCurrentSessionId() === msg.sessionId) setCurrentSessionId(nextId);
+      post(webview, {
+        type: "chat/sessionDeleted",
+        sessionId: msg.sessionId,
+        nextSessionId: nextId,
+      });
+      if (nextId) {
+        post(webview, {
+          type: "chat/sessionSwitched",
+          sessionId: nextId,
+          messages: getMessagesForSession(nextId),
+        });
+      }
     } else if (msg.type === "chat/clearHistory") {
+      const sessions = getCachedSessions();
+      for (const s of sessions) {
+        await deleteSession(s.id);
+      }
+      setCurrentSessionId(null);
       clearHistory();
       // Wipe the cross-turn highlight-line memory too — a fresh chat
       // means the user can re-see lines they'd already been shown.
@@ -787,6 +850,11 @@ export function mountProtegeWebview(
       // an explicit chat reset does.)
       resetConversationLineMemory();
       post(webview, { type: "chat/history", messages: [] });
+      post(webview, {
+        type: "chat/sessions",
+        sessions: getCachedSessions(),
+        currentSessionId: null,
+      });
     } else if (msg.type === "notes/list") {
       const { listNotes } = await import("../notes/notesStore.js");
       post(webview, { type: "notes/state", notes: listNotes() });
@@ -1694,6 +1762,23 @@ async function handleChat(
   // the event itself.
   getBatcher()?.push(buildChatTurnEvent(message));
 
+  // Lazy session creation: the first user message in a fresh chat
+  // mints the session here. After this point `sessionId` is live and
+  // every ChatMessage constructed in this call must carry it.
+  let sessionId = getCurrentSessionId();
+  if (!sessionId) {
+    const fresh = await createSession(message);
+    sessionId = fresh.id;
+    setCurrentSessionId(sessionId);
+    // Push the updated session list to all webviews so the panel
+    // shows the freshly minted card immediately.
+    broadcast({
+      type: "chat/sessions",
+      sessions: getCachedSessions(),
+      currentSessionId: sessionId,
+    });
+  }
+
   // --- Explicit "teach me X" short-circuit (fork chip redundant) ---
   // When the user unambiguously says "teach me X", skip the verifier
   // clarifier dance and the fork chip — they told us what they want.
@@ -1716,7 +1801,7 @@ async function handleChat(
   // regex covers the common case with sub-ms latency; LLM tier only
   // fires on ambiguous messages.
   const shapeContext = buildShapeContext({
-    history: getHistory(),
+    history: getMessagesForSession(sessionId),
     currentMode: mode,
     wakeActive: isWakeWordListening(),
   });
@@ -1767,7 +1852,7 @@ async function handleChat(
   // lesson. Distinct mode value from the voice teaching path so the
   // backend prompt picks the right beat structure (typed PAUSE vs.
   // voice agentic teach_step).
-  const isFirstMessage = (contextMessages ?? getHistory()).length === 0;
+  const isFirstMessage = (contextMessages ?? getMessagesForSession(sessionId)).length === 0;
   if (
     effectiveMode === "text" &&
     isFirstMessage &&
@@ -1833,6 +1918,7 @@ async function handleChat(
   // dedupe in the originating panel (see param doc on `userMsgId`).
   const userMsg: ChatMessage = {
     id: userMsgId ?? crypto.randomUUID(),
+    sessionId,
     role: "user",
     content: message,
     createdAt: new Date().toISOString(),
@@ -1882,6 +1968,7 @@ async function handleChat(
   if (understanding.action === "clarify" && understanding.clarifier) {
     const clarifierMsg: ChatMessage = {
       id: crypto.randomUUID(),
+      sessionId,
       role: "assistant",
       content: understanding.clarifier,
       createdAt: new Date().toISOString(),
@@ -2001,7 +2088,7 @@ async function handleChat(
   // pass one (voice turns, watcher/engage, etc. that originate
   // host-side with no webview context snapshot).
   const HISTORY_WINDOW = 20;
-  const recentHistory = (contextMessages ?? getHistory())
+  const recentHistory = (contextMessages ?? getMessagesForSession(sessionId))
     .slice(-HISTORY_WINDOW)
     .map((m) => ({
       role: m.role as "user" | "assistant",
@@ -2206,6 +2293,7 @@ async function handleChat(
       : trimForText(finalReply, 200);
     const assistant: ChatMessage = {
       id: crypto.randomUUID(),
+      sessionId,
       role: "assistant",
       content: displayReply,
       createdAt: new Date().toISOString(),
@@ -2401,6 +2489,7 @@ async function handleChat(
     ) {
       const interrupted: ChatMessage = {
         id: crypto.randomUUID(),
+        sessionId,
         role: "assistant",
         content: "_Response interrupted._",
         createdAt: new Date().toISOString(),
