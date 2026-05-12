@@ -61,6 +61,7 @@ function noteSchemaMiss(error: { code?: string; message: string }): void {
 interface ChatRow {
   id: string;
   user_id: string;
+  session_id: string;
   role: "user" | "assistant";
   content: string;
   source: string | null;
@@ -70,6 +71,7 @@ interface ChatRow {
 function rowToMessage(r: ChatRow): ChatMessage {
   return {
     id: r.id,
+    sessionId: r.session_id,
     role: r.role,
     content: r.content,
     createdAt: r.created_at,
@@ -77,24 +79,32 @@ function rowToMessage(r: ChatRow): ChatMessage {
   };
 }
 
-/** GET /chat-history?limit=N — most recent N messages, oldest-first
- *  (so the extension can append without resorting). Default 500. */
+/** GET /chat-history?limit=N&sessionId=S — most recent N messages,
+ *  oldest-first (so the extension can append without resorting). Default
+ *  500. When `sessionId` is provided, results are filtered to that
+ *  session; otherwise the user's full flat history is returned (legacy
+ *  callers + bootstrap migration rely on this). */
 chatHistoryRoute.get("/", async (c) => {
   const userId = resolveUserId(c, undefined);
   const limitRaw = c.req.query("limit");
   const limit = Math.min(2000, Math.max(1, Number(limitRaw) || 500));
+  const sessionId = c.req.query("sessionId");
   if (!isSupabaseEnabled() || chatHistorySchemaBroken) {
     return c.json({ messages: [] });
   }
   const sb = getSupabase()!;
   // Pull the newest `limit` rows, then reverse so oldest is first
   // — preserves the existing ChatMessage[] semantics.
-  const { data, error } = await sb
+  let query = sb
     .from("chat_messages")
     .select("*")
     .eq("user_id", userId)
     .order("created_at", { ascending: false })
     .limit(limit);
+  if (sessionId) {
+    query = query.eq("session_id", sessionId);
+  }
+  const { data, error } = await query;
   if (error) {
     noteSchemaMiss(error);
     return c.json({ messages: [] });
@@ -110,14 +120,43 @@ chatHistoryRoute.post("/", async (c) => {
   if (!body?.message?.id) {
     return c.json({ error: "message.id required" }, 400);
   }
+  if (!body.message.sessionId || typeof body.message.sessionId !== "string") {
+    return c.json({ error: "message.sessionId required" }, 400);
+  }
   if (!isSupabaseEnabled() || chatHistorySchemaBroken) {
     return c.json({ ok: true });
   }
   const sb = getSupabase()!;
+
+  // Race safety: the extension fire-and-forgets POST /chat-sessions and
+  // immediately POST /chat-history. Without this guard, the message
+  // insert FK-violates if the parent session hasn't landed yet. We
+  // upsert a placeholder row keyed on session_id with ignoreDuplicates
+  // so a real session create either before or after this still wins on
+  // title (the create route uses default upsert, which overwrites).
+  const { error: parentError } = await sb.from("chat_sessions").upsert(
+    {
+      id: body.message.sessionId,
+      user_id: userId,
+      title: "New chat",
+      created_at: body.message.createdAt,
+      updated_at: body.message.createdAt,
+      last_message_at: body.message.createdAt,
+      message_count: 0,
+    },
+    { onConflict: "id", ignoreDuplicates: true }
+  );
+  if (parentError) {
+    noteSchemaMiss(parentError);
+    // Fall through — if the parent upsert fails for a non-schema
+    // reason, the message insert below will surface the real error.
+  }
+
   const { error } = await sb.from("chat_messages").upsert(
     {
       id: body.message.id,
       user_id: userId,
+      session_id: body.message.sessionId,
       role: body.message.role,
       content: body.message.content,
       source: body.message.source ?? null,
@@ -129,6 +168,22 @@ chatHistoryRoute.post("/", async (c) => {
     noteSchemaMiss(error);
     return c.json({ ok: true });
   }
+
+  // Bump parent session metadata so it sorts to the top of the list and
+  // shows the fresh message count. Best-effort; failure does not roll
+  // back the message write.
+  void (async () => {
+    try {
+      await sb.rpc("bump_chat_session", {
+        p_session_id: body.message.sessionId,
+        p_user_id: userId,
+        p_at: body.message.createdAt,
+      });
+    } catch {
+      /* swallow */
+    }
+  })();
+
   return c.json({ ok: true });
 });
 
