@@ -9,6 +9,10 @@ export type Role = "user" | "assistant" | "system" | "tool";
 
 export interface ChatMessage {
   id: string;
+  /** Which conversation this message belongs to. Required on all new
+   *  messages. Legacy messages persisted before the sessions feature
+   *  shipped resolve to `legacy-<userId>` during hydration. */
+  sessionId: string;
   role: "user" | "assistant";
   content: string;
   createdAt: string;
@@ -17,6 +21,24 @@ export interface ChatMessage {
    *  by the UI to show a small mic glyph, and by the backend to pick a
    *  short, ear-friendly prompt. Undefined on legacy/persisted messages. */
   source?: "voice" | "text";
+}
+
+/**
+ * A chat session = one continuous conversation. Sessions are user-scoped,
+ * synced to the cloud, and visible as separate cards in the history panel.
+ * Title defaults to a snippet of the first user message; the user can rename.
+ */
+export interface ChatSession {
+  id: string;
+  /** GitHub numeric ID (server-side only — webview never sees raw user IDs). */
+  userId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  /** ISO timestamp of the most recent message in the session. Used for
+   *  list sort order ("most recently active first"). */
+  lastMessageAt: string;
+  messageCount: number;
 }
 
 export interface FileContext {
@@ -725,6 +747,17 @@ export type WebviewToHost =
    *  when the current chat view has been cleared by a 'New chat'
    *  click." Response: `chat/fullHistory`. */
   | { type: "chat/getFullHistory" }
+  /** Webview → host: list all chat sessions for the user. Response:
+   *  `chat/sessions`. */
+  | { type: "chat/listSessions" }
+  /** Webview → host: switch the live chat view to a different session.
+   *  Response: `chat/sessionSwitched`. */
+  | { type: "chat/switchSession"; sessionId: string }
+  /** Webview → host: start a fresh conversation. The session is minted
+   *  lazily on the first message, so this just clears the active id. */
+  | { type: "chat/newSession" }
+  | { type: "chat/renameSession"; sessionId: string; title: string }
+  | { type: "chat/deleteSession"; sessionId: string }
   | { type: "map/request" }
   | { type: "map/fileSummary"; path: string }
   | { type: "map/openFile"; path: string }
@@ -807,6 +840,26 @@ export type HostToWebview =
    *  read-only snapshot the history panel consumes without clobbering
    *  the current chat view. */
   | { type: "chat/fullHistory"; messages: ChatMessage[] }
+  /** Host → webview: complete list of the user's sessions plus which is
+   *  currently active. Triggered by `chat/listSessions` or by host-side
+   *  mutations (create / delete / clear). */
+  | {
+      type: "chat/sessions";
+      sessions: ChatSession[];
+      currentSessionId: string | null;
+    }
+  /** Host → webview: the active session changed; here are its messages. */
+  | {
+      type: "chat/sessionSwitched";
+      sessionId: string;
+      messages: ChatMessage[];
+    }
+  | { type: "chat/sessionRenamed"; sessionId: string; title: string }
+  | {
+      type: "chat/sessionDeleted";
+      sessionId: string;
+      nextSessionId: string | null;
+    }
   | { type: "chat/searchResults"; results: { message: ChatMessage; snippet: string }[] }
   | { type: "notes/state"; notes: Note[] }
   | { type: "chat/loading"; loading: boolean }
