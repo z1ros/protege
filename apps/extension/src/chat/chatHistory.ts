@@ -6,6 +6,10 @@ import {
   currentUserIdOrNull,
 } from "../user/protegeClient.js";
 import { log } from "../log.js";
+import {
+  legacySessionIdFor,
+  noteMessageAppended,
+} from "./chatSessions.js";
 
 /**
  * Chat History — per-user, synced to Supabase via the backend's
@@ -79,6 +83,14 @@ async function hydrateFromCloud(): Promise<void> {
     for (const m of local) {
       if (!merged.has(m.id)) merged.set(m.id, m);
     }
+    // Belt-and-suspenders: any in-memory row that arrived without a
+    // sessionId (cloud row from a pre-migration deploy, or an offline
+    // append that predates the sessions feature) is bucketed into the
+    // deterministic legacy session.
+    const legacyId = legacySessionIdFor(userId);
+    for (const m of merged.values()) {
+      if (!m.sessionId) m.sessionId = legacyId;
+    }
     const out = [...merged.values()]
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       .slice(-MAX_MESSAGES);
@@ -116,16 +128,33 @@ async function pushMessage(message: ChatMessage): Promise<void> {
   }
 }
 
-/** Get all stored messages (oldest-first). */
-export function getHistory(): ChatMessage[] {
+/** All persisted messages across all sessions. Most callers want
+ *  getMessagesForSession instead — this is for the search route, the
+ *  legacy backfill helper, and any code that needs to inspect the
+ *  flat archive (e.g. analytics). */
+export function getAllMessages(): ChatMessage[] {
   if (!ctx) return [];
   return ctx.globalState.get<ChatMessage[]>(STORAGE_KEY) ?? [];
+}
+
+/** Messages belonging to a single session, oldest-first. */
+export function getMessagesForSession(sessionId: string): ChatMessage[] {
+  return getAllMessages().filter((m) => m.sessionId === sessionId);
 }
 
 /** Append a message — local first, cloud-write fire-and-forget. */
 export function appendMessage(message: ChatMessage): void {
   if (!ctx) return;
-  const history = getHistory();
+  if (!message.sessionId) {
+    // Hard guard: every persisted message must carry a session id.
+    // Caller bug if we hit this.
+    log(
+      "chatHistory",
+      `appendMessage REJECT · missing sessionId · id=${message.id}`,
+    );
+    return;
+  }
+  const history = getAllMessages();
   history.push(message);
 
   const pruned =
@@ -135,6 +164,9 @@ export function appendMessage(message: ChatMessage): void {
 
   void ctx.globalState.update(STORAGE_KEY, pruned);
   void pushMessage(message);
+  // Update the session's last_message_at + message_count + (maybe)
+  // auto-title locally so the UI reacts without a cloud round trip.
+  noteMessageAppended(message);
 }
 
 /** Clear all history — local + cloud. If the cloud DELETE fails
@@ -170,13 +202,18 @@ export function rehydrateChatHistory(): void {
   void hydrateFromCloud();
 }
 
-/** Search messages by keyword — returns matching messages with context. */
+/** Search messages by keyword — returns matching messages with context.
+ *  Pass a sessionId to scope to one conversation; omit to search across
+ *  the whole archive. */
 export function searchHistory(
   query: string,
-  limit = 20
+  limit = 20,
+  sessionId?: string,
 ): { message: ChatMessage; snippet: string }[] {
   const q = query.toLowerCase();
-  const all = getHistory();
+  const all = sessionId
+    ? getMessagesForSession(sessionId)
+    : getAllMessages();
   const results: { message: ChatMessage; snippet: string }[] = [];
 
   for (let i = all.length - 1; i >= 0 && results.length < limit; i--) {
@@ -194,42 +231,6 @@ export function searchHistory(
   }
 
   return results;
-}
-
-/** Group messages by day for the history view. */
-export function getHistoryByDay(): {
-  date: string; // yyyy-mm-dd
-  label: string; // "Today", "Yesterday", "Apr 14"
-  messages: ChatMessage[];
-}[] {
-  const all = getHistory();
-  const groups = new Map<string, ChatMessage[]>();
-
-  for (const msg of all) {
-    const date = msg.createdAt.slice(0, 10);
-    if (!groups.has(date)) groups.set(date, []);
-    groups.get(date)!.push(msg);
-  }
-
-  const today = new Date().toISOString().slice(0, 10);
-  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-
-  const result: { date: string; label: string; messages: ChatMessage[] }[] = [];
-  for (const [date, msgs] of groups) {
-    const label =
-      date === today
-        ? "Today"
-        : date === yesterday
-          ? "Yesterday"
-          : new Date(date + "T00:00:00").toLocaleDateString(undefined, {
-              month: "short",
-              day: "numeric",
-            });
-    result.push({ date, label, messages: msgs });
-  }
-
-  result.sort((a, b) => b.date.localeCompare(a.date));
-  return result;
 }
 
 export function isChatHistoryHydrated(): boolean {
