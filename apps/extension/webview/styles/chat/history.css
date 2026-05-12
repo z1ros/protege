@@ -646,3 +646,18 @@
   font-style: italic;
 }
 
+.chp-sessions { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.chp-session { display: flex; align-items: stretch; border-radius: 8px; transition: background-color 120ms; }
+.chp-session:hover { background: var(--vscode-list-hoverBackground); }
+.chp-session.is-active { background: var(--vscode-list-activeSelectionBackground); }
+.chp-session-main { flex: 1; text-align: left; background: transparent; border: 0; padding: 10px 12px; color: inherit; cursor: pointer; font-family: inherit; }
+.chp-session-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.chp-session-title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chp-session-time { font-size: 11px; opacity: 0.6; flex-shrink: 0; }
+.chp-session-meta { font-size: 11px; opacity: 0.6; margin: 2px 0 0; }
+.chp-session-edit { width: calc(100% - 24px); margin: 8px 12px; padding: 6px 8px; border: 1px solid var(--vscode-input-border); border-radius: 6px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); font-family: inherit; }
+.chp-session-actions { display: none; align-items: center; gap: 4px; padding-right: 8px; }
+.chp-session:hover .chp-session-actions { display: flex; }
+.chp-session-action { background: transparent; border: 0; cursor: pointer; padding: 4px 6px; border-radius: 4px; opacity: 0.6; font-size: 14px; }
+.chp-session-action:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground); }
+.chp-session-action-danger:hover { color: var(--vscode-errorForeground); }

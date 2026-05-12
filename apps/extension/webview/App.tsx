@@ -1,6 +1,7 @@
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ChatMessage,
+  ChatSession,
   ClusterSummary,
   ConceptRow,
   TourState,
@@ -575,6 +576,8 @@ export function App() {
   const [mode, setMode] = useState<Mode>("chat");
   const [chatInputMode, setChatInputMode] = useState<ChatInputMode>("text");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -672,14 +675,6 @@ export function App() {
   // (Explain this file / Find bugs / etc.) default to voice mode and
   // the reply is spoken. When wake is off, those sends stay text.
   const [wakeActive, setWakeActive] = useState(false);
-  // Separate from `messages`: this is the full persisted history the
-  // host returns when the panel opens. `messages` represents the
-  // current chat view (can be cleared by "New chat"); this represents
-  // "everything ever persisted to globalState" so the panel can browse
-  // old conversations even after the view has been cleared.
-  const [historyPanelMessages, setHistoryPanelMessages] = useState<
-    ChatMessage[]
-  >([]);
   const [tipDetail, setTipDetail] = useState<TipDetail | null>(null);
   // Message IDs whose learning-fork chips have been clicked (either path).
   // Scoped per-render so rehydrated history doesn't re-offer stale forks
@@ -698,6 +693,13 @@ export function App() {
   // initial "text".
   const chatInputModeRef = useRef<ChatInputMode>(chatInputMode);
   chatInputModeRef.current = chatInputMode;
+
+  // Same stale-closure trap as chatInputModeRef — the message listener
+  // below has `[]` deps and would otherwise capture the initial null
+  // value of currentSessionId forever, breaking the chat/append session
+  // gate. Mirror through a ref so the listener always reads live state.
+  const currentSessionIdRef = useRef<string | null>(currentSessionId);
+  currentSessionIdRef.current = currentSessionId;
 
   // Dismiss the unlock banner the moment audio actually starts —
   // playExplainAudio dispatches a `protege:audio-playing` event from
@@ -726,17 +728,48 @@ export function App() {
             : m
         );
         setMessages(cleaned);
-      } else if (msg.type === "chat/fullHistory") {
-        // Read-only snapshot for the browse panel. Does NOT touch the
-        // main `messages` state — the panel needs to see everything
-        // even when the current chat view has been cleared.
-        setHistoryPanelMessages(msg.messages);
+      } else if (msg.type === "chat/sessions") {
+        setSessions(msg.sessions);
+        setCurrentSessionId(msg.currentSessionId);
+      } else if (msg.type === "chat/sessionSwitched") {
+        setCurrentSessionId(msg.sessionId || null);
+        setMessages(msg.messages);
+        setChatHistoryOpen(false);
+      } else if (msg.type === "chat/sessionRenamed") {
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.id === msg.sessionId ? { ...s, title: msg.title } : s,
+          ),
+        );
+      } else if (msg.type === "chat/sessionDeleted") {
+        setSessions((prev) => prev.filter((s) => s.id !== msg.sessionId));
       } else if (msg.type === "chat/append") {
         // Dedupe by id. Voice turns originating from chat/send already
         // appended the user message optimistically inside sendMessage;
         // the host re-broadcasts so other open panels (sidebar + editor
         // tab) also see it. Without this guard, the originating panel
         // shows the same message twice.
+        const activeSessionId = currentSessionIdRef.current;
+        if (
+          activeSessionId !== null &&
+          msg.message.sessionId !== activeSessionId
+        ) {
+          // Belongs to a different session — bump that session's
+          // lastMessageAt + messageCount so the panel re-sorts, but
+          // don't touch the live view.
+          setSessions((prev) =>
+            prev.map((s) =>
+              s.id === msg.message.sessionId
+                ? {
+                    ...s,
+                    lastMessageAt: msg.message.createdAt,
+                    messageCount: s.messageCount + 1,
+                  }
+                : s,
+            ),
+          );
+          return;
+        }
         setMessages((m) =>
           m.some((x) => x.id === msg.message.id) ? m : [...m, msg.message],
         );
@@ -854,6 +887,7 @@ export function App() {
               role: "assistant",
               content: msg.summary,
               createdAt: now,
+              sessionId: currentSessionIdRef.current ?? "",
             },
           ]);
         }
@@ -902,6 +936,7 @@ export function App() {
       }
     });
     vscode.postMessage({ type: "ready" });
+    vscode.postMessage({ type: "chat/listSessions" });
     return off;
   }, []);
 
@@ -976,6 +1011,12 @@ export function App() {
       content: trimmed,
       createdAt: new Date().toISOString(),
       source: effectiveMode === "voice" ? "voice" : "text",
+      // May be "" before the host has minted a session id — the host
+      // lazy-mints in handleChat and broadcasts chat/sessions. The
+      // canonical message (with the real sessionId) arrives via
+      // chat/append, and the dedupe-by-id logic above keeps us
+      // consistent.
+      sessionId: currentSessionId ?? "",
     };
     // Snapshot the current visible messages BEFORE adding the user's
     // new one — that's the AI's short-term context for this turn.
@@ -1384,52 +1425,33 @@ export function App() {
         </div>
       ) : mode === "chat" && chatInputMode === "text" && chatHistoryOpen ? (
         <ChatHistoryPanel
-          messages={
-            historyPanelMessages.length > 0
-              ? historyPanelMessages
-              : messages
+          sessions={sessions}
+          currentSessionId={currentSessionId}
+          onSwitchSession={(id) =>
+            vscode.postMessage({ type: "chat/switchSession", sessionId: id })
           }
-          onJumpTo={(id: string) => {
-            // If the clicked message lives in the CURRENT chat view,
-            // close the panel and scroll the chat to it.
-            //
-            // If it does NOT (e.g. it belongs to a previous session the
-            // user cleared via "New chat"), keep the panel open and
-            // scroll the panel itself to that turn. Replacing `messages`
-            // with the full flat history was the source of the "history
-            // got mixed up with my new chat" bug — old + new messages
-            // would interleave in the live view with no session
-            // boundary. Browsing happens in the panel; the live chat
-            // is left alone.
-            const inView = messages.some((m) => m.id === id);
-            if (inView) {
-              setChatHistoryOpen(false);
-              requestAnimationFrame(() => {
-                const el = document.getElementById(`msg-${id}`);
-                if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-              });
-              return;
-            }
-            // Out-of-view: scroll within the history panel.
-            requestAnimationFrame(() => {
-              const el = document.getElementById(`history-msg-${id}`);
-              if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-            });
-          }}
+          onRenameSession={(id, title) =>
+            vscode.postMessage({
+              type: "chat/renameSession",
+              sessionId: id,
+              title,
+            })
+          }
+          onDeleteSession={(id) =>
+            vscode.postMessage({ type: "chat/deleteSession", sessionId: id })
+          }
           onClose={() => setChatHistoryOpen(false)}
           onClearAll={() => {
             if (confirm("Delete all chat history? This cannot be undone.")) {
-              setMessages([]);
               vscode.postMessage({ type: "chat/clearHistory" });
+              setMessages([]);
+              setSessions([]);
+              setCurrentSessionId(null);
               setChatHistoryOpen(false);
             }
           }}
           onNewChat={() => {
-            // "New chat" clears the current view but PRESERVES history.
-            // The trash-icon button (onClearAll) is the only path that
-            // wipes globalState — and it gates behind a confirm dialog.
-            // Previous behavior nuked everything on "New chat" click,
-            // which was indistinguishable from a delete-all by accident.
+            vscode.postMessage({ type: "chat/newSession" });
             setMessages([]);
             setChatHistoryOpen(false);
           }}
@@ -1450,16 +1472,11 @@ export function App() {
                the user has actually opened the history. */}
           <ChatSearchBar
             onOpenHistory={() => {
-              // Fetch fresh persisted history from the host whenever
-              // the panel opens. Pre-fix this used `messages` state,
-              // which meant "New chat" (which now only clears the
-              // view) also hid all historical chats from the panel
-              // until reload — this round-trip fixes that.
-              vscode.postMessage({ type: "chat/getFullHistory" });
+              vscode.postMessage({ type: "chat/listSessions" });
               setChatHistoryOpen(true);
             }}
             onNewChat={() => {
-              // Preserve history — see ChatHistoryPanel handler above.
+              vscode.postMessage({ type: "chat/newSession" });
               setMessages([]);
             }}
           />
