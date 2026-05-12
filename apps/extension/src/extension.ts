@@ -67,6 +67,7 @@ import { registerTeachingFlow } from "./teaching/teachingFlow.js";
 import { initAiBackend, onBackendCall } from "./ai/aiBackend.js";
 import { registerExerciseEngine } from "./teaching/exerciseEngine.js";
 import { initChatHistory, disposeChatHistory } from "./chat/chatHistory.js";
+import { initChatSessions } from "./chat/chatSessions.js";
 import { initNotesStore } from "./notes/notesStore.js";
 import { runWakeCalibration, shouldShowCalibrationPrompt, recordCalibrationPromptDeferred, getWakeEnabled as getWakeEnabledFor } from "./voice/wakeWordCalibration.js";
 import { stopWakeWordListener, isWakeWordListening } from "./voice/voiceCapture.js";
@@ -160,8 +161,9 @@ export async function activate(context: vscode.ExtensionContext) {
       : `activated — signed out (login-first gate active)`
   );
 
-  // ===== Chat history persistence =====
+  // ===== Chat history + sessions persistence =====
   initChatHistory(context);
+  initChatSessions(context);
 
   // ===== Notes tab persistence =====
   initNotesStore(context);
