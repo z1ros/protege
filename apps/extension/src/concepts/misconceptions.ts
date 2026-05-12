@@ -281,7 +281,10 @@ export function registerMisconceptions(
 
   disposables.push(
     onChangeOrigin((evt) => {
-      if (evt.origin !== "auto-inserted") return;
+      // Scan AI inserts AND user pastes for misconceptions — pasted
+      // Stack Overflow snippets are at least as likely to carry foot-guns
+      // as AI-generated code.
+      if (evt.origin !== "auto-inserted" && evt.origin !== "pasted") return;
       if (!isEnabled()) return;
       void scanAndFlag(evt);
     })

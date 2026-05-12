@@ -91,7 +91,7 @@ function pruneStale(
       kept.push(r);
       continue;
     }
-    // Unreviewed auto-inserted — apply TTL + size gate.
+    // Unreviewed auto-inserted OR pasted — apply TTL + size gate.
     const lines = r.endLine - r.startLine + 1;
     // No createdAt? Legacy region from before the field existed —
     // treat as stale so a reload after upgrade wipes the old backlog.
@@ -182,13 +182,14 @@ export function recordChange(
   uri: vscode.Uri,
   startLine: number,
   endLine: number,
-  origin: "typed" | "auto-inserted"
+  origin: "typed" | "auto-inserted" | "pasted"
 ): void {
   if (endLine < startLine) return;
-  // Gate tiny auto-inserted bursts at the write path — a 1-line paste
-  // should never end up as an "AI block" CodeLens. Typed regions stay
-  // small by design (single keystrokes) and are not gated.
-  if (origin === "auto-inserted") {
+  // Gate tiny unowned-by-default bursts at the write path — a 1-line paste
+  // or a 1-line AI completion should never end up as an "AI block" /
+  // "Pasted block" CodeLens. Typed regions stay small by design (single
+  // keystrokes) and are not gated.
+  if (origin === "auto-inserted" || origin === "pasted") {
     const lines = endLine - startLine + 1;
     if (lines < MIN_AUTO_LINES) return;
   }
@@ -376,18 +377,22 @@ export function getRegionsForUri(uri: vscode.Uri): OwnershipRegion[] {
   return data.regions.map((r) => ({ ...r }));
 }
 
-/** Drop every unreviewed auto-inserted region for a file. Used by the
- *  "dismiss all AI blocks in this file" escape hatch — when the user
- *  knows the highlighted code is already theirs and wants the noise gone
- *  without walking through each block individually. Typed regions and
- *  already-explained regions are preserved. Returns the number of
+/** Drop every unreviewed auto-inserted OR pasted region for a file. Used
+ *  by the "dismiss all AI blocks in this file" escape hatch — when the
+ *  user knows the highlighted code is already theirs and wants the noise
+ *  gone without walking through each block individually. Typed regions
+ *  and already-explained regions are preserved. Returns the number of
  *  regions cleared so the caller can confirm with a log/status. */
 export function clearAutoInsertedForUri(uri: vscode.Uri): number {
   const uriKey = uri.toString();
   const data = load(uriKey);
   const before = data.regions.length;
   const kept = data.regions.filter(
-    (r) => !(r.origin === "auto-inserted" && r.explainedAt === null)
+    (r) =>
+      !(
+        (r.origin === "auto-inserted" || r.origin === "pasted") &&
+        r.explainedAt === null
+      )
   );
   const cleared = before - kept.length;
   if (cleared === 0) return 0;
@@ -504,15 +509,26 @@ function capRegions(regions: OwnershipRegion[]): OwnershipRegion[] {
     if (bestIdx === -1) break;
     const a = work[bestIdx];
     const b = work[bestIdx + 1];
+    const aUnowned = a.origin === "auto-inserted" || a.origin === "pasted";
+    const bUnowned = b.origin === "auto-inserted" || b.origin === "pasted";
+    // When merging across origin boundaries (only triggered when the file
+    // exceeds MAX_REGIONS_PER_FILE coarsening cap — pathological), the
+    // union becomes the most-needs-explanation origin: any "auto-inserted"
+    // wins, then "pasted", then "typed". The paste signal is lost only
+    // when collapsed against a typed region — accept that, the
+    // over-prompt is safer than the under-prompt.
+    let mergedOrigin: "typed" | "auto-inserted" | "pasted";
+    if (a.origin === "auto-inserted" || b.origin === "auto-inserted") {
+      mergedOrigin = "auto-inserted";
+    } else if (aUnowned || bUnowned) {
+      mergedOrigin = "pasted";
+    } else {
+      mergedOrigin = "typed";
+    }
     work.splice(bestIdx, 2, {
       startLine: Math.min(a.startLine, b.startLine),
       endLine: Math.max(a.endLine, b.endLine),
-      // When merging across origin boundaries, the union becomes "not
-      // explained" (the safer default — we'd rather re-prompt than
-      // under-prompt).
-      origin: a.origin === "auto-inserted" || b.origin === "auto-inserted"
-        ? "auto-inserted"
-        : "typed",
+      origin: mergedOrigin,
       explainedAt:
         a.explainedAt && b.explainedAt
           ? Math.min(a.explainedAt, b.explainedAt)

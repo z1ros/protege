@@ -32,7 +32,7 @@ import { isProtegeEditing } from "../ai/tools.js";
  * and the verdict. Ownership consumes this directly.
  */
 
-export type ChangeOrigin = "typed" | "auto-inserted" | "mixed";
+export type ChangeOrigin = "typed" | "auto-inserted" | "pasted" | "mixed";
 
 export interface ChangeOriginEvent {
   uri: vscode.Uri;
@@ -556,11 +556,18 @@ function handleDocChange(evt: vscode.TextDocumentChangeEvent): void {
       recentPace: pace.rate(key, now),
       msSinceKeystroke: mostRecentSampleAgeMs(key, now),
     })
-      .then((verdict) => {
+      .then(async (verdict) => {
         // "unsure" → treat as typed (conservative default — don't nag
         // the user about code they might have written).
-        const finalOrigin: ChangeOrigin =
+        let finalOrigin: ChangeOrigin =
           verdict === "auto-inserted" ? "auto-inserted" : "typed";
+        // If the LLM said "auto-inserted", do a clipboard check — a paste
+        // routed through grey-zone (small enough to slip the burst rule)
+        // should still land as "pasted", not "auto-inserted".
+        if (finalOrigin === "auto-inserted") {
+          const matched = await clipboardMatchesAsync(changeText);
+          if (matched) finalOrigin = "pasted";
+        }
         emitter.fire({
           uri: doc.uri,
           startLine,
@@ -605,6 +612,52 @@ function handleDocChange(evt: vscode.TextDocumentChangeEvent): void {
   const immediateNewText =
     evt.contentChanges.length === 1 ? evt.contentChanges[0].text : undefined;
 
+  // Paste check: when the synchronous classifier lands on "auto-inserted"
+  // for a single-content-change event, defer the emit while we ask the
+  // clipboard whether the inserted text matches. cmd+V inserts clipboard
+  // content verbatim; AI tools (Cursor, Copilot, Claude Code) write
+  // programmatically and never round-trip through the clipboard. A match
+  // means the user pasted — so we emit "pasted" instead of "auto-inserted"
+  // and the AI-block lens uses the user-pasted label + prompt.
+  if (origin === "auto-inserted" && singleChange && immediateNewText !== undefined) {
+    const changeText = immediateNewText;
+    void clipboardMatchesAsync(changeText)
+      .then((matched) => {
+        const finalOrigin: ChangeOrigin = matched ? "pasted" : "auto-inserted";
+        emitter.fire({
+          uri: evt.document.uri,
+          startLine,
+          endLine,
+          linesAdded: totalLinesAdded,
+          charsAdded: totalCharsAdded,
+          origin: finalOrigin,
+          ts: Date.now(),
+          newText: changeText,
+          replacedText,
+        });
+        log(
+          "changeOrigin",
+          `${finalOrigin} · ${evt.document.uri.fsPath.split("/").pop()} · ${totalLinesAdded}L/${totalCharsAdded}ch · lines ${startLine}-${endLine}`
+        );
+      })
+      .catch(() => {
+        // Clipboard read failed (rare — e.g. another process holds it).
+        // Fall back to "auto-inserted" so we don't lose the event.
+        emitter.fire({
+          uri: evt.document.uri,
+          startLine,
+          endLine,
+          linesAdded: totalLinesAdded,
+          charsAdded: totalCharsAdded,
+          origin: "auto-inserted",
+          ts: Date.now(),
+          newText: changeText,
+          replacedText,
+        });
+      });
+    return;
+  }
+
   const outEvent: ChangeOriginEvent = {
     uri: evt.document.uri,
     startLine,
@@ -624,6 +677,28 @@ function handleDocChange(evt: vscode.TextDocumentChangeEvent): void {
       `${origin} · ${evt.document.uri.fsPath.split("/").pop()} · ${outEvent.linesAdded}L/${outEvent.charsAdded}ch · lines ${startLine}-${endLine}`
     );
   }
+}
+
+/** True when the clipboard's current text equals the just-inserted text
+ *  (after CR/LF normalisation + trim). cmd+V inserts the clipboard
+ *  byte-for-byte; AI completions write programmatically and never match.
+ *  Only call this for single-content-change events — multi-cursor pastes
+ *  fragment the inserted text and won't match the clipboard atom. */
+async function clipboardMatchesAsync(newText: string): Promise<boolean> {
+  // Skip the clipboard read for trivial inserts — a 4-char paste isn't
+  // interesting enough to bother classifying, and matching against tiny
+  // clipboard content (e.g. a single character left over from a previous
+  // copy) generates false positives.
+  if (newText.length < 16) return false;
+  let clip: string;
+  try {
+    clip = await vscode.env.clipboard.readText();
+  } catch {
+    return false;
+  }
+  if (!clip || clip.length < 16) return false;
+  const norm = (s: string) => s.replace(/\r\n/g, "\n").trim();
+  return norm(clip) === norm(newText);
 }
 
 /** Return the last pace sample's age for `key`, or Infinity if none. No

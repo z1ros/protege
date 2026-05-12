@@ -38,6 +38,11 @@
           "type": "webview",
           "id": "protege.launcher",
           "name": "Protege"
+        },
+        {
+          "type": "webview",
+          "id": "protege.fileWalk",
+          "name": "File Walk"
         }
       ]
     },
@@ -297,8 +302,59 @@
       {
         "command": "protege.aiBlocks.dismissAllInFile",
         "title": "Protege: AI blocks — dismiss all in this file"
+      },
+      {
+        "command": "protege.startFileWalk",
+        "title": "Protege: Walk this file",
+        "icon": "$(debug-step-into)"
+      },
+      {
+        "command": "protege.fileWalk.next",
+        "title": "Protege: File Walk — next step",
+        "icon": "$(arrow-right)"
+      },
+      {
+        "command": "protege.fileWalk.prev",
+        "title": "Protege: File Walk — previous step",
+        "icon": "$(arrow-left)"
+      },
+      {
+        "command": "protege.fileWalk.exit",
+        "title": "Protege: File Walk — exit",
+        "icon": "$(close)"
       }
     ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "protege.startFileWalk",
+          "when": "!protege.fileWalk.active && resourceLangId =~ /^(typescript|typescriptreact|javascript|javascriptreact|python|go|rust|java|cpp|c|csharp|ruby|php|swift)$/",
+          "group": "navigation@97"
+        },
+        {
+          "command": "protege.fileWalk.prev",
+          "when": "protege.fileWalk.active",
+          "group": "navigation@97"
+        },
+        {
+          "command": "protege.fileWalk.next",
+          "when": "protege.fileWalk.active",
+          "group": "navigation@98"
+        },
+        {
+          "command": "protege.fileWalk.exit",
+          "when": "protege.fileWalk.active",
+          "group": "navigation@99"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "protege.startFileWalk",
+          "when": "resourceLangId =~ /^(typescript|typescriptreact|javascript|javascriptreact|python|go|rust|java|cpp|c|csharp|ruby|php|swift)$/",
+          "group": "9_protege"
+        }
+      ]
+    },
     "configuration": {
       "title": "Protege",
       "properties": {

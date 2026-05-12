@@ -145,7 +145,9 @@ export function registerVibeBrief(
 
   disposables.push(
     onChangeOrigin((evt) => {
-      if (evt.origin !== "auto-inserted") return;
+      // Brief on AI inserts AND user pastes — both are "code that landed
+      // without keystroke-level authorship," same trust gap.
+      if (evt.origin !== "auto-inserted" && evt.origin !== "pasted") return;
       void maybeShowBriefing(evt);
     })
   );

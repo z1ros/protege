@@ -83,7 +83,9 @@ class AiBlockLensProvider implements vscode.CodeLensProvider {
     if (!isEnabled()) return [];
     if (doc.uri.scheme !== "file") return [];
     const regions = getRegionsForUri(doc.uri).filter(
-      (r) => r.origin === "auto-inserted" && r.explainedAt === null
+      (r) =>
+        (r.origin === "auto-inserted" || r.origin === "pasted") &&
+        r.explainedAt === null
     );
     if (regions.length === 0) return [];
 
@@ -92,18 +94,46 @@ class AiBlockLensProvider implements vscode.CodeLensProvider {
       const line = Math.max(0, Math.min(doc.lineCount - 1, r.startLine));
       const range = new vscode.Range(line, 0, line, 0);
       const lineCount = r.endLine - r.startLine + 1;
+      const linesLabel = `${lineCount} ${lineCount === 1 ? "line" : "lines"}`;
+      // The filter above already guarantees r.origin is "auto-inserted"
+      // or "pasted", but TS can't narrow through the closure — collapse
+      // explicitly so AiBlockArgs.origin stays tight.
+      const argsOrigin: "auto-inserted" | "pasted" =
+        r.origin === "pasted" ? "pasted" : "auto-inserted";
       const args: AiBlockArgs = {
         uri: doc.uri.toString(),
         startLine: r.startLine,
         endLine: r.endLine,
+        origin: argsOrigin,
       };
-      const title = `◎ AI block · ${lineCount} ${lineCount === 1 ? "line" : "lines"} · ✿ Teach me this block`;
+      // Per-origin label + tooltip. Pasted blocks get the
+      // "you-sure-you-know-this" frame; AI blocks keep the existing
+      // teach-me copy. Both fire the same teach command — the chat
+      // prompt can branch on `args.origin` later if needed.
+      const title =
+        r.origin === "pasted"
+          ? `◎ Pasted block · ${linesLabel} · ✿ You sure you know this?`
+          : `◎ AI block · ${linesLabel} · ✿ Teach me this block`;
+      const tooltip =
+        r.origin === "pasted"
+          ? "Open a teaching prompt for this pasted block · Dismiss when reviewed"
+          : "Open the teaching hover for this block · Got it when reviewed";
       lenses.push(
         new vscode.CodeLens(range, {
           title,
-          tooltip:
-            "Open the teaching hover for this block · Got it when reviewed",
+          tooltip,
           command: "protege.aiBlocks.teach",
+          arguments: [args],
+        })
+      );
+      // Sibling Dismiss lens on the same line. Renders side-by-side
+      // with the teach lens. Single click marks the block reviewed and
+      // clears the wash + lenses.
+      lenses.push(
+        new vscode.CodeLens(range, {
+          title: "✕ Dismiss",
+          tooltip: "Mark this block reviewed without opening the teaching prompt",
+          command: "protege.aiBlocks.dismiss",
           arguments: [args],
         })
       );
@@ -228,11 +258,11 @@ export function registerAiBlocks(
         clearPendingHover();
         if (cleared === 0) {
           vscode.window.showInformationMessage(
-            "No AI blocks to clear in this file."
+            "No AI or pasted blocks to clear in this file."
           );
         } else {
           vscode.window.showInformationMessage(
-            `Cleared ${cleared} AI block${cleared === 1 ? "" : "s"} in this file.`
+            `Cleared ${cleared} block${cleared === 1 ? "" : "s"} in this file.`
           );
         }
       }
@@ -259,6 +289,11 @@ interface AiBlockArgs {
   uri: string;
   startLine: number;
   endLine: number;
+  /** Source classification of the block. Optional for back-compat with
+   *  command callers that don't know about it; the teach + dismiss
+   *  handlers don't currently branch on it, but it's plumbed through so
+   *  the chat prompt can vary by source later. */
+  origin?: "auto-inserted" | "pasted";
 }
 
 // ---- Painting ----
@@ -274,7 +309,9 @@ function paintBlocksFor(editor: vscode.TextEditor): void {
     return;
   }
   const regions = getRegionsForUri(editor.document.uri).filter(
-    (r) => r.origin === "auto-inserted" && r.explainedAt === null
+    (r) =>
+      (r.origin === "auto-inserted" || r.origin === "pasted") &&
+      r.explainedAt === null
   );
   const ranges: vscode.Range[] = [];
   const doc = editor.document;
@@ -358,7 +395,7 @@ async function teachBlock(args: AiBlockArgs): Promise<void> {
   const lang = doc.languageId;
 
   const { openProtegePanel } = await import("../panel.js");
-  const { broadcast, mountedWebviewCount } = await import(
+  const { broadcast, mountedWebviewCount, suppressNextForkOnce } = await import(
     "../chat/webviewHost.js"
   );
 
@@ -375,6 +412,14 @@ async function teachBlock(args: AiBlockArgs): Promise<void> {
     `Walk me through it: what it actually does, what the non-obvious parts are, and one concrete way it could break in production. Keep it under 200 words.`;
 
   try {
+    // Suppress the host's learning-fork fallback for this turn — the
+    // synthetic message starts with "Teach me about this block" which
+    // matches FORK_TEACH_RE and would otherwise force-inject a
+    // <learningFork> tag. The reply is a pure explanation, so a
+    // "Just do it" button under it makes no sense (there's nothing to
+    // build). Persona already says not to emit fork for "explain
+    // existing code"; this aligns the host fallback with the persona.
+    suppressNextForkOnce();
     broadcast({ type: "chat/autoSend", message });
   } catch (err) {
     log(
@@ -431,9 +476,8 @@ async function tellMore(
 ): Promise<void> {
   try {
     const { openProtegePanel } = await import("../panel.js");
-    const { broadcast, mountedWebviewCount } = await import(
-      "../chat/webviewHost.js"
-    );
+    const { broadcast, mountedWebviewCount, suppressNextForkOnce } =
+      await import("../chat/webviewHost.js");
     if (mountedWebviewCount() === 0) {
       // Silent no-op when the panel isn't open. User sees nothing
       // visible happen; they'd need to open Protege and click again.
@@ -446,6 +490,11 @@ async function tellMore(
     const fileName = uri.fsPath.split("/").pop() ?? "this file";
     setTimeout(() => {
       try {
+        // Same fork-suppress as teachBlock — the message body says
+        // "Walk me through this block in more depth" which matches
+        // FORK_TEACH_RE and would force-inject a fork tag onto a
+        // pure-explanation reply.
+        suppressNextForkOnce();
         broadcast({
           type: "chat/autoSend",
           message:

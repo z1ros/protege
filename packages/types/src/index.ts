@@ -1720,8 +1720,12 @@ export interface OwnershipRegion {
   startLine: number;
   /** 0-based inclusive end line at the moment of capture. */
   endLine: number;
-  /** How the lines came to exist. */
-  origin: "typed" | "auto-inserted";
+  /** How the lines came to exist.
+   *  - "typed": user keystrokes / fast typing / formatter output — owned by default.
+   *  - "auto-inserted": AI tool wrote into the editor (Cursor Tab, Copilot, Claude Code apply).
+   *  - "pasted": user pasted from clipboard — distinct from AI insert because the user
+   *    chose the bytes (probably from elsewhere) but didn't author them. */
+  origin: "typed" | "auto-inserted" | "pasted";
   /** ms epoch when the user successfully explained / drilled this range,
    *  or null if still unreviewed. Typed regions may have `explainedAt`
    *  null — they still count as owned. */

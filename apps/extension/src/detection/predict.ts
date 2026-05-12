@@ -201,7 +201,9 @@ export function registerPredict(
   // the user most clearly vibecoded today.
   disposables.push(
     onChangeOrigin((evt) => {
-      if (evt.origin !== "auto-inserted") return;
+      // "Biggest unowned burst per file per day" — both AI inserts and
+      // user pastes count as unowned-by-default.
+      if (evt.origin !== "auto-inserted" && evt.origin !== "pasted") return;
       recordTopBurst(evt);
     })
   );

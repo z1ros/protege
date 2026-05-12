@@ -84,13 +84,8 @@ let _iq3Bridge: ReturnType<typeof startIq3Bridge> | null = null;
 export function getIq3Bridge(): ReturnType<typeof startIq3Bridge> | null {
   return _iq3Bridge;
 }
-// File Walk retired 2026-04-28 — sticky sidebar view + status-bar
-// shortcut + webview provider all removed. Module kept on disk;
-// re-enable by restoring this import, the registerFileWalk() call,
-// the WalkViewProvider import + registerWebviewViewProvider, the
-// fileWalkDisposables push, and the package.json view registration.
-// import { registerFileWalk } from "./walk/fileWalk.js";
-// import { WalkViewProvider } from "./walk/walkView.js";
+import { registerFileWalk } from "./walk/fileWalk.js";
+import { WalkViewProvider } from "./walk/walkView.js";
 
 let output: vscode.OutputChannel;
 
@@ -571,11 +566,17 @@ export async function activate(context: vscode.ExtensionContext) {
       .get<boolean>("ownership.autoTrackingEnabled", true);
   const changeOriginSub = onChangeOrigin((evt) => {
     if (!isAutoTrackingEnabled()) return;
-    if (evt.origin === "typed" || evt.origin === "auto-inserted") {
+    if (
+      evt.origin === "typed" ||
+      evt.origin === "auto-inserted" ||
+      evt.origin === "pasted"
+    ) {
       recordOwnershipChange(evt.uri, evt.startLine, evt.endLine, evt.origin);
     } else if (evt.origin === "mixed") {
       // Treat mixed as auto-inserted for tracking — safer to over-prompt
-      // than miss a true paste.
+      // than miss a true paste. (Multi-cursor pastes flow here too — they
+      // can't be reliably matched against a single clipboard atom, so
+      // they keep the AI-block label rather than the paste label.)
       recordOwnershipChange(evt.uri, evt.startLine, evt.endLine, "auto-inserted");
     }
   });
@@ -705,7 +706,8 @@ export async function activate(context: vscode.ExtensionContext) {
   const workspaceIndexDisposables = registerWorkspaceIndex(context);
   const findingDiagnosticsDisposables = registerFindingDiagnostics(context);
 
-  // File Walk retired 2026-04-28 — see top-of-file note.
+  const fileWalkDisposables = registerFileWalk(context);
+  const walkViewProvider = new WalkViewProvider();
 
   // ===== JARVIS Layer 5: Command palette commands =====
   const commandDisposables = registerCommands(context);
@@ -753,6 +755,11 @@ export async function activate(context: vscode.ExtensionContext) {
     ...registerTeachingFlow(),
     ...registerExerciseEngine(context),
     vscode.window.registerWebviewViewProvider("protege.launcher", launcher),
+    vscode.window.registerWebviewViewProvider(
+      "protege.fileWalk",
+      walkViewProvider
+    ),
+    ...fileWalkDisposables,
     vscode.commands.registerCommand("protege.toggle", () =>
       openProtegePanel(context)
     ),

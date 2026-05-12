@@ -125,7 +125,27 @@ export function endVoiceDialogueSession(): void {
 // skip fallback injection. Set when we fire a synthetic "Just do it"
 // follow-up so the confirmation reply ("Done — changed X to Y") doesn't
 // re-offer the fork. Self-clearing: reset inside handleChat after one turn.
+//
+// Also flipped by external callers (see suppressNextForkOnce below) when
+// they're about to broadcast a `chat/autoSend` whose message text would
+// otherwise trip the host's fork-fallback regex. The AI-block / Pasted-
+// block "Teach me this block" prompt is the canonical case: the message
+// starts with "Teach me about this block from..." which matches
+// FORK_TEACH_RE → host injects a fork → user sees a "Just do it" button
+// under what should be a pure explanation reply.
 let suppressNextFork = false;
+
+/** Caller-side opt-out: flip the suppress flag before broadcasting an
+ *  auto-send that's an explanation request, not a build/teach ask. The
+ *  flag is consumed inside the next handleChat call (cleared after one
+ *  turn), so call it RIGHT BEFORE `broadcast({ type: "chat/autoSend",
+ *  ... })` — anything that races between this and handleChat could
+ *  swallow the suppression.
+ *
+ *  Used by: hints/aiBlocks.ts (Teach me this block, Tell me more). */
+export function suppressNextForkOnce(): void {
+  suppressNextFork = true;
+}
 
 /**
  * Understanding-Check clarifier continuity. When the verifier returns
@@ -215,19 +235,13 @@ function hasBuildOrTeachIntent(message: string): boolean {
   return FORK_BUILD_RE.test(message) || FORK_TEACH_RE.test(message);
 }
 
-/** Explicit teach-me intent — user unambiguously wants Learning Mode, no
- *  fork chip needed, no verifier clarifier loop. Matches phrasings that
- *  START with a pedagogical verb. "set a timer teach me" doesn't match
- *  (teach-me buried in the middle is softer intent); "teach me set a
- *  timer" does. When this fires, we auto-start `protege.learning.start`
- *  with the whole message as the goal and skip the chat pipeline. */
-const EXPLICIT_TEACH_RE =
-  /^(teach me|walk me through|show me how to|show me how|tutor me|walk through)\b/i;
-function isExplicitTeachAsk(message: string): boolean {
-  const trimmed = message.trim();
-  if (trimmed.length < 10) return false; // "teach me X" needs a topic
-  return EXPLICIT_TEACH_RE.test(trimmed);
-}
+// Legacy EXPLICIT_TEACH_RE + isExplicitTeachAsk removed (2026-05-11).
+// The branch they fed in runChat short-circuited typed "teach me…"
+// turns into `protege.learning.start`, whose takeover panel is
+// disabled in App.tsx:1370. Result: "Teach me this block" CodeLens
+// produced an ack-only chat reply with no visible lesson. New path
+// is the TEACHING_TEXT promotion further down (first-message +
+// isTeachingMessage → effectiveMode = "teaching-text").
 
 /** Voice-mode chat sanitizer. The whole point of voice mode is that the
  *  user can CLOSE the sidebar — they're listening to prose and watching
@@ -1683,63 +1697,18 @@ async function handleChat(
   // --- Explicit "teach me X" short-circuit (fork chip redundant) ---
   // When the user unambiguously says "teach me X", skip the verifier
   // clarifier dance and the fork chip — they told us what they want.
-  // Auto-fire `protege.learning.start`; Learning panel takes over.
-  //
-  // Gates: text input only (voice-mode Learning is a separate UX),
-  // active editor present, not a clarifier reply to a prior question
-  // (that would cause a double-start), message isn't a synthetic
-  // "just do it" turn (suppressNextFork already in flight).
-  const voiceInput =
-    mode === "voice" || mode === "voice-dialogue" || mode === "teaching";
-  const hasActiveEditorForShortcut =
-    !!vscode.window.activeTextEditor &&
-    vscode.window.activeTextEditor.document.uri.scheme === "file";
-  const isClarifierReply =
-    pendingClarifier !== null && pendingClarifier.expiresAt > Date.now();
-  if (
-    isExplicitTeachAsk(message) &&
-    !voiceInput &&
-    hasActiveEditorForShortcut &&
-    !isClarifierReply &&
-    !suppressNextFork
-  ) {
-    const { log } = await import("../log.js");
-    log("learning", `auto-start on explicit teach-me: "${message.slice(0, 80)}"`);
-    // Persist the user's message + show a one-line assistant ack so the
-    // chat thread still has a coherent record of what happened. The
-    // Learning panel takes over the sidebar content, but the chat is
-    // still there behind it.
-    const userMsg: ChatMessage = {
-      id: userMsgId ?? crypto.randomUUID(),
-      role: "user",
-      content: message,
-      createdAt: new Date().toISOString(),
-      source: "text",
-    };
-    appendMessage(userMsg);
-    const ack: ChatMessage = {
-      id: crypto.randomUUID(),
-      role: "assistant",
-      content: `Starting Learning Mode — I'll walk you through this step by step.`,
-      createdAt: new Date().toISOString(),
-      source: "text",
-    };
-    broadcast({ type: "chat/append", message: ack });
-    appendMessage(ack);
-    // The webview flips loading=true optimistically when the user clicks
-    // send (App.tsx:926). The Learning panel takes over the sidebar — no
-    // chat reply is coming — so we must explicitly clear chat/loading or
-    // the typing-dots ("thinking…") indicator hangs forever. Without this,
-    // user reported "it has been thinking for 2 minutes" while the
-    // Learning panel was actually running fine.
-    broadcast({ type: "chat/loading", loading: false });
-    // Fire the command. It does its own active-editor / enabled /
-    // concurrency-guard checks; if any fail it shows its own error.
-    await vscode.commands.executeCommand("protege.learning.start", {
-      goal: message,
-    });
-    return; // short-circuit — no runChat, no fork, no verify
-  }
+  // Legacy auto-route to `protege.learning.start` removed (2026-05-11).
+  // The branch here used to short-circuit typed "teach me X" turns
+  // straight into the Learning takeover panel — but that panel is
+  // disabled in App.tsx:1370, so the route produced an ack-only chat
+  // thread ("Starting Learning Mode…") with no visible lesson and the
+  // host-side state machine running silently. Typed teach-me intent
+  // is now caught by the TEACHING_TEXT mode promotion below
+  // (first-message gate + isTeachingMessage at line ~1798), which
+  // produces the structured PROBE → EXPLAIN → SHOW → TRY → REVIEW
+  // arc inline in chat. Re-enabling needs both: the App.tsx panel
+  // block restored AND the host-side loop bugs fixed (looping
+  // teach_steps, partial plans).
 
   // --- Task-shaping classifier (plans/task-shaping.md Phase 1) ---
   // Runs BEFORE the chat pipeline. Its output decides routing: whether
