@@ -2,6 +2,8 @@ import * as vscode from "vscode";
 import { aiQuery } from "../ai/aiBackend.js";
 import { detectConcepts } from "../concepts/detector.js";
 import { broadcast } from "../chat/webviewHost.js";
+import { getCurrentSessionId, legacySessionIdFor } from "../chat/chatSessions.js";
+import { currentUserIdOrNull } from "../user/protegeClient.js";
 import type { ChatMessage } from "@protege/types";
 
 /**
@@ -397,11 +399,17 @@ function findLastCodeLine(doc: vscode.TextDocument): number | null {
   return null;
 }
 
+/** Build a host-side assistant broadcast for the active chat session.
+ *  See teachingFlow.ts chatMsg for the same rationale. */
 function chatMsg(content: string): { type: "chat/append"; message: ChatMessage } {
+  const sessionId =
+    getCurrentSessionId() ??
+    legacySessionIdFor(currentUserIdOrNull() ?? "local-dev");
   return {
     type: "chat/append",
     message: {
       id: crypto.randomUUID(),
+      sessionId,
       role: "assistant",
       content,
       createdAt: new Date().toISOString(),

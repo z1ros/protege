@@ -3,6 +3,8 @@ import { aiQuery } from "../ai/aiBackend.js";
 import { showTeachPopups } from "./teachPopup.js";
 import { getActiveFileEditor } from "../workspace/activeFile.js";
 import { broadcast } from "../chat/webviewHost.js";
+import { getCurrentSessionId, legacySessionIdFor } from "../chat/chatSessions.js";
+import { currentUserIdOrNull } from "../user/protegeClient.js";
 import type { ChatMessage } from "@protege/types";
 
 /**
@@ -262,11 +264,20 @@ async function askTopic(): Promise<string | undefined> {
   });
 }
 
+/** Build a host-side assistant broadcast for the active chat session.
+ *  Teaching flows are always triggered from a chat exchange, so the
+ *  current session id is the right tag; if for some reason there is
+ *  none yet, fall back to the deterministic legacy bucket so the
+ *  message still has a parent. */
 function chatMsg(content: string): { type: "chat/append"; message: ChatMessage } {
+  const sessionId =
+    getCurrentSessionId() ??
+    legacySessionIdFor(currentUserIdOrNull() ?? "local-dev");
   return {
     type: "chat/append",
     message: {
       id: crypto.randomUUID(),
+      sessionId,
       role: "assistant",
       content,
       createdAt: new Date().toISOString(),
