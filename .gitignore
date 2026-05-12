@@ -8,6 +8,11 @@ out
 .protege-store.json
 .protege-store-iq3.json
 .protege-store-iq3-self-ratings.json
+
+# Dev-run JSON fallback for the teaching exercise engine. Mutated every
+# time the backend runs in local mode; not for sharing.
+apps/backend/.lesson-sessions.json
+apps/extension/.lesson-sessions.json
 .DS_Store
 .turbo
 coverage

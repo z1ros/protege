@@ -14,6 +14,12 @@ const EMPTY_TAGS: FieldTagsFile = { version: 0, generated: "", tags: {} };
 let cache: FieldTagsFile | null = null;
 let loadFailed = false;
 
+/** Cached parse of skills-taxonomy.json (the full taxonomy schema served
+ *  by the unauth /iq/taxonomy route). Parsed once on first request and
+ *  held for the process lifetime — same TTL as `cache` above. */
+let taxonomyCache: unknown | null = null;
+let taxonomyLoadFailed = false;
+
 function loadTags(): FieldTagsFile {
   if (cache) return cache;
   if (loadFailed) return EMPTY_TAGS;
@@ -78,9 +84,51 @@ export function fieldVectorFromConceptCounts(
   ) as Iq3FieldVector;
 }
 
+/** Load + cache the full taxonomy schema (skills-taxonomy.json). Used
+ *  by the unauth `/iq/taxonomy` route which previously did a sync
+ *  readFileSync + JSON.parse on every request — trivial DoS vector. */
+export function loadTaxonomy(): unknown {
+  if (taxonomyCache !== null) return taxonomyCache;
+  if (taxonomyLoadFailed) return {};
+  const cwd = process.cwd();
+  const candidates = [
+    resolve(cwd, "../extension/webview/skills-taxonomy.json"),
+    resolve(cwd, "apps/extension/webview/skills-taxonomy.json"),
+    resolve(cwd, "skills-taxonomy.json"),
+    resolve(cwd, "data/skills-taxonomy.json"),
+  ];
+  for (const path of candidates) {
+    if (!existsSync(path)) continue;
+    try {
+      taxonomyCache = JSON.parse(readFileSync(path, "utf-8"));
+      return taxonomyCache;
+    } catch (err) {
+      console.warn(
+        `[iq3] taxonomy: parse failed at ${path}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  console.warn(
+    `[iq3] taxonomy: no skills-taxonomy.json found in any of: ${candidates.join(
+      ", ",
+    )} (cwd=${cwd}). Falling back to empty object.`,
+  );
+  taxonomyLoadFailed = true;
+  return {};
+}
+
+/** Load + cache the raw field-tags file used by /iq/taxonomy. Exported
+ *  separately so the route can serve both pieces without two readFileSync
+ *  hits per request. */
+export function loadFieldTags(): FieldTagsFile {
+  return loadTags();
+}
+
 /** Cache reset (test helper). Also clears the `loadFailed` flag so a
  *  test that swaps in a fresh fixture path can retry the load. */
 export function _resetTagsCache() {
   cache = null;
   loadFailed = false;
+  taxonomyCache = null;
+  taxonomyLoadFailed = false;
 }

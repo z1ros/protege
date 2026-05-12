@@ -28,6 +28,12 @@ import {
 
 const STORAGE_KEY = "protege.chatHistory";
 const PENDING_CLEAR_KEY = "protege.chatHistory.pendingClear";
+/** ISO timestamp of the most recent clearHistory call. Cloud rows with
+ *  createdAt <= this watermark are filtered out during hydrate so a
+ *  read-replica that still has just-deleted rows can't resurrect them
+ *  into local cache. Robust to eventual consistency without requiring
+ *  the DELETE-then-GET round trip to be linearizable. */
+const CLEARED_AT_KEY = "protege.chatHistory.clearedAt";
 const MAX_MESSAGES = 500;
 const SYNC_INTERVAL_MS = 60 * 60 * 1000; // periodic re-pull, hourly
 
@@ -35,12 +41,22 @@ let ctx: vscode.ExtensionContext | null = null;
 let syncTimer: ReturnType<typeof setInterval> | null = null;
 let hydrated = false;
 
+/** Serialize globalState read-modify-write so back-to-back appends
+ *  (e.g. user message + assistant message in the same chat turn) don't
+ *  race. Without this, both calls read the same pre-state, both push
+ *  their own message onto that snapshot, both write — last-write-wins
+ *  drops the earlier message. */
+let writeQueue: Promise<void> = Promise.resolve();
+
 export function initChatHistory(context: vscode.ExtensionContext): void {
   ctx = context;
   void hydrateFromCloud();
   // Periodic re-pull catches messages another device of the user
   // wrote during this session. Cheap (one HTTP GET per hour).
   syncTimer = setInterval(() => void hydrateFromCloud(), SYNC_INTERVAL_MS);
+  // Register dispose so the interval is cleared on deactivate / reload.
+  // Without this the timer survived extension reloads and accumulated.
+  context.subscriptions.push(new vscode.Disposable(() => disposeChatHistory()));
 }
 
 async function hydrateFromCloud(): Promise<void> {
@@ -74,7 +90,16 @@ async function hydrateFromCloud(): Promise<void> {
     );
     if (!res.ok) return;
     const body = (await res.json()) as { messages: ChatMessage[] };
-    const cloud = body.messages ?? [];
+    const rawCloud = body.messages ?? [];
+    // Filter out cloud rows older than the local clearedAt watermark.
+    // Supabase reads are eventually consistent against the write replica,
+    // so a GET that lands shortly after a successful DELETE can still
+    // return the just-deleted rows. Without this filter, those would
+    // resurrect into local cache and re-appear in the UI after a clear.
+    const clearedAt = ctx.globalState.get<string>(CLEARED_AT_KEY);
+    const cloud = clearedAt
+      ? rawCloud.filter((m) => m.createdAt > clearedAt)
+      : rawCloud;
     const local = ctx.globalState.get<ChatMessage[]>(STORAGE_KEY) ?? [];
     // Merge by id. Messages are append-only (no edits), so collisions
     // just keep one copy — cloud's version wins arbitrarily.
@@ -154,15 +179,25 @@ export function appendMessage(message: ChatMessage): void {
     );
     return;
   }
-  const history = getAllMessages();
-  history.push(message);
-
-  const pruned =
-    history.length > MAX_MESSAGES
-      ? history.slice(history.length - MAX_MESSAGES)
-      : history;
-
-  void ctx.globalState.update(STORAGE_KEY, pruned);
+  // Serialize the read-modify-write: chain onto the previous append so
+  // a rapid user→assistant pair cannot both read the same pre-state.
+  writeQueue = writeQueue
+    .then(async () => {
+      if (!ctx) return;
+      const history = getAllMessages();
+      history.push(message);
+      const pruned =
+        history.length > MAX_MESSAGES
+          ? history.slice(history.length - MAX_MESSAGES)
+          : history;
+      await ctx.globalState.update(STORAGE_KEY, pruned);
+    })
+    .catch((err) => {
+      log(
+        "chatHistory",
+        `appendMessage write failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
   void pushMessage(message);
   // Update the session's last_message_at + message_count + (maybe)
   // auto-title locally so the UI reacts without a cloud round trip.
@@ -176,6 +211,11 @@ export function appendMessage(message: ChatMessage): void {
  *  this" intent would silently revert. */
 export function clearHistory(): void {
   if (!ctx) return;
+  // Record the clear watermark BEFORE wiping local state. hydrateFromCloud
+  // uses this timestamp to filter out cloud rows that a read-replica may
+  // still return after the DELETE lands — eventual-consistency safe.
+  const clearedAt = new Date().toISOString();
+  void ctx.globalState.update(CLEARED_AT_KEY, clearedAt);
   void ctx.globalState.update(STORAGE_KEY, []);
   // Optimistically set the pending-clear flag — if the cloud DELETE
   // succeeds below, we clear it. If it fails, the flag stays and the
@@ -238,5 +278,8 @@ export function isChatHistoryHydrated(): boolean {
 }
 
 export function disposeChatHistory(): void {
-  if (syncTimer) clearInterval(syncTimer);
+  if (syncTimer) {
+    clearInterval(syncTimer);
+    syncTimer = null;
+  }
 }

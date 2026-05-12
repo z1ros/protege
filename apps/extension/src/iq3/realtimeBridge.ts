@@ -1,7 +1,11 @@
 import * as vscode from "vscode";
 import type { Iq3Headline } from "@protege/types";
-import { BACKEND_URL, currentUserIdOrNull } from "../user/protegeClient.js";
-import { authHeaders } from "../user/auth.js";
+import {
+  authedFetch,
+  BACKEND_URL,
+  currentUserIdOrNull,
+  NotAuthenticatedError,
+} from "../user/protegeClient.js";
 import { log } from "../log.js";
 
 /**
@@ -12,10 +16,12 @@ import { log } from "../log.js";
  * Why host-side polling: a webview can't reach `BACKEND_URL` with the user's
  * GitHub bearer token directly — that token only lives in the extension's
  * authState cache. So the host fetches and fans the result out to every
- * mounted webview. Cheap enough at 30s that we don't bother with WebSockets
- * for Phase A.
+ * mounted webview. WebSockets are overkill for headline updates that move
+ * on the order of minutes; pull cadence is set to 5 min, which kills ~95%
+ * of branch-level egress cost vs. the original 30s cadence with no UX
+ * impact (the dashboard already replays last-known on mount).
  */
-const POLL_INTERVAL_MS = 30 * 1000;
+const POLL_INTERVAL_MS = 5 * 60 * 1000;
 
 interface BridgeHandle {
   dispose: () => void;
@@ -69,9 +75,11 @@ export function startIq3Bridge(_ctx: vscode.ExtensionContext): BridgeHandle {
       return null;
     }
     try {
-      const res = await fetch(
+      // authedFetch runs the silent 401 re-probe + auth-session refresh.
+      // Using raw fetch here meant a stale token wedged the dashboard in
+      // a permanent error state until manual /protege.refreshIQ.
+      const res = await authedFetch(
         `${BACKEND_URL}/iq/me?userId=${encodeURIComponent(userId)}`,
-        { headers: { ...authHeaders() } },
       );
       if (!res.ok) {
         // Map common auth/server failures to a status tag so the
@@ -94,8 +102,14 @@ export function startIq3Bridge(_ctx: vscode.ExtensionContext): BridgeHandle {
       setStatus("ok");
       return json.headline ?? null;
     } catch (err) {
+      // authedFetch throws NotAuthenticatedError synchronously when there's
+      // no cached GitHub user — treat as signed-out, not as a network blip.
+      if (err instanceof NotAuthenticatedError) {
+        setStatus("signed-out");
+        return null;
+      }
       // Network failure (fetch threw). Don't spam the same error every
-      // 30s — setStatus dedupes on transition. Still capture the message
+      // poll — setStatus dedupes on transition. Still capture the message
       // on the first occurrence for diagnosis.
       if (lastStatus !== "network") {
         log(

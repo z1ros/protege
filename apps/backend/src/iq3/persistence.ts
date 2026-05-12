@@ -1,7 +1,7 @@
 import type { Iq3UserState } from "@protege/types";
 import { createRequire } from "node:module";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { readFileSync, existsSync } from "node:fs";
+import { upsertJsonRecord } from "./jsonStore.js";
 
 /**
  * Iq3 user-state repo abstraction.
@@ -25,18 +25,15 @@ export function localJsonRepo(filePath: string): Iq3UserStateRepo {
     if (!existsSync(filePath)) return {};
     return JSON.parse(readFileSync(filePath, "utf-8"));
   }
-  function writeAll(map: Record<string, Iq3UserState>) {
-    mkdirSync(dirname(filePath), { recursive: true });
-    writeFileSync(filePath, JSON.stringify(map, null, 2));
-  }
   return {
     async load(userId) {
       return readAll()[userId] ?? null;
     },
     async save(state) {
-      const all = readAll();
-      all[state.userId] = state;
-      writeAll(all);
+      // Serialize through the shared json-store queue — without this,
+      // two concurrent saves both read pre-state, both write, and the
+      // second `writeFileSync` overwrites the first.
+      await upsertJsonRecord(filePath, state.userId, state);
     },
   };
 }

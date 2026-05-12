@@ -1223,8 +1223,12 @@ export type EchoEvent =
   | {
       /** Iq3 v2 producer-sprint event. Periodic 200-char keystroke
        *  burst marker — used by `text_change` idle-gap analysis as a
-       *  "user was typing" signal. */
-      type: "keystroke_batch";
+       *  "user was typing" signal.
+       *  Distinct tag from the legacy `keystroke_batch` (different shape:
+       *  watcher emits `{language, keystrokes, durationMs, charsTyped?}`;
+       *  iq3 personas emit `{file, chars}`). Same TS discriminant tag
+       *  would collide and break narrowing in `eventStream.ts` / `storeDiff.ts`. */
+      type: "keystroke_burst";
       ts: number;
       file: string;
       chars: number;

@@ -59,12 +59,14 @@ function resolveCloudBackend(): ChatBackend {
   return "haiku";
 }
 
-/** No hard cap on tool-call rounds by user request — Claude runs as
- *  long as it needs to. The only safety net is the Output channel log
- *  every HEARTBEAT_ROUNDS iterations so a genuine infinite loop is
- *  visible from `Protege: Show Logs` and the user can reload the
- *  window. Anthropic's own rate limits apply upstream. */
+/** Claude runs as long as it needs to for legitimate tasks. The
+ *  heartbeat log every HEARTBEAT_ROUNDS surfaces stuck loops via
+ *  `Protege: Show Logs`. RUNAWAY_LIMIT is a deliberately-high safety
+ *  cap (no legitimate request approaches it) that bounds a pathological
+ *  runaway — without it, a misbehaving tool-call chain can burn quota
+ *  + cost indefinitely. Anthropic's upstream rate limits also apply. */
 const HEARTBEAT_ROUNDS = 25;
+const RUNAWAY_LIMIT = 200;
 
 interface RunnerCallbacks {
   onTool?: (
@@ -141,6 +143,14 @@ export async function runChat(
     if (round > 0 && round % HEARTBEAT_ROUNDS === 0) {
       cb.log?.(
         `[protege] chat still running at round ${round} — reload window if stuck`
+      );
+    }
+    if (round >= RUNAWAY_LIMIT) {
+      cb.log?.(
+        `[protege] chat hit runaway cap at round ${RUNAWAY_LIMIT} — aborting to protect quota`
+      );
+      throw new Error(
+        `chat tool-call loop exceeded ${RUNAWAY_LIMIT} rounds`
       );
     }
     const body: ChatRunRequest = {

@@ -1,5 +1,11 @@
--- migration-006-iq3-tables.sql
+-- 007_iq3_tables.sql
 -- Code IQ v3 storage. All tables prefixed iq3_*. Additive on echo schema.
+-- Idempotent: safe to re-run.
+--
+-- Moved from Architecture/migration-006-iq3-tables.sql; renumbered to 007
+-- (006 is already chat_sessions). The old file was outside the migrations
+-- directory so the runner never executed it — leaving prod without iq3_*
+-- tables. Do not re-introduce a file at the old path.
 
 -- HMM state per user. One row per user.
 create table if not exists iq3_user_state (
@@ -67,8 +73,24 @@ create table if not exists iq3_cohort_stats (
   primary key (field, headline_bucket)
 );
 
--- Optional row-level security: enable later when auth lands.
--- alter table iq3_user_state     enable row level security;
--- alter table iq3_pillar_history enable row level security;
--- alter table iq3_self_ratings   enable row level security;
-≈
+-- RLS lockdown. Backend talks to Supabase via service_role, which
+-- bypasses RLS. Anon-key holders (the extension ships one) must NOT
+-- be able to read or write iq3 state — these tables contain a per-user
+-- behavioral fingerprint that is by-design private.
+alter table iq3_user_state     enable row level security;
+alter table iq3_pillar_history enable row level security;
+alter table iq3_self_ratings   enable row level security;
+alter table iq3_feedback       enable row level security;
+alter table iq3_cohort_stats   enable row level security;
+
+revoke all on iq3_user_state     from public, anon, authenticated;
+revoke all on iq3_pillar_history from public, anon, authenticated;
+revoke all on iq3_self_ratings   from public, anon, authenticated;
+revoke all on iq3_feedback       from public, anon, authenticated;
+revoke all on iq3_cohort_stats   from public, anon, authenticated;
+
+grant select, insert, update, delete on iq3_user_state     to service_role;
+grant select, insert, update, delete on iq3_pillar_history to service_role;
+grant select, insert, update, delete on iq3_self_ratings   to service_role;
+grant select, insert, update, delete on iq3_feedback       to service_role;
+grant select, insert, update, delete on iq3_cohort_stats   to service_role;

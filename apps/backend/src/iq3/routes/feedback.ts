@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { Iq3FeedbackSchema, FEEDBACK_TEXT_MAX } from "@protege/types";
 import { githubAuth } from "../../middleware/auth.js";
+import { appendJsonRecord } from "../jsonStore.js";
 
 /**
  * Mounted at /iq/feedback. Anonymous "found something weird?" feedback
@@ -58,12 +59,9 @@ app.post("/", async (c) => {
     });
     if (error) return c.json({ error: error.message }, 500);
   } else {
-    const { writeFileSync, readFileSync, existsSync } = await import("node:fs");
-    const arr = existsSync(STORE_PATH)
-      ? (JSON.parse(readFileSync(STORE_PATH, "utf-8")) as Array<unknown>)
-      : [];
-    arr.push(parsed.data);
-    writeFileSync(STORE_PATH, JSON.stringify(arr, null, 2));
+    // Append through the json-store queue so concurrent submissions
+    // don't lose rows or corrupt the file via interleaved writes.
+    await appendJsonRecord(STORE_PATH, parsed.data);
   }
 
   return c.json({ ok: true });

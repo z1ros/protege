@@ -684,6 +684,7 @@ const MATCHERS: Matcher[] = [
       if ((r as any).ts >= ts) continue;
       if (
         r.type === "keystroke_batch" ||
+        r.type === "keystroke_burst" ||
         r.type === "text_change" ||
         r.type === "editor_navigation"
       ) {
@@ -762,14 +763,37 @@ const AI_RELATED = new Set<string>([
   "ai_accept_outcome_observed",
 ]);
 
+/** Cap on the number of distinct users we keep an in-memory IngestContext
+ *  for. With unbounded growth this Map projected ~800MB at 1k DAU and
+ *  OOM'd over time. LRU eviction keeps the most-recently-active users
+ *  hot and lets cold users rehydrate from scratch on their next event
+ *  — losing only the rolling event window, not the persisted HMM state. */
+const USER_CONTEXT_CAP = 10_000;
+
 const userContexts = new Map<string, IngestContext>();
 function getCtx(userId: string): IngestContext {
   let c = userContexts.get(userId);
-  if (!c) {
-    c = { recent: [] };
+  if (c) {
+    // Refresh recency: re-insert at the end so this user is most-recent.
+    userContexts.delete(userId);
     userContexts.set(userId, c);
+    return c;
+  }
+  c = { recent: [] };
+  userContexts.set(userId, c);
+  // Evict oldest entries when the Map exceeds cap. Map iteration is
+  // insertion-order, so the first key is the least-recently-touched.
+  while (userContexts.size > USER_CONTEXT_CAP) {
+    const oldest = userContexts.keys().next().value;
+    if (oldest === undefined) break;
+    userContexts.delete(oldest);
   }
   return c;
+}
+
+/** @internal Exposed for tests to assert eviction behavior. */
+export function _userContextCount(): number {
+  return userContexts.size;
 }
 
 /**
@@ -792,7 +816,20 @@ export function applyEventsToState(
     ctx.recent.push(e);
     if (ctx.recent.length > 4000) ctx.recent.splice(0, ctx.recent.length - 4000);
     const allKeys: string[] = [];
-    for (const m of MATCHERS) allKeys.push(...m(e, ctx));
+    // Isolate matcher failures: a single buggy matcher used to throw
+    // out of the loop, leaving the just-pushed event in `ctx.recent`
+    // permanently. Every subsequent ingest then re-tripped the same
+    // matcher on the leftover event — "poisoned buffer." Catch per
+    // matcher so one bad apple cannot stall the rest of the pipeline.
+    for (const m of MATCHERS) {
+      try {
+        allKeys.push(...m(e, ctx));
+      } catch (err) {
+        console.warn(
+          `[iq3] matcher threw on event type=${e.type}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
     // Always pipe through `applyMatchKeys` so `eventCount` (and
     // `aiEventCount` for AI-tagged events) increments on every event,
     // even ones that don't fire any trait matcher. Previously the

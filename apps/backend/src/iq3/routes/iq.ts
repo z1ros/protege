@@ -7,8 +7,7 @@ import { MATCHKEY_TO_TRAITS } from "../likelihoods.js";
 import { applySelfDeclaration } from "../fieldVector.js";
 import { FALLBACK_DISTRIBUTION } from "../cohort.js";
 import { githubAuth, resolveUserId } from "../../middleware/auth.js";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { loadTaxonomy, loadFieldTags } from "../taxonomyService.js";
 import { getIq3UserStateRepo, setIq3UserStateRepo } from "../repo.js";
 
 export { setIq3UserStateRepo };
@@ -22,17 +21,11 @@ const app = new Hono();
 // Hono `app.use("*")` only applies to routes registered AFTER the use()
 // call, so order matters here.
 app.get("/taxonomy", async (c) => {
-  const taxonomyPath = resolve(
-    process.cwd(),
-    "../extension/webview/skills-taxonomy.json",
-  );
-  const tagsPath = resolve(
-    process.cwd(),
-    "../extension/webview/skills-taxonomy.field-tags.json",
-  );
-  const taxonomy = JSON.parse(readFileSync(taxonomyPath, "utf-8"));
-  const tags = JSON.parse(readFileSync(tagsPath, "utf-8"));
-  return c.json({ taxonomy, tags });
+  // Both reads are cached for the process lifetime by taxonomyService —
+  // first hit pays the readFileSync + parse, subsequent hits return the
+  // cached objects. Previous version did sync I/O + JSON.parse on every
+  // request, which made the unauth route a trivial DoS vector.
+  return c.json({ taxonomy: loadTaxonomy(), tags: loadFieldTags() });
 });
 
 // Everything below this line requires a verified GitHub Bearer. The

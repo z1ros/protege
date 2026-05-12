@@ -31,6 +31,12 @@ const FLAT_HISTORY_KEY = "protege.chatHistory";
 
 let ctx: vscode.ExtensionContext | null = null;
 
+/** Serialize globalState read-modify-write on STORAGE_KEY. Without this,
+ *  rapid noteMessageAppended calls (user msg + assistant msg in one
+ *  chat turn) can both read the same pre-state, both mutate, both queue
+ *  an update — last write wins and one mutation is lost. */
+let sessionsWriteQueue: Promise<void> = Promise.resolve();
+
 export function initChatSessions(context: vscode.ExtensionContext): void {
   ctx = context;
   void (async () => {
@@ -58,7 +64,17 @@ export function setCurrentSessionId(id: string | null): void {
 
 function writeSessionsCache(sessions: ChatSession[]): void {
   if (!ctx) return;
-  void ctx.globalState.update(STORAGE_KEY, sessions);
+  sessionsWriteQueue = sessionsWriteQueue
+    .then(async () => {
+      if (!ctx) return;
+      await ctx.globalState.update(STORAGE_KEY, sessions);
+    })
+    .catch((err) => {
+      log(
+        "chatSessions",
+        `writeSessionsCache failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
 }
 
 /* ---------- Cloud sync ---------- */
@@ -155,32 +171,47 @@ export async function deleteSession(id: string): Promise<void> {
  *  card title evolves from the placeholder "New chat" to the first
  *  user message without an extra round trip. */
 export function noteMessageAppended(message: ChatMessage): void {
-  const sessions = getCachedSessions();
-  const idx = sessions.findIndex((s) => s.id === message.sessionId);
-  if (idx === -1) return;
-  const s = sessions[idx];
-  const updated: ChatSession = {
-    ...s,
-    lastMessageAt: message.createdAt,
-    updatedAt: message.createdAt,
-    messageCount: s.messageCount + 1,
-    // If this is the first user message in a freshly-minted session and
-    // the title is still the default, retitle from the message body.
-    title:
-      s.title === "New chat" && message.role === "user"
-        ? deriveSessionTitle(message.content)
-        : s.title,
-  };
-  const reordered = [updated, ...sessions.filter((_, i) => i !== idx)];
-  writeSessionsCache(reordered);
-  // If we retitled, push the rename to cloud too so other devices
-  // pick up the right name on next hydrate.
-  if (updated.title !== s.title) {
-    void authedFetch(
-      `${BACKEND_URL}/chat-sessions/${encodeURIComponent(s.id)}`,
-      { method: "PATCH", body: JSON.stringify({ title: updated.title }) },
-    ).catch(() => {});
-  }
+  // Serialize the entire read-modify-write — reading getCachedSessions
+  // outside the queue would let two rapid appends both observe the same
+  // pre-state and drop one mutation. The read happens *inside* the
+  // queued task, after the previous task has flushed its update.
+  sessionsWriteQueue = sessionsWriteQueue
+    .then(async () => {
+      if (!ctx) return;
+      const sessions = getCachedSessions();
+      const idx = sessions.findIndex((s) => s.id === message.sessionId);
+      if (idx === -1) return;
+      const s = sessions[idx];
+      const updated: ChatSession = {
+        ...s,
+        lastMessageAt: message.createdAt,
+        updatedAt: message.createdAt,
+        messageCount: s.messageCount + 1,
+        // If this is the first user message in a freshly-minted session and
+        // the title is still the default, retitle from the message body.
+        title:
+          s.title === "New chat" && message.role === "user"
+            ? deriveSessionTitle(message.content)
+            : s.title,
+      };
+      const reordered = [updated, ...sessions.filter((_, i) => i !== idx)];
+      await ctx.globalState.update(STORAGE_KEY, reordered);
+      // If we retitled, push the rename to cloud too so other devices
+      // pick up the right name on next hydrate. Fire-and-forget — does
+      // not gate the queue.
+      if (updated.title !== s.title) {
+        void authedFetch(
+          `${BACKEND_URL}/chat-sessions/${encodeURIComponent(s.id)}`,
+          { method: "PATCH", body: JSON.stringify({ title: updated.title }) },
+        ).catch(() => {});
+      }
+    })
+    .catch((err) => {
+      log(
+        "chatSessions",
+        `noteMessageAppended failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
 }
 
 /* ---------- One-time local migration ---------- */

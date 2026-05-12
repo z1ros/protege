@@ -85,7 +85,7 @@ function bootcampGradEvents(): EchoEvent[] {
   ev.push({ type: "file_focus_change", ts: next(60_000), file: "src/hooks/useFetchUser.ts", language: "typescript" });
   ev.push({ type: "read_pattern_observed", ts: next(4_000), pattern: "jump-in", msToFirstEdit: 4_000, navCount: 0 });
   ev.push({ type: "text_change", ts: next(1_000), file: "src/hooks/useFetchUser.ts", charsAdded: 30, charsRemoved: 5 });
-  ev.push({ type: "keystroke_batch", ts: next(2_000), file: "src/hooks/useFetchUser.ts", chars: 60 });
+  ev.push({ type: "keystroke_burst", ts: next(2_000), file: "src/hooks/useFetchUser.ts", chars: 60 });
 
   // useEffect ran twice — confusion → AI
   ev.push({ type: "chat_turn", ts: next(90_000), intent: "vague", charCount: 1600, containsStackTraceOrLineRef: false, containsConstraintWords: false, containsQuestionMark: true, acceptedAi: true });
@@ -181,7 +181,7 @@ function earnestJuniorEvents(): EchoEvent[] {
 
   // Edits with idle gap (thinking)
   ev.push({ type: "text_change", ts: next(45_000), file: "src/server/services/orderService.ts", charsAdded: 80, charsRemoved: 12 });
-  ev.push({ type: "keystroke_batch", ts: next(8_000), file: "src/server/services/orderService.ts", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(8_000), file: "src/server/services/orderService.ts", chars: 200 });
   ev.push({ type: "text_change", ts: next(20_000), file: "src/server/services/orderService.ts", charsAdded: 40, charsRemoved: 5 });
   ev.push({ type: "file_saved", ts: next(3_000), path: "src/server/services/orderService.ts", errorCount: 1 });
 
@@ -195,7 +195,7 @@ function earnestJuniorEvents(): EchoEvent[] {
   // Tests on save
   ev.push({ type: "file_focus_change", ts: next(20_000), file: "src/server/services/orderService.test.ts", language: "typescript" });
   ev.push({ type: "text_change", ts: next(60_000), file: "src/server/services/orderService.test.ts", charsAdded: 240, charsRemoved: 30 });
-  ev.push({ type: "keystroke_batch", ts: next(5_000), file: "src/server/services/orderService.test.ts", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(5_000), file: "src/server/services/orderService.test.ts", chars: 200 });
   ev.push({ type: "text_change", ts: next(40_000), file: "src/server/services/orderService.test.ts", charsAdded: 160, charsRemoved: 8 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "src/server/services/orderService.test.ts", errorCount: 0 });
   ev.push({ type: "test_run_result", ts: next(800), file: "src/server/services/orderService.test.ts", tests: 6, passed: 6, durationMs: 850, trigger: "save" });
@@ -217,12 +217,12 @@ function earnestJuniorEvents(): EchoEvent[] {
   ev.push({ type: "ai_accept_outcome_observed", ts: next(30_000), outcome: "iterated", editFraction: 0.42 });
 
   ev.push({ type: "text_change", ts: next(40_000), file: "src/web/pages/checkout.tsx", charsAdded: 100, charsRemoved: 30 });
-  ev.push({ type: "keystroke_batch", ts: next(4_000), file: "src/web/pages/checkout.tsx", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(4_000), file: "src/web/pages/checkout.tsx", chars: 200 });
   ev.push({ type: "file_saved", ts: next(3_000), path: "src/web/pages/checkout.tsx", errorCount: 0 });
 
   ev.push({ type: "file_focus_change", ts: next(30_000), file: "src/web/pages/__tests__/checkout.test.tsx", language: "typescriptreact" });
   ev.push({ type: "text_change", ts: next(120_000), file: "src/web/pages/__tests__/checkout.test.tsx", charsAdded: 380, charsRemoved: 0 });
-  ev.push({ type: "keystroke_batch", ts: next(5_000), file: "src/web/pages/__tests__/checkout.test.tsx", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(5_000), file: "src/web/pages/__tests__/checkout.test.tsx", chars: 200 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "src/web/pages/__tests__/checkout.test.tsx", errorCount: 0 });
   ev.push({ type: "test_run_result", ts: next(700), file: "src/web/pages/__tests__/checkout.test.tsx", tests: 4, passed: 4, durationMs: 600, trigger: "save" });
 
@@ -269,7 +269,7 @@ function earnestJuniorEvents(): EchoEvent[] {
     ev.push({ type: "ai_accept_outcome_observed", ts: next(30_000), outcome: "iterated", editFraction: 0.40 });
 
     ev.push({ type: "text_change", ts: next(45_000), file: featFile, charsAdded: 100, charsRemoved: 18 });
-    ev.push({ type: "keystroke_batch", ts: next(4_000), file: featFile, chars: 200 });
+    ev.push({ type: "keystroke_burst", ts: next(4_000), file: featFile, chars: 200 });
     ev.push({ type: "file_saved", ts: next(2_000), path: featFile, errorCount: day === 1 ? 1 : 0 });
 
     if (day === 1) {
@@ -398,7 +398,7 @@ function pragmaticMidEvents(): EchoEvent[] {
   // Failing test first
   ev.push({ type: "file_focus_change", ts: next(20_000), file: "src/payments/__tests__/charge.test.ts", language: "typescript" });
   ev.push({ type: "text_change", ts: next(60_000), file: "src/payments/__tests__/charge.test.ts", charsAdded: 280, charsRemoved: 4 });
-  ev.push({ type: "keystroke_batch", ts: next(5_000), file: "src/payments/__tests__/charge.test.ts", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(5_000), file: "src/payments/__tests__/charge.test.ts", chars: 200 });
   ev.push({ type: "text_change", ts: next(30_000), file: "src/payments/__tests__/charge.test.ts", charsAdded: 120, charsRemoved: 6 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "src/payments/__tests__/charge.test.ts", errorCount: 0 });
   ev.push({ type: "test_run_result", ts: next(700), file: "src/payments/__tests__/charge.test.ts", tests: 5, passed: 4, durationMs: 1100, trigger: "save" });
@@ -406,7 +406,7 @@ function pragmaticMidEvents(): EchoEvent[] {
   // Implement with idle-gap thinking
   ev.push({ type: "file_focus_change", ts: next(10_000), file: "src/payments/charge.ts", language: "typescript" });
   ev.push({ type: "text_change", ts: next(40_000), file: "src/payments/charge.ts", charsAdded: 60, charsRemoved: 8 });
-  ev.push({ type: "keystroke_batch", ts: next(4_000), file: "src/payments/charge.ts", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(4_000), file: "src/payments/charge.ts", chars: 200 });
   ev.push({ type: "text_change", ts: next(35_000), file: "src/payments/charge.ts", charsAdded: 90, charsRemoved: 30 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "src/payments/charge.ts", errorCount: 1 });
 
@@ -422,7 +422,7 @@ function pragmaticMidEvents(): EchoEvent[] {
 
   // More tests — edge cases
   ev.push({ type: "text_change", ts: next(45_000), file: "src/payments/__tests__/charge.test.ts", charsAdded: 200, charsRemoved: 10 });
-  ev.push({ type: "keystroke_batch", ts: next(4_000), file: "src/payments/__tests__/charge.test.ts", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(4_000), file: "src/payments/__tests__/charge.test.ts", chars: 200 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "src/payments/__tests__/charge.test.ts", errorCount: 0 });
   ev.push({ type: "test_run_result", ts: next(900), file: "src/payments/__tests__/charge.test.ts", tests: 9, passed: 9, durationMs: 1280, trigger: "save" });
   ev.push({ type: "test_run_result", ts: next(120_000), file: "src/payments/__tests__/charge.test.ts", tests: 9, passed: 9, durationMs: 1300, trigger: "manual" });
@@ -467,7 +467,7 @@ function pragmaticMidEvents(): EchoEvent[] {
   ev.push({ type: "editor_navigation", ts: next(5_000), kind: "find-refs", fromFile: "src/payments/refund.ts", toFile: "src/payments/refund.ts", msSinceEdit: 0 });
   ev.push({ type: "read_pattern_observed", ts: next(8_000), pattern: "skim", msToFirstEdit: 18_000, navCount: 1 });
   ev.push({ type: "text_change", ts: next(30_000), file: "src/payments/refund.ts", charsAdded: 18, charsRemoved: 22 });
-  ev.push({ type: "keystroke_batch", ts: next(3_000), file: "src/payments/refund.ts", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(3_000), file: "src/payments/refund.ts", chars: 200 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "src/payments/refund.ts", errorCount: 0 });
   ev.push({ type: "test_run_result", ts: next(900), file: "src/payments/__tests__/refund.test.ts", tests: 5, passed: 5, durationMs: 1280, trigger: "save" });
   ev.push({ type: "commit_detected", ts: next(60_000), sha: "pm4", message: "refactor(refund): extract clampRefundAmount to keep handler thin", filesTouched: ["src/payments/refund.ts", "src/payments/__tests__/refund.test.ts"] });
@@ -491,12 +491,12 @@ function pragmaticMidEvents(): EchoEvent[] {
     ev.push({ type: "ai_accept_outcome_observed", ts: next(30_000), outcome: "iterated", editFraction: 0.50 });
 
     ev.push({ type: "text_change", ts: next(60_000), file: testFile, charsAdded: 240, charsRemoved: 0 });
-    ev.push({ type: "keystroke_batch", ts: next(4_000), file: testFile, chars: 200 });
+    ev.push({ type: "keystroke_burst", ts: next(4_000), file: testFile, chars: 200 });
     ev.push({ type: "file_saved", ts: next(2_000), path: testFile, errorCount: 0 });
     ev.push({ type: "test_run_result", ts: next(700), file: testFile, tests: 5, passed: 3, durationMs: 1_100, trigger: "save" });
 
     ev.push({ type: "text_change", ts: next(45_000), file: featFile, charsAdded: 80, charsRemoved: 18 });
-    ev.push({ type: "keystroke_batch", ts: next(4_000), file: featFile, chars: 200 });
+    ev.push({ type: "keystroke_burst", ts: next(4_000), file: featFile, chars: 200 });
     ev.push({ type: "file_saved", ts: next(2_000), path: featFile, errorCount: 1 });
 
     ev.push({ type: "diagnostic_appeared", ts: next(500), file: featFile, line: 50 + day, severity: "error", message: "Possibly undefined." });
@@ -545,21 +545,21 @@ function mlResearcherEvents(): EchoEvent[] {
   // Notebook repro
   ev.push({ type: "file_focus_change", ts: next(60_000), file: "notebooks/attention_shape_repro.ipynb", language: "jupyter" });
   ev.push({ type: "text_change", ts: next(120_000), file: "notebooks/attention_shape_repro.ipynb", charsAdded: 480, charsRemoved: 0 });
-  ev.push({ type: "keystroke_batch", ts: next(8_000), file: "notebooks/attention_shape_repro.ipynb", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(8_000), file: "notebooks/attention_shape_repro.ipynb", chars: 200 });
   ev.push({ type: "text_change", ts: next(180_000), file: "notebooks/attention_shape_repro.ipynb", charsAdded: 320, charsRemoved: 60 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "notebooks/attention_shape_repro.ipynb", errorCount: 0 });
 
   // Implement fix
   ev.push({ type: "file_focus_change", ts: next(60_000), file: "src/models/attention.py", language: "python" });
   ev.push({ type: "text_change", ts: next(80_000), file: "src/models/attention.py", charsAdded: 60, charsRemoved: 40 });
-  ev.push({ type: "keystroke_batch", ts: next(4_000), file: "src/models/attention.py", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(4_000), file: "src/models/attention.py", chars: 200 });
   ev.push({ type: "text_change", ts: next(60_000), file: "src/models/attention.py", charsAdded: 30, charsRemoved: 12 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "src/models/attention.py", errorCount: 0 });
 
   // Property test for numerical code
   ev.push({ type: "file_focus_change", ts: next(40_000), file: "tests/test_attention_properties.py", language: "python" });
   ev.push({ type: "text_change", ts: next(180_000), file: "tests/test_attention_properties.py", charsAdded: 620, charsRemoved: 0 });
-  ev.push({ type: "keystroke_batch", ts: next(6_000), file: "tests/test_attention_properties.py", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(6_000), file: "tests/test_attention_properties.py", chars: 200 });
   ev.push({ type: "text_change", ts: next(120_000), file: "tests/test_attention_properties.py", charsAdded: 180, charsRemoved: 20 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "tests/test_attention_properties.py", errorCount: 0 });
   ev.push({ type: "test_run_result", ts: next(2_500), file: "tests/test_attention_properties.py", tests: 8, passed: 8, durationMs: 4_200, trigger: "manual" });
@@ -580,7 +580,7 @@ function mlResearcherEvents(): EchoEvent[] {
 
   ev.push({ type: "diagnostic_appeared", ts: next(60_000), file: "src/training/trainer.py", line: 142, severity: "warning", message: "Tensor shape mismatch may occur with batch_size=1." });
   ev.push({ type: "text_change", ts: next(120_000), file: "src/training/trainer.py", charsAdded: 80, charsRemoved: 30 });
-  ev.push({ type: "keystroke_batch", ts: next(4_000), file: "src/training/trainer.py", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(4_000), file: "src/training/trainer.py", chars: 200 });
   ev.push({ type: "text_change", ts: next(80_000), file: "src/training/trainer.py", charsAdded: 30, charsRemoved: 12 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "src/training/trainer.py", errorCount: 0 });
   ev.push({ type: "diagnostic_resolved", ts: next(100), file: "src/training/trainer.py", line: 142, durationMs: 200_000 });
@@ -629,14 +629,14 @@ function mlResearcherEvents(): EchoEvent[] {
     // Notebook repro
     ev.push({ type: "file_focus_change", ts: next(60_000), file: notebook, language: "jupyter" });
     ev.push({ type: "text_change", ts: next(120_000), file: notebook, charsAdded: 380, charsRemoved: 0 });
-    ev.push({ type: "keystroke_batch", ts: next(5_000), file: notebook, chars: 200 });
+    ev.push({ type: "keystroke_burst", ts: next(5_000), file: notebook, chars: 200 });
     ev.push({ type: "text_change", ts: next(80_000), file: notebook, charsAdded: 220, charsRemoved: 30 });
     ev.push({ type: "file_saved", ts: next(2_000), path: notebook, errorCount: 0 });
 
     // Implement
     ev.push({ type: "file_focus_change", ts: next(60_000), file: expFile, language: "python" });
     ev.push({ type: "text_change", ts: next(80_000), file: expFile, charsAdded: 120, charsRemoved: 30 });
-    ev.push({ type: "keystroke_batch", ts: next(4_000), file: expFile, chars: 200 });
+    ev.push({ type: "keystroke_burst", ts: next(4_000), file: expFile, chars: 200 });
     ev.push({ type: "text_change", ts: next(60_000), file: expFile, charsAdded: 80, charsRemoved: 22 });
     ev.push({ type: "file_saved", ts: next(2_000), path: expFile, errorCount: 0 });
 
@@ -650,7 +650,7 @@ function mlResearcherEvents(): EchoEvent[] {
     // Property test
     ev.push({ type: "file_focus_change", ts: next(40_000), file: propTest, language: "python" });
     ev.push({ type: "text_change", ts: next(120_000), file: propTest, charsAdded: 380, charsRemoved: 0 });
-    ev.push({ type: "keystroke_batch", ts: next(5_000), file: propTest, chars: 200 });
+    ev.push({ type: "keystroke_burst", ts: next(5_000), file: propTest, chars: 200 });
     ev.push({ type: "file_saved", ts: next(2_000), path: propTest, errorCount: 0 });
     ev.push({ type: "test_run_result", ts: next(3_500), file: propTest, tests: 6 + day, passed: 6 + day, durationMs: 4_400, trigger: "manual" });
 
@@ -688,13 +688,13 @@ function mobileMidEvents(): EchoEvent[] {
   ev.push({ type: "ai_suggestion_accepted", ts: next(2_000), file: "App/Storage/CoreDataStack.swift", chars: 480, charsAccepted: 480 });
   ev.push({ type: "ai_accept_outcome_observed", ts: next(30_000), outcome: "iterated", editFraction: 0.30 });
   ev.push({ type: "text_change", ts: next(60_000), file: "App/Storage/CoreDataStack.swift", charsAdded: 50, charsRemoved: 20 });
-  ev.push({ type: "keystroke_batch", ts: next(4_000), file: "App/Storage/CoreDataStack.swift", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(4_000), file: "App/Storage/CoreDataStack.swift", chars: 200 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "App/Storage/CoreDataStack.swift", errorCount: 0 });
 
   // ViewModel work
   ev.push({ type: "file_focus_change", ts: next(45_000), file: "App/Features/Profile/ProfileViewModel.swift", language: "swift" });
   ev.push({ type: "text_change", ts: next(60_000), file: "App/Features/Profile/ProfileViewModel.swift", charsAdded: 180, charsRemoved: 30 });
-  ev.push({ type: "keystroke_batch", ts: next(5_000), file: "App/Features/Profile/ProfileViewModel.swift", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(5_000), file: "App/Features/Profile/ProfileViewModel.swift", chars: 200 });
   ev.push({ type: "text_change", ts: next(40_000), file: "App/Features/Profile/ProfileViewModel.swift", charsAdded: 90, charsRemoved: 12 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "App/Features/Profile/ProfileViewModel.swift", errorCount: 0 });
 
@@ -708,7 +708,7 @@ function mobileMidEvents(): EchoEvent[] {
   // VM unit tests
   ev.push({ type: "file_focus_change", ts: next(30_000), file: "AppTests/ProfileViewModelTests.swift", language: "swift" });
   ev.push({ type: "text_change", ts: next(120_000), file: "AppTests/ProfileViewModelTests.swift", charsAdded: 360, charsRemoved: 6 });
-  ev.push({ type: "keystroke_batch", ts: next(5_000), file: "AppTests/ProfileViewModelTests.swift", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(5_000), file: "AppTests/ProfileViewModelTests.swift", chars: 200 });
   ev.push({ type: "text_change", ts: next(60_000), file: "AppTests/ProfileViewModelTests.swift", charsAdded: 120, charsRemoved: 8 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "AppTests/ProfileViewModelTests.swift", errorCount: 0 });
   ev.push({ type: "test_run_result", ts: next(900), file: "AppTests/ProfileViewModelTests.swift", tests: 7, passed: 7, durationMs: 1_400, trigger: "save" });
@@ -740,7 +740,7 @@ function mobileMidEvents(): EchoEvent[] {
 
   ev.push({ type: "diagnostic_appeared", ts: next(60_000), file: "App/Features/Feed/FeedRow.swift", line: 32, severity: "info", message: "Frequent re-render on parent state change." });
   ev.push({ type: "text_change", ts: next(80_000), file: "App/Features/Feed/FeedRow.swift", charsAdded: 40, charsRemoved: 18 });
-  ev.push({ type: "keystroke_batch", ts: next(4_000), file: "App/Features/Feed/FeedRow.swift", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(4_000), file: "App/Features/Feed/FeedRow.swift", chars: 200 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "App/Features/Feed/FeedRow.swift", errorCount: 0 });
   ev.push({ type: "diagnostic_resolved", ts: next(100), file: "App/Features/Feed/FeedRow.swift", line: 32, durationMs: 84_000 });
   ev.push({ type: "test_run_result", ts: next(2_500), file: "AppTests/FeedRowSnapshotTests.swift", tests: 3, passed: 3, durationMs: 2_200, trigger: "manual" });
@@ -769,7 +769,7 @@ function mobileMidEvents(): EchoEvent[] {
     }
 
     ev.push({ type: "text_change", ts: next(60_000), file: vmFile, charsAdded: 180, charsRemoved: 30 });
-    ev.push({ type: "keystroke_batch", ts: next(4_000), file: vmFile, chars: 200 });
+    ev.push({ type: "keystroke_burst", ts: next(4_000), file: vmFile, chars: 200 });
     ev.push({ type: "text_change", ts: next(40_000), file: vmFile, charsAdded: 80, charsRemoved: 12 });
     ev.push({ type: "file_saved", ts: next(2_000), path: vmFile, errorCount: day === 0 ? 1 : 0 });
 
@@ -834,7 +834,7 @@ function seniorBackendEvents(): EchoEvent[] {
   // Failing contract test first
   ev.push({ type: "file_focus_change", ts: next(20_000), file: "src/payments/ledger/__tests__/ledger.contract.test.ts", language: "typescript" });
   ev.push({ type: "text_change", ts: next(120_000), file: "src/payments/ledger/__tests__/ledger.contract.test.ts", charsAdded: 460, charsRemoved: 12 });
-  ev.push({ type: "keystroke_batch", ts: next(5_000), file: "src/payments/ledger/__tests__/ledger.contract.test.ts", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(5_000), file: "src/payments/ledger/__tests__/ledger.contract.test.ts", chars: 200 });
   ev.push({ type: "text_change", ts: next(60_000), file: "src/payments/ledger/__tests__/ledger.contract.test.ts", charsAdded: 220, charsRemoved: 30 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "src/payments/ledger/__tests__/ledger.contract.test.ts", errorCount: 0 });
   ev.push({ type: "test_run_result", ts: next(800), file: "src/payments/ledger/__tests__/ledger.contract.test.ts", tests: 11, passed: 9, durationMs: 1_400, trigger: "save" });
@@ -842,7 +842,7 @@ function seniorBackendEvents(): EchoEvent[] {
   // Implement
   ev.push({ type: "file_focus_change", ts: next(15_000), file: "src/payments/ledger/index.ts", language: "typescript" });
   ev.push({ type: "text_change", ts: next(60_000), file: "src/payments/ledger/index.ts", charsAdded: 80, charsRemoved: 12 });
-  ev.push({ type: "keystroke_batch", ts: next(4_000), file: "src/payments/ledger/index.ts", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(4_000), file: "src/payments/ledger/index.ts", chars: 200 });
   ev.push({ type: "text_change", ts: next(50_000), file: "src/payments/ledger/index.ts", charsAdded: 50, charsRemoved: 18 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "src/payments/ledger/index.ts", errorCount: 1 });
 
@@ -858,7 +858,7 @@ function seniorBackendEvents(): EchoEvent[] {
   // Property test
   ev.push({ type: "file_focus_change", ts: next(30_000), file: "src/payments/ledger/__tests__/ledger.property.test.ts", language: "typescript" });
   ev.push({ type: "text_change", ts: next(120_000), file: "src/payments/ledger/__tests__/ledger.property.test.ts", charsAdded: 320, charsRemoved: 0 });
-  ev.push({ type: "keystroke_batch", ts: next(5_000), file: "src/payments/ledger/__tests__/ledger.property.test.ts", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(5_000), file: "src/payments/ledger/__tests__/ledger.property.test.ts", chars: 200 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "src/payments/ledger/__tests__/ledger.property.test.ts", errorCount: 0 });
   ev.push({ type: "test_run_result", ts: next(2_000), file: "src/payments/ledger/__tests__/ledger.property.test.ts", tests: 6, passed: 6, durationMs: 3_200, trigger: "manual" });
 
@@ -888,7 +888,7 @@ function seniorBackendEvents(): EchoEvent[] {
 
   ev.push({ type: "diagnostic_appeared", ts: next(60_000), file: "src/payments/webhook/handler.ts", line: 88, severity: "warning", message: "Replay window is wider than provider clock skew tolerance." });
   ev.push({ type: "text_change", ts: next(60_000), file: "src/payments/webhook/handler.ts", charsAdded: 80, charsRemoved: 30 });
-  ev.push({ type: "keystroke_batch", ts: next(4_000), file: "src/payments/webhook/handler.ts", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(4_000), file: "src/payments/webhook/handler.ts", chars: 200 });
   ev.push({ type: "text_change", ts: next(60_000), file: "src/payments/webhook/handler.ts", charsAdded: 22, charsRemoved: 14 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "src/payments/webhook/handler.ts", errorCount: 0 });
   ev.push({ type: "diagnostic_resolved", ts: next(100), file: "src/payments/webhook/handler.ts", line: 88, durationMs: 130_000 });
@@ -905,7 +905,7 @@ function seniorBackendEvents(): EchoEvent[] {
   ev.push({ type: "file_focus_change", ts: next(2_000), file: "src/payments/ledger/index.ts", language: "typescript" });
   ev.push({ type: "read_pattern_observed", ts: next(8_000), pattern: "skim", msToFirstEdit: 18_000, navCount: 1 });
   ev.push({ type: "text_change", ts: next(60_000), file: "src/payments/ledger/index.ts", charsAdded: 30, charsRemoved: 60 });
-  ev.push({ type: "keystroke_batch", ts: next(3_000), file: "src/payments/ledger/index.ts", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(3_000), file: "src/payments/ledger/index.ts", chars: 200 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "src/payments/ledger/index.ts", errorCount: 0 });
   ev.push({ type: "test_run_result", ts: next(900), file: "src/payments/ledger/__tests__/ledger.contract.test.ts", tests: 11, passed: 11, durationMs: 1_300, trigger: "save" });
   ev.push({ type: "commit_detected", ts: next(60_000), sha: "sb3", message: "refactor(ledger): hoist isolation-level into LedgerOptions — lets fee-svc share contract test suite without duplicating the SQL block", filesTouched: ["src/payments/ledger/index.ts", "src/payments/ledger/types.ts"] });
@@ -938,13 +938,13 @@ function seniorBackendEvents(): EchoEvent[] {
 
     // failing test first
     ev.push({ type: "text_change", ts: next(60_000), file: testFile, charsAdded: 280, charsRemoved: 0 });
-    ev.push({ type: "keystroke_batch", ts: next(4_000), file: testFile, chars: 200 });
+    ev.push({ type: "keystroke_burst", ts: next(4_000), file: testFile, chars: 200 });
     ev.push({ type: "file_saved", ts: next(2_000), path: testFile, errorCount: 0 });
     ev.push({ type: "test_run_result", ts: next(800), file: testFile, tests: 6, passed: 4, durationMs: 1_200, trigger: "save" });
 
     // implement
     ev.push({ type: "text_change", ts: next(45_000), file: featFile, charsAdded: 60, charsRemoved: 12 });
-    ev.push({ type: "keystroke_batch", ts: next(4_000), file: featFile, chars: 200 });
+    ev.push({ type: "keystroke_burst", ts: next(4_000), file: featFile, chars: 200 });
     ev.push({ type: "file_saved", ts: next(2_000), path: featFile, errorCount: 1 });
 
     ev.push({ type: "diagnostic_appeared", ts: next(500), file: featFile, line: 60 + day, severity: "error", message: "Type narrowing fails on retry path." });
@@ -990,7 +990,7 @@ function securitySeniorEvents(): EchoEvent[] {
   // Notes a hypothesis — proof of exploit test
   ev.push({ type: "file_focus_change", ts: next(60_000), file: "src/auth/__tests__/sessionToken.fuzz.test.ts", language: "typescript" });
   ev.push({ type: "text_change", ts: next(180_000), file: "src/auth/__tests__/sessionToken.fuzz.test.ts", charsAdded: 580, charsRemoved: 0 });
-  ev.push({ type: "keystroke_batch", ts: next(5_000), file: "src/auth/__tests__/sessionToken.fuzz.test.ts", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(5_000), file: "src/auth/__tests__/sessionToken.fuzz.test.ts", chars: 200 });
   ev.push({ type: "text_change", ts: next(120_000), file: "src/auth/__tests__/sessionToken.fuzz.test.ts", charsAdded: 240, charsRemoved: 30 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "src/auth/__tests__/sessionToken.fuzz.test.ts", errorCount: 0 });
   ev.push({ type: "test_run_result", ts: next(3_500), file: "src/auth/__tests__/sessionToken.fuzz.test.ts", tests: 12, passed: 11, durationMs: 5_400, trigger: "manual" });
@@ -999,7 +999,7 @@ function securitySeniorEvents(): EchoEvent[] {
   ev.push({ type: "diagnostic_appeared", ts: next(500), file: "src/auth/sessionToken.ts", line: 64, severity: "error", message: "Timing leak: token compare is non-constant-time." });
   ev.push({ type: "editor_navigation", ts: next(20_000), kind: "def-jump", fromFile: "src/auth/sessionToken.ts", toFile: "src/auth/crypto.ts", msSinceEdit: 5_000 });
   ev.push({ type: "text_change", ts: next(60_000), file: "src/auth/sessionToken.ts", charsAdded: 30, charsRemoved: 22 });
-  ev.push({ type: "keystroke_batch", ts: next(3_000), file: "src/auth/sessionToken.ts", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(3_000), file: "src/auth/sessionToken.ts", chars: 200 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "src/auth/sessionToken.ts", errorCount: 0 });
   ev.push({ type: "diagnostic_resolved", ts: next(100), file: "src/auth/sessionToken.ts", line: 64, durationMs: 95_000 });
 
@@ -1008,7 +1008,7 @@ function securitySeniorEvents(): EchoEvent[] {
   // Negative tests — adversarial inputs
   ev.push({ type: "file_focus_change", ts: next(60_000), file: "src/auth/__tests__/sessionToken.negative.test.ts", language: "typescript" });
   ev.push({ type: "text_change", ts: next(180_000), file: "src/auth/__tests__/sessionToken.negative.test.ts", charsAdded: 720, charsRemoved: 0 });
-  ev.push({ type: "keystroke_batch", ts: next(5_000), file: "src/auth/__tests__/sessionToken.negative.test.ts", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(5_000), file: "src/auth/__tests__/sessionToken.negative.test.ts", chars: 200 });
   ev.push({ type: "text_change", ts: next(60_000), file: "src/auth/__tests__/sessionToken.negative.test.ts", charsAdded: 220, charsRemoved: 20 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "src/auth/__tests__/sessionToken.negative.test.ts", errorCount: 0 });
   ev.push({ type: "test_run_result", ts: next(2_000), file: "src/auth/__tests__/sessionToken.negative.test.ts", tests: 18, passed: 18, durationMs: 3_200, trigger: "manual" });
@@ -1034,7 +1034,7 @@ function securitySeniorEvents(): EchoEvent[] {
 
   ev.push({ type: "diagnostic_appeared", ts: next(60_000), file: "src/api/uploads/handler.ts", line: 42, severity: "warning", message: "Filename trusted in path join — path traversal risk." });
   ev.push({ type: "text_change", ts: next(120_000), file: "src/api/uploads/handler.ts", charsAdded: 60, charsRemoved: 40 });
-  ev.push({ type: "keystroke_batch", ts: next(4_000), file: "src/api/uploads/handler.ts", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(4_000), file: "src/api/uploads/handler.ts", chars: 200 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "src/api/uploads/handler.ts", errorCount: 0 });
   ev.push({ type: "diagnostic_resolved", ts: next(100), file: "src/api/uploads/handler.ts", line: 42, durationMs: 220_000 });
 
@@ -1079,14 +1079,14 @@ function securitySeniorEvents(): EchoEvent[] {
     const sinks = ["sql", "fs", "exec", "dns", "rls"];
     ev.push({ type: "diagnostic_appeared", ts: next(60_000), file: target, line: 40 + day, severity: "warning", message: `Trust boundary issue: input flows to ${sinks[day]} sink without normalization.` });
     ev.push({ type: "text_change", ts: next(120_000), file: target, charsAdded: 80, charsRemoved: 30 });
-    ev.push({ type: "keystroke_batch", ts: next(4_000), file: target, chars: 200 });
+    ev.push({ type: "keystroke_burst", ts: next(4_000), file: target, chars: 200 });
     ev.push({ type: "text_change", ts: next(40_000), file: target, charsAdded: 30, charsRemoved: 10 });
     ev.push({ type: "file_saved", ts: next(2_000), path: target, errorCount: 0 });
     ev.push({ type: "diagnostic_resolved", ts: next(100), file: target, line: 40 + day, durationMs: 165_000 });
 
     // Fuzz test
     ev.push({ type: "text_change", ts: next(150_000), file: fuzzTest, charsAdded: 540, charsRemoved: 0 });
-    ev.push({ type: "keystroke_batch", ts: next(5_000), file: fuzzTest, chars: 200 });
+    ev.push({ type: "keystroke_burst", ts: next(5_000), file: fuzzTest, chars: 200 });
     ev.push({ type: "text_change", ts: next(60_000), file: fuzzTest, charsAdded: 180, charsRemoved: 12 });
     ev.push({ type: "file_saved", ts: next(2_000), path: fuzzTest, errorCount: 0 });
     ev.push({ type: "test_run_result", ts: next(4_000), file: fuzzTest, tests: 18 + day, passed: 18 + day, durationMs: 5_400, trigger: "manual" });
@@ -1132,7 +1132,7 @@ function devopsSeniorEvents(): EchoEvent[] {
   ev.push({ type: "ai_suggestion_accepted", ts: next(2_000), file: "infra/terraform/modules/eks/main.tf", chars: 420, charsAccepted: 420 });
   ev.push({ type: "ai_accept_outcome_observed", ts: next(30_000), outcome: "iterated", editFraction: 0.45 });
   ev.push({ type: "text_change", ts: next(60_000), file: "infra/terraform/modules/eks/main.tf", charsAdded: 80, charsRemoved: 40 });
-  ev.push({ type: "keystroke_batch", ts: next(4_000), file: "infra/terraform/modules/eks/main.tf", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(4_000), file: "infra/terraform/modules/eks/main.tf", chars: 200 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "infra/terraform/modules/eks/main.tf", errorCount: 0 });
 
   // Shell script for log analysis
@@ -1148,7 +1148,7 @@ function devopsSeniorEvents(): EchoEvent[] {
   ev.push({ type: "editor_navigation", ts: next(8_000), kind: "symbol-search", fromFile: "infra/k8s/ingress.yaml", toFile: "infra/k8s/ingress.yaml", msSinceEdit: 0 });
   ev.push({ type: "read_pattern_observed", ts: next(4_000), pattern: "skim", msToFirstEdit: 22_000, navCount: 1 });
   ev.push({ type: "text_change", ts: next(40_000), file: "infra/k8s/ingress.yaml", charsAdded: 60, charsRemoved: 20 });
-  ev.push({ type: "keystroke_batch", ts: next(3_000), file: "infra/k8s/ingress.yaml", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(3_000), file: "infra/k8s/ingress.yaml", chars: 200 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "infra/k8s/ingress.yaml", errorCount: 0 });
 
   // Diagnostic — caught by terraform plan validation
@@ -1205,7 +1205,7 @@ function devopsSeniorEvents(): EchoEvent[] {
   ev.push({ type: "session_boundary", ts: next(30_000_000), kind: "start", reason: "fresh-start" });
   ev.push({ type: "file_focus_change", ts: next(2_000), file: "docs/runbooks/eks-node-pressure.md", language: "markdown" });
   ev.push({ type: "text_change", ts: next(180_000), file: "docs/runbooks/eks-node-pressure.md", charsAdded: 540, charsRemoved: 30 });
-  ev.push({ type: "keystroke_batch", ts: next(5_000), file: "docs/runbooks/eks-node-pressure.md", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(5_000), file: "docs/runbooks/eks-node-pressure.md", chars: 200 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "docs/runbooks/eks-node-pressure.md", errorCount: 0 });
   ev.push({ type: "commit_detected", ts: next(60_000), sha: "do3", message: "runbook for eks node pressure", filesTouched: ["docs/runbooks/eks-node-pressure.md"] });
 
@@ -1230,7 +1230,7 @@ function devopsSeniorEvents(): EchoEvent[] {
     ev.push({ type: "ai_suggestion_accepted", ts: next(2_000), file: tfFile, chars: 380, charsAccepted: 380 });
     ev.push({ type: "ai_accept_outcome_observed", ts: next(30_000), outcome: "iterated", editFraction: 0.40 });
     ev.push({ type: "text_change", ts: next(40_000), file: tfFile, charsAdded: 60, charsRemoved: 20 });
-    ev.push({ type: "keystroke_batch", ts: next(3_000), file: tfFile, chars: 200 });
+    ev.push({ type: "keystroke_burst", ts: next(3_000), file: tfFile, chars: 200 });
     ev.push({ type: "file_saved", ts: next(2_000), path: tfFile, errorCount: 0 });
 
     ev.push({ type: "file_focus_change", ts: next(60_000), file: yamlFile, language: "yaml" });
@@ -1303,7 +1303,7 @@ function polyglotStaffEvents(): EchoEvent[] {
   // Implement gateway changes
   ev.push({ type: "file_focus_change", ts: next(20_000), file: "services/gateway/src/router.ts", language: "typescript" });
   ev.push({ type: "text_change", ts: next(60_000), file: "services/gateway/src/router.ts", charsAdded: 120, charsRemoved: 40 });
-  ev.push({ type: "keystroke_batch", ts: next(4_000), file: "services/gateway/src/router.ts", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(4_000), file: "services/gateway/src/router.ts", chars: 200 });
   ev.push({ type: "text_change", ts: next(40_000), file: "services/gateway/src/router.ts", charsAdded: 60, charsRemoved: 20 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "services/gateway/src/router.ts", errorCount: 0 });
 
@@ -1317,13 +1317,13 @@ function polyglotStaffEvents(): EchoEvent[] {
   // Python worker changes
   ev.push({ type: "file_focus_change", ts: next(30_000), file: "services/worker/src/dispatcher.py", language: "python" });
   ev.push({ type: "text_change", ts: next(80_000), file: "services/worker/src/dispatcher.py", charsAdded: 140, charsRemoved: 40 });
-  ev.push({ type: "keystroke_batch", ts: next(5_000), file: "services/worker/src/dispatcher.py", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(5_000), file: "services/worker/src/dispatcher.py", chars: 200 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "services/worker/src/dispatcher.py", errorCount: 0 });
 
   // Rust hotpath
   ev.push({ type: "file_focus_change", ts: next(30_000), file: "services/hotpath/src/lib.rs", language: "rust" });
   ev.push({ type: "text_change", ts: next(60_000), file: "services/hotpath/src/lib.rs", charsAdded: 80, charsRemoved: 30 });
-  ev.push({ type: "keystroke_batch", ts: next(4_000), file: "services/hotpath/src/lib.rs", chars: 200 });
+  ev.push({ type: "keystroke_burst", ts: next(4_000), file: "services/hotpath/src/lib.rs", chars: 200 });
   ev.push({ type: "file_saved", ts: next(2_000), path: "services/hotpath/src/lib.rs", errorCount: 0 });
 
   ev.push({ type: "diagnostic_appeared", ts: next(500), file: "services/hotpath/src/lib.rs", line: 88, severity: "warning", message: "lifetime elision ambiguous on RpcEnvelope<'a>" });
@@ -1405,7 +1405,7 @@ function polyglotStaffEvents(): EchoEvent[] {
     ev.push({ type: "ai_accept_outcome_observed", ts: next(30_000), outcome: "iterated", editFraction: 0.55 });
 
     ev.push({ type: "text_change", ts: next(60_000), file: featFile, charsAdded: 100, charsRemoved: 30 });
-    ev.push({ type: "keystroke_batch", ts: next(4_000), file: featFile, chars: 200 });
+    ev.push({ type: "keystroke_burst", ts: next(4_000), file: featFile, chars: 200 });
     ev.push({ type: "text_change", ts: next(40_000), file: featFile, charsAdded: 60, charsRemoved: 20 });
     ev.push({ type: "file_saved", ts: next(2_000), path: featFile, errorCount: 1 });
 
@@ -1416,7 +1416,7 @@ function polyglotStaffEvents(): EchoEvent[] {
     ev.push({ type: "diagnostic_resolved", ts: next(100), file: featFile, line: 60 + day, durationMs: 32_000 });
 
     ev.push({ type: "text_change", ts: next(60_000), file: testFile, charsAdded: 320, charsRemoved: 0 });
-    ev.push({ type: "keystroke_batch", ts: next(4_000), file: testFile, chars: 200 });
+    ev.push({ type: "keystroke_burst", ts: next(4_000), file: testFile, chars: 200 });
     ev.push({ type: "file_saved", ts: next(2_000), path: testFile, errorCount: 0 });
     ev.push({ type: "test_run_result", ts: next(2_500), file: testFile, tests: 8 + day, passed: 8 + day, durationMs: 1_400 + day * 200, trigger: "manual" });
 

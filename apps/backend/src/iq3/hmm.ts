@@ -4,7 +4,7 @@ import type {
   Iq3TraitPosterior,
 } from "@protege/types";
 import { TRAIT_IDS, FIELD_IDS } from "@protege/types";
-import { LIKELIHOODS, MATCHKEY_TO_TRAITS } from "./likelihoods.js";
+import { LIKELIHOOD_INDEX, MATCHKEY_TO_TRAITS } from "./likelihoods.js";
 
 const UNIFORM_PRIOR: Iq3TraitPosterior = { low: 1 / 3, mid: 1 / 3, high: 1 / 3 };
 
@@ -56,9 +56,10 @@ export function applyMatchKeys(
   for (const key of matchKeys) {
     const traits = MATCHKEY_TO_TRAITS.get(key) ?? [];
     for (const trait of traits) {
-      const entry = LIKELIHOODS.find(
-        (e) => e.matchKey === key && e.trait === trait,
-      )!;
+      // O(1) Map lookup replaces the prior O(n) LIKELIHOODS.find scan —
+      // that scan ran per event per trait and dominated ingest CPU at
+      // scale (~119 entries × events/sec).
+      const entry = LIKELIHOOD_INDEX.get(`${key}::${trait}`)!;
       const acc = updatesByTrait.get(trait) ?? { logLow: 0, logMid: 0, logHigh: 0 };
       acc.logLow  += Math.log(entry.pLow  + 1e-12);
       acc.logMid  += Math.log(entry.pMid  + 1e-12);

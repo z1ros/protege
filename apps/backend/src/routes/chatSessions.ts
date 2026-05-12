@@ -1,7 +1,13 @@
 import { Hono } from "hono";
 import type { ChatSession } from "@protege/types";
 import { githubAuth, resolveUserId } from "../middleware/auth.js";
+import { createRateLimiter } from "../middleware/rateLimit.js";
 import { getSupabase, isSupabaseEnabled } from "../supabase.js";
+
+/** Per-user limiter for /chat-sessions writes. 60 mutations/min covers
+ *  any plausible interactive use (create, rename, delete) while bounding
+ *  a runaway client. GET (list) is unlimited — cheap and cached client-side. */
+const chatSessionsLimiter = createRateLimiter({ windowMs: 60_000, max: 60 });
 
 /**
  * Chat sessions — one row per conversation. Owned by a user, holds the
@@ -88,6 +94,9 @@ chatSessionsRoute.get("/", async (c) => {
  *  the bump RPC) — only title and updated_at move. */
 chatSessionsRoute.post("/", async (c) => {
   const userId = resolveUserId(c, undefined);
+  if (!chatSessionsLimiter(userId)) {
+    return c.json({ error: "rate limited" }, 429);
+  }
   const body = (await c.req.json()) as { id?: string; title?: string };
   if (!body?.id || typeof body.id !== "string") {
     return c.json({ error: "id required" }, 400);
@@ -142,6 +151,9 @@ chatSessionsRoute.post("/", async (c) => {
 /** PATCH /chat-sessions/:id — rename. */
 chatSessionsRoute.patch("/:id", async (c) => {
   const userId = resolveUserId(c, undefined);
+  if (!chatSessionsLimiter(userId)) {
+    return c.json({ error: "rate limited" }, 429);
+  }
   const id = c.req.param("id");
   const body = (await c.req.json()) as { title?: string };
   if (typeof body?.title !== "string" || body.title.length === 0) {
@@ -172,6 +184,9 @@ chatSessionsRoute.patch("/:id", async (c) => {
  *  silently leak messages. */
 chatSessionsRoute.delete("/:id", async (c) => {
   const userId = resolveUserId(c, undefined);
+  if (!chatSessionsLimiter(userId)) {
+    return c.json({ error: "rate limited" }, 429);
+  }
   const id = c.req.param("id");
   if (!isSupabaseEnabled() || chatSessionsSchemaBroken) {
     return c.json({ ok: true });

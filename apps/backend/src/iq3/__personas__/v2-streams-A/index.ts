@@ -55,7 +55,7 @@ function bootcampGradEvents(): EchoEvent[] {
   tl.push({ type: "read_pattern_observed", ts: tl.next(2_000), pattern: "jump-in", msToFirstEdit: 4_000, navCount: 0 });
   tl.push({ type: "concept_encountered", ts: tl.next(500), file, concept: "react-hook", language: "javascriptreact" });
   tl.push({ type: "text_change", ts: tl.next(3_000), file, charsAdded: 12, charsRemoved: 0 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(2_000), file, chars: 40 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(2_000), file, chars: 40 });
 
   // Confused, pastes whole file into AI.
   tl.push({
@@ -183,7 +183,7 @@ function bootcampGradEvents(): EchoEvent[] {
   tl.push({ type: "file_focus_change", ts: tl.next(20 * 60 * 60_000), file: cssFile, language: "css" });
   tl.push({ type: "read_pattern_observed", ts: tl.next(1_500), pattern: "jump-in", msToFirstEdit: 2_500, navCount: 0 });
   tl.push({ type: "text_change", ts: tl.next(4_000), file: cssFile, charsAdded: 60, charsRemoved: 12 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(3_000), file: cssFile, chars: 120 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(3_000), file: cssFile, chars: 120 });
   tl.push({ type: "file_saved", ts: tl.next(8_000), path: cssFile, errorCount: 0 });
   // Goes to AI when something else breaks.
   tl.push({
@@ -289,7 +289,7 @@ function earnestJuniorEvents(): EchoEvent[] {
 
   // First edit only after building a model.
   tl.push({ type: "text_change", ts: tl.next(15_000), file: svcFile, charsAdded: 80, charsRemoved: 20 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: svcFile, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: svcFile, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(10_000), file: svcFile, charsAdded: 140, charsRemoved: 30 });
 
   // Paragraph-of-context AI prompt.
@@ -331,7 +331,7 @@ function earnestJuniorEvents(): EchoEvent[] {
   tl.push({ type: "file_focus_change", ts: tl.next(60_000), file: testFile, language: "typescript" });
   tl.push({ type: "read_pattern_observed", ts: tl.next(2_000), pattern: "skim", msToFirstEdit: 18_000, navCount: 1 });
   tl.push({ type: "text_change", ts: tl.next(20_000), file: testFile, charsAdded: 220, charsRemoved: 0 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(10_000), file: testFile, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(10_000), file: testFile, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(15_000), file: testFile, charsAdded: 180, charsRemoved: 10 });
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: testFile, errorCount: 0 });
   tl.push({
@@ -348,7 +348,7 @@ function earnestJuniorEvents(): EchoEvent[] {
   for (let i = 0; i < 6; i++) {
     tl.push({ type: "editor_navigation", ts: tl.next(120_000), kind: i % 2 === 0 ? "def-jump" : "find-refs", fromFile: svcFile, toFile: apiFile, msSinceEdit: 5_000 });
     tl.push({ type: "text_change", ts: tl.next(60_000), file: svcFile, charsAdded: 35 + i * 5, charsRemoved: 10 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: svcFile, chars: 120 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: svcFile, chars: 120 });
   }
 
   // Edge-case test added because she thought of a null-input case.
@@ -458,7 +458,7 @@ function earnestJuniorEvents(): EchoEvent[] {
   tl.push({ type: "ai_accept_outcome_observed", ts: tl.next(30_000), outcome: "iterated", editFraction: 0.4 });
   for (let i = 0; i < 8; i++) {
     tl.push({ type: "text_change", ts: tl.next(45_000), file: authFile, charsAdded: 50 + i * 5, charsRemoved: 18 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: authFile, chars: 140 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: authFile, chars: 140 });
   }
   tl.push({ type: "file_saved", ts: tl.next(8_000), path: authFile, errorCount: 0 });
   tl.push({ type: "text_change", ts: tl.next(40_000), file: authTest, charsAdded: 280, charsRemoved: 0 });
@@ -543,7 +543,7 @@ function earnestJuniorEvents(): EchoEvent[] {
   tl.push({ type: "ai_suggestion_rejected", ts: tl.next(20_000), file: svcFile });
   for (let i = 0; i < 10; i++) {
     tl.push({ type: "text_change", ts: tl.next(40_000), file: svcFile, charsAdded: 40 + i * 5, charsRemoved: 18 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: svcFile, chars: 130 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: svcFile, chars: 130 });
   }
   tl.push({ type: "file_saved", ts: tl.next(8_000), path: svcFile, errorCount: 0 });
   tl.push({
@@ -587,7 +587,7 @@ function earnestJuniorEvents(): EchoEvent[] {
 
   for (let i = 0; i < 12; i++) {
     tl.push({ type: "text_change", ts: tl.next(40_000), file: sessionFile, charsAdded: 50 + i * 5, charsRemoved: 18 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: sessionFile, chars: 140 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: sessionFile, chars: 140 });
   }
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: sessionFile, errorCount: 0 });
 
@@ -931,7 +931,7 @@ function pragmaticMidEvents(): EchoEvent[] {
 
   // First edit after building model.
   tl.push({ type: "text_change", ts: tl.next(10_000), file: handler, charsAdded: 80, charsRemoved: 25 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: handler, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: handler, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(12_000), file: handler, charsAdded: 120, charsRemoved: 30 });
 
   // AI prompt with constraints + alternatives.
@@ -951,7 +951,7 @@ function pragmaticMidEvents(): EchoEvent[] {
   // More work.
   for (let i = 0; i < 8; i++) {
     tl.push({ type: "text_change", ts: tl.next(45_000), file: handler, charsAdded: 60 + i * 8, charsRemoved: 15 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: handler, chars: 150 + i * 10 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: handler, chars: 150 + i * 10 });
   }
 
   tl.push({ type: "file_saved", ts: tl.next(20_000), path: handler, errorCount: 0 });
@@ -993,7 +993,7 @@ function pragmaticMidEvents(): EchoEvent[] {
   // Adds integration test.
   tl.push({ type: "file_focus_change", ts: tl.next(20 * 60_000), file: intTest, language: "typescript" });
   tl.push({ type: "text_change", ts: tl.next(30_000), file: intTest, charsAdded: 380, charsRemoved: 0 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: intTest, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: intTest, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(60_000), file: intTest, charsAdded: 200, charsRemoved: 30 });
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: intTest, errorCount: 0 });
   tl.push({
@@ -1043,7 +1043,7 @@ function pragmaticMidEvents(): EchoEvent[] {
 
   for (let i = 0; i < 12; i++) {
     tl.push({ type: "text_change", ts: tl.next(30_000), file: repo, charsAdded: 40 + i * 4, charsRemoved: 20 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: repo, chars: 130 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: repo, chars: 130 });
   }
   tl.push({ type: "file_saved", ts: tl.next(8_000), path: repo, errorCount: 0 });
   tl.push({
@@ -1100,7 +1100,7 @@ function pragmaticMidEvents(): EchoEvent[] {
 
   // Failing test first.
   tl.push({ type: "text_change", ts: tl.next(45_000), file: newTest, charsAdded: 320, charsRemoved: 0 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: newTest, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: newTest, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(60_000), file: newTest, charsAdded: 240, charsRemoved: 30 });
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: newTest, errorCount: 0 });
   tl.push({
@@ -1116,14 +1116,14 @@ function pragmaticMidEvents(): EchoEvent[] {
   // Implementation — many small typing bursts with idle gaps for thinking.
   for (let i = 0; i < 14; i++) {
     tl.push({ type: "text_change", ts: tl.next(60_000), file: newSvc, charsAdded: 50 + i * 5, charsRemoved: 18 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: newSvc, chars: 140 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: newSvc, chars: 140 });
   }
   tl.push({ type: "file_saved", ts: tl.next(8_000), path: newSvc, errorCount: 0 });
 
   // Repository implementation.
   for (let i = 0; i < 10; i++) {
     tl.push({ type: "text_change", ts: tl.next(50_000), file: newRepo, charsAdded: 40 + i * 5, charsRemoved: 15 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: newRepo, chars: 130 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: newRepo, chars: 130 });
   }
   tl.push({ type: "file_saved", ts: tl.next(8_000), path: newRepo, errorCount: 0 });
   tl.push({
@@ -1175,7 +1175,7 @@ function pragmaticMidEvents(): EchoEvent[] {
   });
   for (let i = 0; i < 6; i++) {
     tl.push({ type: "text_change", ts: tl.next(60_000), file: repo, charsAdded: 30 + i * 4, charsRemoved: 18 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: repo, chars: 130 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: repo, chars: 130 });
   }
   tl.push({ type: "file_saved", ts: tl.next(8_000), path: repo, errorCount: 0 });
   tl.push({
@@ -1223,7 +1223,7 @@ function pragmaticMidEvents(): EchoEvent[] {
     tl.push({ type: "ai_accept_outcome_observed", ts: tl.next(20_000), outcome: "iterated", editFraction: 0.45 });
     for (let i = 0; i < 8; i++) {
       tl.push({ type: "text_change", ts: tl.next(40_000), file: [handler, newSvc][day], charsAdded: 30 + i * 4, charsRemoved: 18 });
-      tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: [handler, newSvc][day], chars: 130 });
+      tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: [handler, newSvc][day], chars: 130 });
     }
     tl.push({ type: "file_saved", ts: tl.next(5_000), path: [handler, newSvc][day], errorCount: 0 });
     tl.push({
@@ -1279,7 +1279,7 @@ function mlResearcherEvents(): EchoEvent[] {
   tl.push({ type: "file_focus_change", ts: tl.next(20_000), file: nb, language: "python" });
   tl.push({ type: "read_pattern_observed", ts: tl.next(1_500), pattern: "skim", msToFirstEdit: 12_000, navCount: 1 });
   tl.push({ type: "text_change", ts: tl.next(20_000), file: nb, charsAdded: 240, charsRemoved: 0 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: nb, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: nb, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(30_000), file: nb, charsAdded: 320, charsRemoved: 40 });
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: nb, errorCount: 0 });
 
@@ -1291,7 +1291,7 @@ function mlResearcherEvents(): EchoEvent[] {
   // Methodical multi-step debug.
   for (let i = 0; i < 5; i++) {
     tl.push({ type: "text_change", ts: tl.next(60_000), file: nb, charsAdded: 80 + i * 10, charsRemoved: 20 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: nb, chars: 150 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: nb, chars: 150 });
     tl.push({ type: "file_saved", ts: tl.next(3_000), path: nb, errorCount: 0 });
   }
   tl.push({ type: "diagnostic_resolved", ts: tl.next(5_000), file: nb, line: 14, durationMs: 8 * 60_000 });
@@ -1304,7 +1304,7 @@ function mlResearcherEvents(): EchoEvent[] {
   tl.push({ type: "editor_navigation", ts: tl.next(20_000), kind: "symbol-search", fromFile: model, toFile: train, msSinceEdit: 0 });
   for (let i = 0; i < 6; i++) {
     tl.push({ type: "text_change", ts: tl.next(50_000), file: model, charsAdded: 60 + i * 5, charsRemoved: 30 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: model, chars: 140 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: model, chars: 140 });
   }
   tl.push({ type: "file_saved", ts: tl.next(8_000), path: model, errorCount: 0 });
 
@@ -1314,7 +1314,7 @@ function mlResearcherEvents(): EchoEvent[] {
   tl.push({ type: "concept_encountered", ts: tl.next(1_000), file: propTest, concept: "hypothesis-strategy", language: "python" });
   tl.push({ type: "concept_encountered", ts: tl.next(500), file: propTest, concept: "property-test", language: "python" });
   tl.push({ type: "text_change", ts: tl.next(30_000), file: propTest, charsAdded: 320, charsRemoved: 0 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: propTest, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: propTest, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(60_000), file: propTest, charsAdded: 280, charsRemoved: 40 });
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: propTest, errorCount: 0 });
   tl.push({
@@ -1343,7 +1343,7 @@ function mlResearcherEvents(): EchoEvent[] {
   for (let i = 0; i < 10; i++) {
     tl.push({ type: "editor_navigation", ts: tl.next(180_000), kind: i % 2 ? "def-jump" : "symbol-search", fromFile: model, toFile: train, msSinceEdit: 4_000 });
     tl.push({ type: "text_change", ts: tl.next(60_000), file: train, charsAdded: 50 + i * 6, charsRemoved: 20 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: train, chars: 140 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: train, chars: 140 });
   }
 
   tl.push({ type: "file_saved", ts: tl.next(20_000), path: train, errorCount: 0 });
@@ -1391,7 +1391,7 @@ function mlResearcherEvents(): EchoEvent[] {
   tl.push({ type: "editor_navigation", ts: tl.next(10_000), kind: "find-refs", fromFile: dataLoader, toFile: train, msSinceEdit: 0 });
   for (let i = 0; i < 12; i++) {
     tl.push({ type: "text_change", ts: tl.next(45_000), file: dataNb, charsAdded: 120 + i * 8, charsRemoved: 30 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: dataNb, chars: 150 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: dataNb, chars: 150 });
   }
   tl.push({ type: "file_saved", ts: tl.next(8_000), path: dataNb, errorCount: 0 });
 
@@ -1400,7 +1400,7 @@ function mlResearcherEvents(): EchoEvent[] {
   tl.push({ type: "editor_navigation", ts: tl.next(5_000), kind: "def-jump", fromFile: dataNb, toFile: dataLoader, msSinceEdit: 1_000 });
   for (let i = 0; i < 6; i++) {
     tl.push({ type: "text_change", ts: tl.next(50_000), file: dataLoader, charsAdded: 50 + i * 6, charsRemoved: 20 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: dataLoader, chars: 140 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: dataLoader, chars: 140 });
   }
   tl.push({ type: "file_saved", ts: tl.next(8_000), path: dataLoader, errorCount: 0 });
   tl.push({ type: "diagnostic_resolved", ts: tl.next(500), file: dataNb, line: 32, durationMs: 12 * 60_000 });
@@ -1437,7 +1437,7 @@ function mlResearcherEvents(): EchoEvent[] {
   tl.push({ type: "ai_suggestion_rejected", ts: tl.next(10_000), file: train });
   for (let i = 0; i < 14; i++) {
     tl.push({ type: "text_change", ts: tl.next(60_000), file: train, charsAdded: 50 + i * 5, charsRemoved: 20 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: train, chars: 140 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: train, chars: 140 });
   }
   tl.push({ type: "file_saved", ts: tl.next(8_000), path: train, errorCount: 0 });
   tl.push({
@@ -1494,14 +1494,14 @@ function mlResearcherEvents(): EchoEvent[] {
 
   for (let i = 0; i < 14; i++) {
     tl.push({ type: "text_change", ts: tl.next(50_000), file: evalScript, charsAdded: 60 + i * 5, charsRemoved: 22 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: evalScript, chars: 140 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: evalScript, chars: 140 });
   }
   tl.push({ type: "file_saved", ts: tl.next(8_000), path: evalScript, errorCount: 0 });
 
   // Property tests for calibration metrics.
   tl.push({ type: "file_focus_change", ts: tl.next(20 * 60_000), file: metricsTest, language: "python" });
   tl.push({ type: "text_change", ts: tl.next(45_000), file: metricsTest, charsAdded: 380, charsRemoved: 0 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: metricsTest, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: metricsTest, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(60_000), file: metricsTest, charsAdded: 280, charsRemoved: 30 });
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: metricsTest, errorCount: 0 });
   tl.push({
@@ -1518,7 +1518,7 @@ function mlResearcherEvents(): EchoEvent[] {
   tl.push({ type: "file_focus_change", ts: tl.next(15 * 60_000), file: evalNb, language: "python" });
   for (let i = 0; i < 12; i++) {
     tl.push({ type: "text_change", ts: tl.next(45_000), file: evalNb, charsAdded: 100 + i * 8, charsRemoved: 25 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: evalNb, chars: 160 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: evalNb, chars: 160 });
   }
   tl.push({ type: "file_saved", ts: tl.next(8_000), path: evalNb, errorCount: 0 });
 
@@ -1592,7 +1592,7 @@ function mobileMidEvents(): EchoEvent[] {
   // Hand-crafts the rest.
   for (let i = 0; i < 10; i++) {
     tl.push({ type: "text_change", ts: tl.next(45_000), file: view, charsAdded: 60 + i * 8, charsRemoved: 18 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: view, chars: 160 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: view, chars: 160 });
   }
   tl.push({ type: "file_saved", ts: tl.next(8_000), path: view, errorCount: 0 });
 
@@ -1611,7 +1611,7 @@ function mobileMidEvents(): EchoEvent[] {
 
   for (let i = 0; i < 14; i++) {
     tl.push({ type: "text_change", ts: tl.next(40_000), file: vm, charsAdded: 50 + i * 6, charsRemoved: 18 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: vm, chars: 150 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: vm, chars: 150 });
   }
   tl.push({ type: "file_saved", ts: tl.next(8_000), path: vm, errorCount: 0 });
 
@@ -1619,7 +1619,7 @@ function mobileMidEvents(): EchoEvent[] {
   tl.push({ type: "file_focus_change", ts: tl.next(30 * 60_000), file: test, language: "swift" });
   tl.push({ type: "read_pattern_observed", ts: tl.next(1_500), pattern: "skim", msToFirstEdit: 18_000, navCount: 1 });
   tl.push({ type: "text_change", ts: tl.next(25_000), file: test, charsAdded: 240, charsRemoved: 0 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: test, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: test, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(40_000), file: test, charsAdded: 280, charsRemoved: 30 });
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: test, errorCount: 0 });
   tl.push({
@@ -1680,7 +1680,7 @@ function mobileMidEvents(): EchoEvent[] {
   tl.push({ type: "read_pattern_observed", ts: tl.next(1_500), pattern: "skim", msToFirstEdit: 14_000, navCount: 1 });
   for (let i = 0; i < 8; i++) {
     tl.push({ type: "text_change", ts: tl.next(40_000), file: view, charsAdded: 40 + i * 5, charsRemoved: 12 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: view, chars: 130 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: view, chars: 130 });
   }
   tl.push({ type: "file_saved", ts: tl.next(8_000), path: view, errorCount: 0 });
   tl.push({
@@ -1739,21 +1739,21 @@ function mobileMidEvents(): EchoEvent[] {
   // Hand-craft.
   for (let i = 0; i < 12; i++) {
     tl.push({ type: "text_change", ts: tl.next(45_000), file: thread, charsAdded: 60 + i * 5, charsRemoved: 18 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: thread, chars: 150 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: thread, chars: 150 });
   }
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: thread, errorCount: 0 });
 
   // ViewModel.
   for (let i = 0; i < 14; i++) {
     tl.push({ type: "text_change", ts: tl.next(40_000), file: threadVM, charsAdded: 50 + i * 5, charsRemoved: 18 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: threadVM, chars: 140 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: threadVM, chars: 140 });
   }
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: threadVM, errorCount: 0 });
 
   // Tests.
   tl.push({ type: "file_focus_change", ts: tl.next(20 * 60_000), file: threadTest, language: "swift" });
   tl.push({ type: "text_change", ts: tl.next(45_000), file: threadTest, charsAdded: 380, charsRemoved: 0 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: threadTest, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: threadTest, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(60_000), file: threadTest, charsAdded: 280, charsRemoved: 30 });
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: threadTest, errorCount: 0 });
   tl.push({
@@ -1787,7 +1787,7 @@ function mobileMidEvents(): EchoEvent[] {
   tl.push({ type: "editor_navigation", ts: tl.next(8_000), kind: "def-jump", fromFile: thread, toFile: threadVM, msSinceEdit: 0 });
   for (let i = 0; i < 8; i++) {
     tl.push({ type: "text_change", ts: tl.next(50_000), file: thread, charsAdded: 35 + i * 4, charsRemoved: 20 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: thread, chars: 130 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: thread, chars: 130 });
   }
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: thread, errorCount: 0 });
   tl.push({ type: "diagnostic_resolved", ts: tl.next(500), file: thread, line: 142, durationMs: 7 * 60_000 });
@@ -1840,13 +1840,13 @@ function mobileMidEvents(): EchoEvent[] {
 
   for (let i = 0; i < 12; i++) {
     tl.push({ type: "text_change", ts: tl.next(45_000), file: router, charsAdded: 50 + i * 5, charsRemoved: 18 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: router, chars: 140 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: router, chars: 140 });
   }
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: router, errorCount: 0 });
 
   for (let i = 0; i < 6; i++) {
     tl.push({ type: "text_change", ts: tl.next(40_000), file: deeplink, charsAdded: 50 + i * 4, charsRemoved: 18 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: deeplink, chars: 140 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: deeplink, chars: 140 });
   }
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: deeplink, errorCount: 0 });
 
@@ -1952,7 +1952,7 @@ function seniorBackendEvents(): EchoEvent[] {
   tl.push({ type: "read_pattern_observed", ts: tl.next(2_000), pattern: "deep", msToFirstEdit: 60_000, navCount: 2 });
   tl.push({ type: "concept_encountered", ts: tl.next(1_000), file: propTest, concept: "fast-check", language: "typescript" });
   tl.push({ type: "text_change", ts: tl.next(30_000), file: propTest, charsAdded: 320, charsRemoved: 0 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: propTest, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: propTest, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(40_000), file: propTest, charsAdded: 240, charsRemoved: 30 });
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: propTest, errorCount: 0 });
   tl.push({
@@ -1972,7 +1972,7 @@ function seniorBackendEvents(): EchoEvent[] {
 
   for (let i = 0; i < 6; i++) {
     tl.push({ type: "text_change", ts: tl.next(60_000), file: idem, charsAdded: 50 + i * 8, charsRemoved: 25 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: idem, chars: 150 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: idem, chars: 150 });
   }
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: idem, errorCount: 0 });
   tl.push({ type: "diagnostic_resolved", ts: tl.next(500), file: idem, line: 88, durationMs: 8 * 60_000 });
@@ -2013,7 +2013,7 @@ function seniorBackendEvents(): EchoEvent[] {
   // Updates runbook.
   tl.push({ type: "file_focus_change", ts: tl.next(15 * 60_000), file: runbook, language: "markdown" });
   tl.push({ type: "text_change", ts: tl.next(40_000), file: runbook, charsAdded: 480, charsRemoved: 0 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: runbook, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: runbook, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(60_000), file: runbook, charsAdded: 220, charsRemoved: 30 });
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: runbook, errorCount: 0 });
 
@@ -2046,7 +2046,7 @@ function seniorBackendEvents(): EchoEvent[] {
 
   for (let i = 0; i < 14; i++) {
     tl.push({ type: "text_change", ts: tl.next(45_000), file: svc, charsAdded: 50 + i * 5, charsRemoved: 18 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: svc, chars: 140 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: svc, chars: 140 });
   }
   tl.push({ type: "file_saved", ts: tl.next(8_000), path: svc, errorCount: 0 });
 
@@ -2143,7 +2143,7 @@ function seniorBackendEvents(): EchoEvent[] {
   tl.push({ type: "file_focus_change", ts: tl.next(15 * 60_000), file: newPropTest, language: "typescript" });
   tl.push({ type: "concept_encountered", ts: tl.next(1_000), file: newPropTest, concept: "fast-check", language: "typescript" });
   tl.push({ type: "text_change", ts: tl.next(40_000), file: newPropTest, charsAdded: 380, charsRemoved: 0 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: newPropTest, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: newPropTest, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(60_000), file: newPropTest, charsAdded: 280, charsRemoved: 40 });
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: newPropTest, errorCount: 0 });
   tl.push({
@@ -2159,13 +2159,13 @@ function seniorBackendEvents(): EchoEvent[] {
   // Implement service.
   for (let i = 0; i < 16; i++) {
     tl.push({ type: "text_change", ts: tl.next(50_000), file: newSvc, charsAdded: 50 + i * 5, charsRemoved: 22 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: newSvc, chars: 140 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: newSvc, chars: 140 });
   }
   tl.push({ type: "file_saved", ts: tl.next(8_000), path: newSvc, errorCount: 0 });
 
   for (let i = 0; i < 10; i++) {
     tl.push({ type: "text_change", ts: tl.next(45_000), file: newRepo, charsAdded: 40 + i * 4, charsRemoved: 18 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: newRepo, chars: 130 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: newRepo, chars: 130 });
   }
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: newRepo, errorCount: 0 });
 
@@ -2181,7 +2181,7 @@ function seniorBackendEvents(): EchoEvent[] {
 
   // Unit + contract tests.
   tl.push({ type: "text_change", ts: tl.next(40_000), file: newTest, charsAdded: 480, charsRemoved: 30 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: newTest, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: newTest, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(50_000), file: newTest, charsAdded: 320, charsRemoved: 40 });
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: newTest, errorCount: 0 });
   tl.push({
@@ -2197,9 +2197,9 @@ function seniorBackendEvents(): EchoEvent[] {
   // Design doc — the WHY.
   tl.push({ type: "file_focus_change", ts: tl.next(20 * 60_000), file: newDesign, language: "markdown" });
   tl.push({ type: "text_change", ts: tl.next(60_000), file: newDesign, charsAdded: 1_200, charsRemoved: 0 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: newDesign, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: newDesign, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(120_000), file: newDesign, charsAdded: 920, charsRemoved: 80 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: newDesign, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: newDesign, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(90_000), file: newDesign, charsAdded: 720, charsRemoved: 100 });
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: newDesign, errorCount: 0 });
 
@@ -2251,7 +2251,7 @@ function seniorBackendEvents(): EchoEvent[] {
   tl.push({ type: "ai_accept_outcome_observed", ts: tl.next(40_000), outcome: "iterated", editFraction: 0.5 });
   for (let i = 0; i < 6; i++) {
     tl.push({ type: "text_change", ts: tl.next(60_000), file: incFile, charsAdded: 40 + i * 6, charsRemoved: 25 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: incFile, chars: 140 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: incFile, chars: 140 });
   }
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: incFile, errorCount: 0 });
   tl.push({ type: "diagnostic_resolved", ts: tl.next(500), file: incFile, line: 88, durationMs: 25 * 60_000 });
@@ -2299,7 +2299,7 @@ function seniorBackendEvents(): EchoEvent[] {
     tl.push({ type: "ai_accept_outcome_observed", ts: tl.next(20_000), outcome: "iterated", editFraction: 0.5 });
     for (let i = 0; i < 5; i++) {
       tl.push({ type: "text_change", ts: tl.next(40_000), file: [incFile, idem, repo, newSvc][small], charsAdded: 30 + i * 4, charsRemoved: 18 });
-      tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: [incFile, idem, repo, newSvc][small], chars: 130 });
+      tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: [incFile, idem, repo, newSvc][small], chars: 130 });
     }
     tl.push({ type: "file_saved", ts: tl.next(5_000), path: [incFile, idem, repo, newSvc][small], errorCount: 0 });
     tl.push({
@@ -2375,7 +2375,7 @@ function seniorSecurityEvents(): EchoEvent[] {
   tl.push({ type: "file_focus_change", ts: tl.next(20 * 60_000), file: negTest, language: "typescript" });
   tl.push({ type: "read_pattern_observed", ts: tl.next(1_500), pattern: "deep", msToFirstEdit: 70_000, navCount: 3 });
   tl.push({ type: "text_change", ts: tl.next(30_000), file: negTest, charsAdded: 380, charsRemoved: 0 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: negTest, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: negTest, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(60_000), file: negTest, charsAdded: 320, charsRemoved: 40 });
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: negTest, errorCount: 0 });
   tl.push({
@@ -2392,7 +2392,7 @@ function seniorSecurityEvents(): EchoEvent[] {
   tl.push({ type: "file_focus_change", ts: tl.next(15 * 60_000), file: fuzzTest, language: "typescript" });
   tl.push({ type: "concept_encountered", ts: tl.next(1_000), file: fuzzTest, concept: "fuzz-harness", language: "typescript" });
   tl.push({ type: "text_change", ts: tl.next(45_000), file: fuzzTest, charsAdded: 480, charsRemoved: 0 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: fuzzTest, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: fuzzTest, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(60_000), file: fuzzTest, charsAdded: 280, charsRemoved: 30 });
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: fuzzTest, errorCount: 0 });
   tl.push({
@@ -2409,7 +2409,7 @@ function seniorSecurityEvents(): EchoEvent[] {
   tl.push({ type: "editor_navigation", ts: tl.next(5_000), kind: "def-jump", fromFile: fuzzTest, toFile: auth, msSinceEdit: 1_000 });
   for (let i = 0; i < 8; i++) {
     tl.push({ type: "text_change", ts: tl.next(60_000), file: auth, charsAdded: 40 + i * 6, charsRemoved: 20 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: auth, chars: 140 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: auth, chars: 140 });
   }
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: auth, errorCount: 0 });
   tl.push({ type: "diagnostic_resolved", ts: tl.next(500), file: auth, line: 142, durationMs: 35 * 60_000 });
@@ -2436,7 +2436,7 @@ function seniorSecurityEvents(): EchoEvent[] {
   // Threat-model doc update.
   tl.push({ type: "file_focus_change", ts: tl.next(20 * 60_000), file: threatDoc, language: "markdown" });
   tl.push({ type: "text_change", ts: tl.next(45_000), file: threatDoc, charsAdded: 620, charsRemoved: 80 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: threatDoc, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: threatDoc, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(60_000), file: threatDoc, charsAdded: 380, charsRemoved: 60 });
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: threatDoc, errorCount: 0 });
 
@@ -2469,7 +2469,7 @@ function seniorSecurityEvents(): EchoEvent[] {
 
   for (let i = 0; i < 6; i++) {
     tl.push({ type: "text_change", ts: tl.next(50_000), file: middleware, charsAdded: 50 + i * 6, charsRemoved: 25 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: middleware, chars: 140 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: middleware, chars: 140 });
   }
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: middleware, errorCount: 0 });
   tl.push({ type: "diagnostic_resolved", ts: tl.next(500), file: middleware, line: 88, durationMs: 6 * 60_000 });
@@ -2521,9 +2521,9 @@ function seniorSecurityEvents(): EchoEvent[] {
   // Adversarial tests first — concrete attack scenarios.
   tl.push({ type: "file_focus_change", ts: tl.next(15 * 60_000), file: sigTest, language: "typescript" });
   tl.push({ type: "text_change", ts: tl.next(45_000), file: sigTest, charsAdded: 480, charsRemoved: 0 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: sigTest, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: sigTest, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(60_000), file: sigTest, charsAdded: 380, charsRemoved: 30 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: sigTest, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: sigTest, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(40_000), file: sigTest, charsAdded: 240, charsRemoved: 60 });
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: sigTest, errorCount: 0 });
   tl.push({
@@ -2539,7 +2539,7 @@ function seniorSecurityEvents(): EchoEvent[] {
   // Implement.
   for (let i = 0; i < 12; i++) {
     tl.push({ type: "text_change", ts: tl.next(50_000), file: sig, charsAdded: 50 + i * 5, charsRemoved: 22 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: sig, chars: 140 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: sig, chars: 140 });
   }
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: sig, errorCount: 0 });
   tl.push({
@@ -2555,7 +2555,7 @@ function seniorSecurityEvents(): EchoEvent[] {
   // Fuzz harness.
   tl.push({ type: "file_focus_change", ts: tl.next(15 * 60_000), file: sigFuzz, language: "typescript" });
   tl.push({ type: "text_change", ts: tl.next(50_000), file: sigFuzz, charsAdded: 480, charsRemoved: 0 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: sigFuzz, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: sigFuzz, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(50_000), file: sigFuzz, charsAdded: 280, charsRemoved: 30 });
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: sigFuzz, errorCount: 0 });
   tl.push({
@@ -2571,7 +2571,7 @@ function seniorSecurityEvents(): EchoEvent[] {
   // Threat model update.
   tl.push({ type: "file_focus_change", ts: tl.next(15 * 60_000), file: threatDoc, language: "markdown" });
   tl.push({ type: "text_change", ts: tl.next(60_000), file: threatDoc, charsAdded: 720, charsRemoved: 60 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: threatDoc, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: threatDoc, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(80_000), file: threatDoc, charsAdded: 480, charsRemoved: 80 });
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: threatDoc, errorCount: 0 });
 
@@ -2604,7 +2604,7 @@ function seniorSecurityEvents(): EchoEvent[] {
 
   for (let i = 0; i < 8; i++) {
     tl.push({ type: "text_change", ts: tl.next(50_000), file: peerFile, charsAdded: 50 + i * 5, charsRemoved: 25 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: peerFile, chars: 140 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: peerFile, chars: 140 });
   }
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: peerFile, errorCount: 0 });
   tl.push({ type: "diagnostic_resolved", ts: tl.next(500), file: peerFile, line: 42, durationMs: 12 * 60_000 });
@@ -2651,7 +2651,7 @@ function seniorSecurityEvents(): EchoEvent[] {
     tl.push({ type: "diagnostic_appeared", ts: tl.next(15_000), file: target, line: 100 + pass * 10, severity: "warning", message: ["timing-side-channel risk", "log injection vector", "session-fixation possible", "nonce reuse window"][pass] });
     for (let i = 0; i < 5; i++) {
       tl.push({ type: "text_change", ts: tl.next(50_000), file: target, charsAdded: 30 + i * 4, charsRemoved: 20 });
-      tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: target, chars: 130 });
+      tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: target, chars: 130 });
     }
     tl.push({ type: "file_saved", ts: tl.next(5_000), path: target, errorCount: 0 });
     tl.push({ type: "diagnostic_resolved", ts: tl.next(500), file: target, line: 100 + pass * 10, durationMs: 8 * 60_000 });
@@ -2723,7 +2723,7 @@ function seniorDevopsEvents(): EchoEvent[] {
 
   for (let i = 0; i < 8; i++) {
     tl.push({ type: "text_change", ts: tl.next(40_000), file: tf, charsAdded: 50 + i * 6, charsRemoved: 18 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: tf, chars: 150 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: tf, chars: 150 });
   }
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: tf, errorCount: 0 });
 
@@ -2788,9 +2788,9 @@ function seniorDevopsEvents(): EchoEvent[] {
   // Excellent runbook — what they're really good at.
   tl.push({ type: "file_focus_change", ts: tl.next(20 * 60_000), file: runbook, language: "markdown" });
   tl.push({ type: "text_change", ts: tl.next(60_000), file: runbook, charsAdded: 920, charsRemoved: 0 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: runbook, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: runbook, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(120_000), file: runbook, charsAdded: 720, charsRemoved: 80 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: runbook, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: runbook, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(60_000), file: runbook, charsAdded: 480, charsRemoved: 60 });
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: runbook, errorCount: 0 });
 
@@ -2887,13 +2887,13 @@ function seniorDevopsEvents(): EchoEvent[] {
 
   for (let i = 0; i < 10; i++) {
     tl.push({ type: "text_change", ts: tl.next(40_000), file: tfMod2, charsAdded: 50 + i * 5, charsRemoved: 18 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: tfMod2, chars: 140 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: tfMod2, chars: 140 });
   }
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: tfMod2, errorCount: 0 });
 
   for (let i = 0; i < 8; i++) {
     tl.push({ type: "text_change", ts: tl.next(40_000), file: tfMod3, charsAdded: 60 + i * 5, charsRemoved: 18 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: tfMod3, chars: 140 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: tfMod3, chars: 140 });
   }
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: tfMod3, errorCount: 0 });
 
@@ -2975,7 +2975,7 @@ function seniorDevopsEvents(): EchoEvent[] {
   // Tweak rollout config.
   for (let i = 0; i < 4; i++) {
     tl.push({ type: "text_change", ts: tl.next(40_000), file: valuesProd, charsAdded: 30 + i * 4, charsRemoved: 12 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: valuesProd, chars: 130 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: valuesProd, chars: 130 });
   }
   tl.push({ type: "file_saved", ts: tl.next(3_000), path: valuesProd, errorCount: 0 });
   tl.push({ type: "diagnostic_resolved", ts: tl.next(500), file: monitoring, line: 88, durationMs: 18 * 60_000 });
@@ -2983,7 +2983,7 @@ function seniorDevopsEvents(): EchoEvent[] {
   // Update runbook with the new failure mode.
   tl.push({ type: "file_focus_change", ts: tl.next(10 * 60_000), file: runbook, language: "markdown" });
   tl.push({ type: "text_change", ts: tl.next(60_000), file: runbook, charsAdded: 480, charsRemoved: 30 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: runbook, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: runbook, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(40_000), file: runbook, charsAdded: 280, charsRemoved: 40 });
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: runbook, errorCount: 0 });
 
@@ -3025,7 +3025,7 @@ function seniorDevopsEvents(): EchoEvent[] {
     tl.push({ type: "ai_accept_outcome_observed", ts: tl.next(20_000), outcome: "iterated", editFraction: 0.4 });
     for (let i = 0; i < 5; i++) {
       tl.push({ type: "text_change", ts: tl.next(40_000), file: target, charsAdded: 40 + i * 5, charsRemoved: 18 });
-      tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: target, chars: 130 });
+      tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: target, chars: 130 });
     }
     tl.push({ type: "file_saved", ts: tl.next(5_000), path: target, errorCount: 0 });
     tl.push({
@@ -3139,7 +3139,7 @@ function polyglotStaffEvents(): EchoEvent[] {
   // Rust core edits.
   for (let i = 0; i < 12; i++) {
     tl.push({ type: "text_change", ts: tl.next(40_000), file: rustCore, charsAdded: 50 + i * 6, charsRemoved: 20 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: rustCore, chars: 150 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: rustCore, chars: 150 });
   }
   tl.push({ type: "file_saved", ts: tl.next(8_000), path: rustCore, errorCount: 0 });
 
@@ -3158,7 +3158,7 @@ function polyglotStaffEvents(): EchoEvent[] {
   }
   for (let i = 0; i < 8; i++) {
     tl.push({ type: "text_change", ts: tl.next(40_000), file: rustFFI, charsAdded: 40 + i * 5, charsRemoved: 18 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: rustFFI, chars: 140 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: rustFFI, chars: 140 });
   }
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: rustFFI, errorCount: 0 });
 
@@ -3166,7 +3166,7 @@ function polyglotStaffEvents(): EchoEvent[] {
   tl.push({ type: "file_focus_change", ts: tl.next(20 * 60_000), file: propTest, language: "rust" });
   tl.push({ type: "concept_encountered", ts: tl.next(1_000), file: propTest, concept: "proptest", language: "rust" });
   tl.push({ type: "text_change", ts: tl.next(45_000), file: propTest, charsAdded: 380, charsRemoved: 0 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: propTest, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: propTest, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(60_000), file: propTest, charsAdded: 280, charsRemoved: 40 });
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: propTest, errorCount: 0 });
   tl.push({
@@ -3187,7 +3187,7 @@ function polyglotStaffEvents(): EchoEvent[] {
   }
   for (let i = 0; i < 10; i++) {
     tl.push({ type: "text_change", ts: tl.next(40_000), file: tsBridge, charsAdded: 50 + i * 5, charsRemoved: 18 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: tsBridge, chars: 140 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: tsBridge, chars: 140 });
   }
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: tsBridge, errorCount: 0 });
   tl.push({ type: "text_change", ts: tl.next(30_000), file: tsTest, charsAdded: 320, charsRemoved: 30 });
@@ -3207,16 +3207,16 @@ function polyglotStaffEvents(): EchoEvent[] {
   tl.push({ type: "read_pattern_observed", ts: tl.next(1_500), pattern: "deep", msToFirstEdit: 70_000, navCount: 4 });
   for (let i = 0; i < 6; i++) {
     tl.push({ type: "text_change", ts: tl.next(50_000), file: pyTrainer, charsAdded: 60 + i * 6, charsRemoved: 25 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: pyTrainer, chars: 140 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: pyTrainer, chars: 140 });
   }
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: pyTrainer, errorCount: 0 });
 
   // Design doc — PR description as design doc.
   tl.push({ type: "file_focus_change", ts: tl.next(20 * 60_000), file: designDoc, language: "markdown" });
   tl.push({ type: "text_change", ts: tl.next(60_000), file: designDoc, charsAdded: 1_200, charsRemoved: 0 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: designDoc, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: designDoc, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(120_000), file: designDoc, charsAdded: 800, charsRemoved: 60 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: designDoc, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: designDoc, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(90_000), file: designDoc, charsAdded: 620, charsRemoved: 80 });
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: designDoc, errorCount: 0 });
 
@@ -3284,7 +3284,7 @@ function polyglotStaffEvents(): EchoEvent[] {
   // Light final cleanup commit.
   for (let i = 0; i < 5; i++) {
     tl.push({ type: "text_change", ts: tl.next(60_000), file: rustCore, charsAdded: 30 + i * 4, charsRemoved: 20 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: rustCore, chars: 120 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: rustCore, chars: 120 });
   }
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: rustCore, errorCount: 0 });
   tl.push({
@@ -3371,14 +3371,14 @@ function polyglotStaffEvents(): EchoEvent[] {
   tl.push({ type: "file_focus_change", ts: tl.next(15 * 60_000), file: sharedSchema, language: "proto" });
   for (let i = 0; i < 6; i++) {
     tl.push({ type: "text_change", ts: tl.next(40_000), file: sharedSchema, charsAdded: 60 + i * 6, charsRemoved: 18 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: sharedSchema, chars: 140 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: sharedSchema, chars: 140 });
   }
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: sharedSchema, errorCount: 0 });
 
   // Update Go side.
   for (let i = 0; i < 12; i++) {
     tl.push({ type: "text_change", ts: tl.next(45_000), file: goSvc, charsAdded: 50 + i * 5, charsRemoved: 22 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: goSvc, chars: 140 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: goSvc, chars: 140 });
   }
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: goSvc, errorCount: 0 });
   tl.push({ type: "text_change", ts: tl.next(40_000), file: goTest, charsAdded: 380, charsRemoved: 60 });
@@ -3396,13 +3396,13 @@ function polyglotStaffEvents(): EchoEvent[] {
   // Update Rust side.
   for (let i = 0; i < 10; i++) {
     tl.push({ type: "text_change", ts: tl.next(45_000), file: rustCore, charsAdded: 50 + i * 5, charsRemoved: 25 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: rustCore, chars: 140 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: rustCore, chars: 140 });
   }
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: rustCore, errorCount: 0 });
 
   for (let i = 0; i < 6; i++) {
     tl.push({ type: "text_change", ts: tl.next(50_000), file: embeddedRs, charsAdded: 50 + i * 5, charsRemoved: 20 });
-    tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: embeddedRs, chars: 140 });
+    tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: embeddedRs, chars: 140 });
   }
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: embeddedRs, errorCount: 0 });
 
@@ -3420,9 +3420,9 @@ function polyglotStaffEvents(): EchoEvent[] {
   // ADR write.
   tl.push({ type: "file_focus_change", ts: tl.next(20 * 60_000), file: adr, language: "markdown" });
   tl.push({ type: "text_change", ts: tl.next(120_000), file: adr, charsAdded: 1_400, charsRemoved: 0 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: adr, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: adr, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(120_000), file: adr, charsAdded: 920, charsRemoved: 80 });
-  tl.push({ type: "keystroke_batch", ts: tl.next(8_000), file: adr, chars: 200 });
+  tl.push({ type: "keystroke_burst", ts: tl.next(8_000), file: adr, chars: 200 });
   tl.push({ type: "text_change", ts: tl.next(80_000), file: adr, charsAdded: 540, charsRemoved: 60 });
   tl.push({ type: "file_saved", ts: tl.next(5_000), path: adr, errorCount: 0 });
 
@@ -3468,7 +3468,7 @@ function polyglotStaffEvents(): EchoEvent[] {
     tl.push({ type: "ai_accept_outcome_observed", ts: tl.next(20_000), outcome: "iterated", editFraction: 0.5 });
     for (let i = 0; i < 5; i++) {
       tl.push({ type: "text_change", ts: tl.next(40_000), file: [rustCore, goSvc, pyTrainer][day4], charsAdded: 30 + i * 4, charsRemoved: 18 });
-      tl.push({ type: "keystroke_batch", ts: tl.next(5_000), file: [rustCore, goSvc, pyTrainer][day4], chars: 130 });
+      tl.push({ type: "keystroke_burst", ts: tl.next(5_000), file: [rustCore, goSvc, pyTrainer][day4], chars: 130 });
     }
     tl.push({ type: "file_saved", ts: tl.next(5_000), path: [rustCore, goSvc, pyTrainer][day4], errorCount: 0 });
     tl.push({

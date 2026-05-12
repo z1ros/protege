@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { SelfRatingSchema } from "@protege/types";
 import { githubAuth, resolveUserId } from "../../middleware/auth.js";
+import { appendJsonRecord } from "../jsonStore.js";
 
 const app = new Hono();
 
@@ -40,11 +41,9 @@ app.post("/", async (c) => {
     });
     if (error) return c.json({ error: error.message }, 500);
   } else {
-    const { writeFileSync, readFileSync, existsSync } = await import("node:fs");
-    const path = "./.protege-store-iq3-self-ratings.json";
-    const arr = existsSync(path) ? JSON.parse(readFileSync(path, "utf-8")) : [];
-    arr.push(parsed.data);
-    writeFileSync(path, JSON.stringify(arr, null, 2));
+    // Append through the json-store queue so concurrent submissions
+    // don't lose rows or corrupt the file via interleaved writes.
+    await appendJsonRecord("./.protege-store-iq3-self-ratings.json", parsed.data);
   }
   return c.json({ ok: true });
 });

@@ -678,3 +678,11 @@ for (const e of LIKELIHOODS) {
   list.push(e.trait);
   MATCHKEY_TO_TRAITS.set(e.matchKey, list);
 }
+
+/** O(1) lookup table for `applyMatchKeys` — keyed by `${matchKey}::${trait}`.
+ *  Replaces a per-event `LIKELIHOODS.find()` linear scan over ~119 entries,
+ *  which was the dominant CPU cost in `iq3Hook` ingest at scale. */
+export const LIKELIHOOD_INDEX = new Map<string, Iq3LikelihoodEntry>();
+for (const e of LIKELIHOODS) {
+  LIKELIHOOD_INDEX.set(`${e.matchKey}::${e.trait}`, e);
+}

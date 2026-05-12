@@ -1,7 +1,13 @@
 import { Hono } from "hono";
 import type { ChatMessage } from "@protege/types";
 import { githubAuth, resolveUserId } from "../middleware/auth.js";
+import { createRateLimiter } from "../middleware/rateLimit.js";
 import { getSupabase, isSupabaseEnabled } from "../supabase.js";
+
+/** Per-user limiter for /chat-history writes + clear. Reads are exempt
+ *  (cheap, idempotent). 120 writes/min comfortably covers a fast typer
+ *  sending multi-burst messages while still bounding a runaway producer. */
+const chatHistoryLimiter = createRateLimiter({ windowMs: 60_000, max: 120 });
 
 /**
  * Chat history — per-user, synced to Supabase so conversations carry
@@ -116,6 +122,9 @@ chatHistoryRoute.get("/", async (c) => {
 /** POST /chat-history — append one message. Idempotent on id (UPSERT). */
 chatHistoryRoute.post("/", async (c) => {
   const userId = resolveUserId(c, undefined);
+  if (!chatHistoryLimiter(userId)) {
+    return c.json({ error: "rate limited" }, 429);
+  }
   const body = (await c.req.json()) as { message: ChatMessage };
   if (!body?.message?.id) {
     return c.json({ error: "message.id required" }, 400);
@@ -128,43 +137,68 @@ chatHistoryRoute.post("/", async (c) => {
   }
   const sb = getSupabase()!;
 
-  // Race safety: the extension fire-and-forgets POST /chat-sessions and
-  // immediately POST /chat-history. Without this guard, the message
-  // insert FK-violates if the parent session hasn't landed yet. We
-  // upsert a placeholder row keyed on session_id with ignoreDuplicates
-  // so a real session create either before or after this still wins on
-  // title (the create route uses default upsert, which overwrites).
-  const { error: parentError } = await sb.from("chat_sessions").upsert(
-    {
-      id: body.message.sessionId,
-      user_id: userId,
-      title: "New chat",
-      created_at: body.message.createdAt,
-      updated_at: body.message.createdAt,
-      last_message_at: body.message.createdAt,
-      message_count: 0,
-    },
-    { onConflict: "id", ignoreDuplicates: true }
-  );
-  if (parentError) {
-    noteSchemaMiss(parentError);
-    // Fall through — if the parent upsert fails for a non-schema
-    // reason, the message insert below will surface the real error.
+  // IDOR guard: backend talks to Supabase as service_role, which bypasses
+  // RLS. If an attacker submits a sessionId already owned by a different
+  // user, we must refuse — otherwise the chat_messages insert below would
+  // attach attacker-authored content to a victim-owned session_id, and
+  // the placeholder upsert below could clobber an existing-owner check.
+  const { data: ownerRow, error: ownerError } = await sb
+    .from("chat_sessions")
+    .select("user_id")
+    .eq("id", body.message.sessionId)
+    .maybeSingle();
+  if (ownerError) {
+    noteSchemaMiss(ownerError);
+    // Treat schema/transport errors as a soft-fail so the extension's
+    // offline cache keeps working — same pattern as the rest of this route.
+    return c.json({ ok: true });
+  }
+  if (ownerRow && ownerRow.user_id !== userId) {
+    return c.json({ error: "session not owned by caller" }, 403);
   }
 
-  const { error } = await sb.from("chat_messages").upsert(
-    {
-      id: body.message.id,
-      user_id: userId,
-      session_id: body.message.sessionId,
-      role: body.message.role,
-      content: body.message.content,
-      source: body.message.source ?? null,
-      created_at: body.message.createdAt,
-    },
-    { onConflict: "id" }
-  );
+  // Race safety: the extension fire-and-forgets POST /chat-sessions and
+  // immediately POST /chat-history. Without this guard, the message
+  // insert FK-violates if the parent session hasn't landed yet. The
+  // ownership check above guarantees that if a row already exists, it's
+  // ours — so ignoreDuplicates is safe here.
+  if (!ownerRow) {
+    const { error: parentError } = await sb.from("chat_sessions").upsert(
+      {
+        id: body.message.sessionId,
+        user_id: userId,
+        title: "New chat",
+        created_at: body.message.createdAt,
+        updated_at: body.message.createdAt,
+        last_message_at: body.message.createdAt,
+        message_count: 0,
+      },
+      { onConflict: "id", ignoreDuplicates: true }
+    );
+    if (parentError) {
+      noteSchemaMiss(parentError);
+      // Fall through — if the parent upsert fails for a non-schema
+      // reason, the message insert below will surface the real error.
+    }
+  }
+
+  // Insert (not upsert) so a guessed message id from another user cannot
+  // overwrite an existing row's content. Duplicate-id replays from the
+  // same caller are dedup'd by treating 23505 as success.
+  const { error } = await sb.from("chat_messages").insert({
+    id: body.message.id,
+    user_id: userId,
+    session_id: body.message.sessionId,
+    role: body.message.role,
+    content: body.message.content,
+    source: body.message.source ?? null,
+    created_at: body.message.createdAt,
+  });
   if (error) {
+    if (error.code === "23505") {
+      // Idempotent replay — message with this id already exists.
+      return c.json({ ok: true });
+    }
     noteSchemaMiss(error);
     return c.json({ ok: true });
   }
@@ -191,6 +225,9 @@ chatHistoryRoute.post("/", async (c) => {
  *  in-app "clear chat history" command. */
 chatHistoryRoute.delete("/", async (c) => {
   const userId = resolveUserId(c, undefined);
+  if (!chatHistoryLimiter(userId)) {
+    return c.json({ error: "rate limited" }, 429);
+  }
   if (!isSupabaseEnabled()) return c.json({ ok: true });
   const sb = getSupabase()!;
   const { error } = await sb

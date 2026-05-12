@@ -132,13 +132,18 @@ async function createExercise(
         },
       });
 
-      // Watch for changes — check the solution as user types
+      // Watch for changes — check the solution as user types.
+      // Trailing-edge debounce: clear the prior timer on every keystroke
+      // so we fire exactly ONE LLM verdict request 1s after the user
+      // stops typing. Without resetting the timer, every keystroke
+      // scheduled its own check — burning quota + cost on partial code.
+      let checkTimer: ReturnType<typeof setTimeout> | null = null;
       const watcher = vscode.workspace.onDidChangeTextDocument((e) => {
         if (e.document.uri.toString() !== doc.uri.toString()) return;
         if (activeExercise?.solved) return;
-
-        // Debounce the check
-        setTimeout(() => {
+        if (checkTimer) clearTimeout(checkTimer);
+        checkTimer = setTimeout(() => {
+          checkTimer = null;
           if (activeExercise && !activeExercise.solved) {
             checkExerciseInline(exerciseEditor, exercise, decoration);
           }
