@@ -742,11 +742,6 @@ export type WebviewToHost =
   | { type: "chat/search"; query: string }
   | { type: "chat/clearHistory" }
   | { type: "echo/open" }
-  /** Webview → host: "give me the full persisted history from
-   *  globalState so the history panel can browse past sessions even
-   *  when the current chat view has been cleared by a 'New chat'
-   *  click." Response: `chat/fullHistory`. */
-  | { type: "chat/getFullHistory" }
   /** Webview → host: list all chat sessions for the user. Response:
    *  `chat/sessions`. */
   | { type: "chat/listSessions" }
@@ -834,12 +829,6 @@ export interface Note {
 export type HostToWebview =
   | { type: "chat/append"; message: ChatMessage }
   | { type: "chat/history"; messages: ChatMessage[] }
-  /** Host → webview: full persisted history for the browse panel.
-   *  Distinct from `chat/history` which the webview uses to replace
-   *  its main `messages` state on mount — `chat/fullHistory` is a
-   *  read-only snapshot the history panel consumes without clobbering
-   *  the current chat view. */
-  | { type: "chat/fullHistory"; messages: ChatMessage[] }
   /** Host → webview: complete list of the user's sessions plus which is
    *  currently active. Triggered by `chat/listSessions` or by host-side
    *  mutations (create / delete / clear). */

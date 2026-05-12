@@ -673,10 +673,10 @@ export function mountProtegeWebview(
       // starts with an empty main chat when Cursor/VS Code is reopened
       // or the panel remounts. The full persisted history stays in
       // globalState and is still reachable via the history icon (which
-      // fetches through `chat/getFullHistory` below) — clicking an old
-      // conversation there restores it into the main view. Users
-      // wanted a clean slate every time they open Protege, not a
-      // silent auto-restore of whatever they were last mid-asking.
+      // requests the session list via `chat/listSessions`, then loads
+      // any conversation on click). Users wanted a clean slate every
+      // time they open Protege, not a silent auto-restore of whatever
+      // they were last mid-asking.
       //
       // We intentionally do NOT post `chat/history` here. The webview's
       // `messages` state starts as [] and stays that way until the user
@@ -780,14 +780,6 @@ export function mountProtegeWebview(
     } else if (msg.type === "chat/search") {
       const results = searchHistory(msg.query);
       post(webview, { type: "chat/searchResults", results });
-    } else if (msg.type === "chat/getFullHistory") {
-      // On-demand read of the full persisted history — used by the
-      // history panel so it always shows everything in globalState,
-      // not just what's currently in the webview's `messages` state.
-      // After "New chat" the local state is empty but globalState
-      // still carries the full record; this round-trip is what makes
-      // the panel honest about that.
-      post(webview, { type: "chat/fullHistory", messages: getAllMessages() });
     } else if (msg.type === "chat/listSessions") {
       await rehydrateChatSessions();
       post(webview, {
